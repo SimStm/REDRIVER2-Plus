@@ -20,8 +20,28 @@ project "PsyCross"
     includedirs { 
         SDL2_DIR.."/include",
         OPENAL_DIR.."/include",
-		"PsyCross/include"
+		"PsyCross/include",
+		"PsyCross/third_party/imgui",
+		"PsyCross/third_party/imgui/backends"
     }
+
+    -- Dear ImGui is vendored for the developer graphics panel.  The broad
+    -- PsyCross glob above would otherwise compile examples and every backend.
+    removefiles {
+        "PsyCross/third_party/imgui/**.cpp",
+    }
+
+	filter { "system:Windows or linux" }
+		files {
+			"PsyCross/third_party/imgui/imgui.cpp",
+			"PsyCross/third_party/imgui/imgui_draw.cpp",
+			"PsyCross/third_party/imgui/imgui_tables.cpp",
+			"PsyCross/third_party/imgui/imgui_widgets.cpp",
+			"PsyCross/third_party/imgui/backends/imgui_impl_sdl2.cpp",
+			"PsyCross/third_party/imgui/backends/imgui_impl_opengl3.cpp",
+		}
+
+	filter {}
 
     filter "system:Windows"
 	    defines { "_WINDOWS" }
@@ -67,5 +87,7 @@ usage "PsyCross"
 	links "PsyCross"
 	includedirs {
 		"PsyCross/include",
-		"PsyCross/include/psx"
+		"PsyCross/include/psx",
+		"PsyCross/third_party/imgui",
+		"PsyCross/third_party/imgui/backends"
 	}

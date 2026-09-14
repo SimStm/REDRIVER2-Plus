@@ -22,6 +22,7 @@
 #include "C/draw.h"
 
 #include "utils/ini.h"
+#include "utils/DeveloperGraphicsPanel.h"
 
 #include <SDL_scancode.h>
 #include <SDL_gamecontroller.h>
@@ -656,10 +657,12 @@ int main(int argc, char** argv)
 
 	// start with menu mapping
 	SwitchMappings(1);
+	DeveloperGraphicsPanel_Initialise();
 
 	redriver2_main(argc, argv);
 
 	DeinitStringMng();
+	DeveloperGraphicsPanel_Shutdown();
 
 	PsyX_Shutdown();
 
