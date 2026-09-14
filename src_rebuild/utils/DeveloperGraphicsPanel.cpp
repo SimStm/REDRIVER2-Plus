@@ -189,6 +189,24 @@ void DrawGameDebugTab()
 	}
 }
 
+void DrawAboutTab()
+{
+	ImGui::TextUnformatted("REDRIVER2-Plus modifications implemented by Lucas Sims.");
+	ImGui::TextLinkOpenURL("github.com/SimStm", "https://github.com/SimStm");
+	ImGui::TextLinkOpenURL("REDRIVER2-Plus repository", "https://github.com/SimStm/REDRIVER2-Plus");
+
+	ImGui::Separator();
+	ImGui::TextUnformatted("Original project and credits");
+	ImGui::TextLinkOpenURL("OpenDriver2/REDRIVER2", "https://github.com/OpenDriver2/REDRIVER2");
+	ImGui::TextLinkOpenURL("OpenDriver2/PsyCross (Psy-X)", "https://github.com/OpenDriver2/PsyCross");
+	ImGui::BulletText("SoapyMan — lead reverse engineer and programmer");
+	ImGui::BulletText("Fireboyd78 — refactoring and improvements");
+	ImGui::BulletText("Krishty and someone972 — early format decoding");
+	ImGui::BulletText("Gh0stBlade — PsyCross original code base");
+	ImGui::BulletText("Ben Lincoln — TDR utility");
+	ImGui::BulletText("Stohrendorf — Symdump utility");
+}
+
 void SetVisible(bool visible)
 {
 	g_visible = visible;
@@ -289,6 +307,12 @@ void RenderOverlay()
 			if (ImGui::BeginTabItem("Game Debug"))
 			{
 				DrawGameDebugTab();
+				ImGui::EndTabItem();
+			}
+
+			if (ImGui::BeginTabItem("About"))
+			{
+				DrawAboutTab();
 				ImGui::EndTabItem();
 			}
 			ImGui::EndTabBar();
