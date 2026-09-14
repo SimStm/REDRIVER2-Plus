@@ -18,6 +18,8 @@ where release policy permits it.
 
 ### Changed
 
+- Rewrote the project README with fork scope, legal-data guidance, setup,
+  build, run, debug, technology, and agent-workflow documentation.
 - The F11 developer-panel hotkey now activates on key press and supports both
   SDL F11 identifiers.
 - Project-owned PsyCross changes are distributed as an idempotent patch applied
