@@ -16,6 +16,7 @@
 #include <stdio.h>
 
 int gDisplayDrawStats = 0;
+int gDebugPrimtabUsed = 0;
 
 struct LineDef_t
 {
@@ -78,6 +79,7 @@ void DrawDebugOverlays()
 	char tempBuf[1024];
 
 	int primTabLeft = current->primptr - current->primtab;
+	gDebugPrimtabUsed = primTabLeft;
 
 	if (gDisplayDrawStats)
 	{
