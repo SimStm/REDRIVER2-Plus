@@ -59,6 +59,7 @@
 #include "platform.h"
 #include "state.h"
 #include "cutrecorder.h"
+#include "../utils/DeveloperDebugStart.h"
 
 int levelstartpos[8][4] = {
 	{ 4785, -1024, -223340, 0},
@@ -74,6 +75,7 @@ int levelstartpos[8][4] = {
 };
 
 XZPAIR gStartPos = { 0 };
+int gStartDir = -1;
 
 enum LevLumpType
 {
@@ -352,7 +354,11 @@ void ProcessLumps(char* lump_ptr, int lump_size)
 		else if (lump_type == LUMP_MODELNAMES)
 		{
 			printInfo("LUMP_MODELNAMES: size: %d\n", seg_size);
+#ifndef PSX
+			Models_SetInspectorNameBuffer((char*)ptr, seg_size);
+#else
 			modelname_buffer = (char*)ptr;
+#endif
 		}
 		else if (lump_type == 0xff)
 		{
@@ -1629,6 +1635,10 @@ void DrawGame(void)
 	}
 
 #ifndef PSX
+	// Tick before the buffer swap: a timed screenshot must read the frame that
+	// was just rendered, not the undefined back buffer after the swap.
+	DeveloperDebugStart_Tick();
+
 	if (!FadingScreen)
 		PsyX_EndScene();
 #endif
@@ -1705,10 +1715,13 @@ void PrintCommandLineArguments()
 #ifdef DEBUG_OPTIONS
 		"  -exportxasubtitles: Exports strings from XA WAV files to SBN\n"
 		"  -startpos <x> <z>: Set player start position\n"
+		"  -startdir <angle> : Set player start rotation (0..4095)\n"
 		"  -players <count> : Set player count (1 or 2)\n"
 		"  -playercar <number>, -player2car <number> : set player wanted car\n"
 		"  -chase <number> : using specified chase number for mission\n"
 		"  -mission <number> : starts specified mission\n"
+		"  -gametype <number> : override the game type set by -mission\n"
+		"  -level <number> : select the city/level for the started session\n"
 #endif // DEBUG_OPTIONS
 		"  -replay <filename.d2rp> : starts replay from file\n"
 #ifdef CUTSCENE_RECORDER
@@ -1873,7 +1886,7 @@ int redriver2_main(int argc, char** argv)
 
 	// TODO: divide game by the states, place main loop here.
 	
-	if (argc <= 1)
+	if (argc <= 1 && !DeveloperDebugStart_ShouldSkipIntro())
 #elif !defined(PSX)
 	
 	InitStringMng();
@@ -1906,6 +1919,7 @@ int redriver2_main(int argc, char** argv)
 #ifndef PSX	
 	int commandLinePropsShown;
 	commandLinePropsShown = 0;
+	int launchedFromCommandLine = 0;
 
 	for (int i = 1; i < argc; i++)
 	{
@@ -1940,6 +1954,17 @@ int redriver2_main(int argc, char** argv)
 			gStartPos.z = atoi(argv[i + 2]);
 
 			i += 2;
+		}
+		else if (!strcmp(argv[i], "-startdir"))
+		{
+			if (argc - i < 2)
+			{
+				printError("-startdir missing number argument!");
+				return -1;
+			}
+
+			gStartDir = atoi(argv[i + 1]) & 0xFFF;
+			i++;
 		}
 		else if (!strcmp(argv[i], "-playercar"))
 		{
@@ -2000,6 +2025,30 @@ int redriver2_main(int argc, char** argv)
 
 			GameType = GAME_TAKEADRIVE;
 			SetState(STATE_GAMELAUNCH);
+
+			launchedFromCommandLine = 1;
+		}
+		else if (!strcmp(argv[i], "-gametype"))
+		{
+			if (argc - i < 2)
+			{
+				printError("-gametype missing number argument!");
+				return -1;
+			}
+
+			GameType = (GAMETYPE)atoi(argv[i + 1]);
+			i++;
+		}
+		else if (!strcmp(argv[i], "-level"))
+		{
+			if (argc - i < 2)
+			{
+				printError("-level missing number argument!");
+				return -1;
+			}
+
+			GameLevel = atoi(argv[i + 1]);
+			i++;
 		}
 #endif // _DEBUG_OPTIONS
 		else if (!strcmp(argv[i], "-replay"))
@@ -2035,6 +2084,7 @@ int redriver2_main(int argc, char** argv)
 					gLoadedReplay = 1;
 					
 					SetState(STATE_GAMELAUNCH);
+					launchedFromCommandLine = 1;
 				}
 				else
 				{
@@ -2079,6 +2129,21 @@ int redriver2_main(int argc, char** argv)
 			commandLinePropsShown = 1;
 		}
 	}
+
+#ifdef DEBUG_OPTIONS
+	if (!launchedFromCommandLine && DeveloperDebugStart_TryApply())
+	{
+		SetFEDrawMode();
+
+		gInFrontend = 0;
+		AttractMode = 0;
+		// GameType, GameLevel and gCurrentMissionNumber were set by
+		// DeveloperDebugStart_TryApply from the saved snapshot.
+
+		SetState(STATE_GAMELAUNCH);
+	}
+#endif
+
 #endif // PSX
 
 	DoStateLoop();

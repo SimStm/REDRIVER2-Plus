@@ -9,8 +9,7 @@
 
 - [What this project is](#what-this-project-is)
 - [Legal game data](#legal-game-data)
-- [Getting started on Windows](#getting-started-on-windows)
-- [Running and debugging](#running-and-debugging)
+- [Building and running](#building-and-running)
 - [Developer panel](#developer-panel)
 - [Technology](#technology)
 - [Project layout](#project-layout)
@@ -26,6 +25,7 @@ This fork keeps that foundation and aims to make the game more pleasant to play,
 - graphics controls and visual-quality experimentation;
 - quality-of-life improvements for development and testing;
 - an in-game Dear ImGui developer panel with live renderer controls and game telemetry;
+- external RGBA texture mods with deterministic precedence and original-asset fallback;
 - reproducible, project-owned PsyCross integration changes without maintaining a full PsyCross fork;
 - durable project knowledge and change history for contributors and AI agents.
 
@@ -37,81 +37,29 @@ This repository contains code and tooling only. It does **not** contain the comm
 
 To run the game, you need your own legally obtained copies of both *Driver 2* CDs and must prepare the game data as described in the upstream [installation instructions](https://github.com/OpenDriver2/REDRIVER2/wiki/Installation-instructions). Keep the extracted data under the repository's `data/` directory, or configure a valid data location through `RED2_DIR`.
 
-## Getting started on Windows
+## Building and running
 
-### Prerequisites
+REDRIVER2-Plus builds with Premake 5 on Windows (Visual Studio 2022) and on Linux, either natively or on Windows through WSL/WSLg.
 
-- Git with submodule support
-- Visual Studio 2022 with the **Desktop development with C++** workload
-- A legal *Driver 2* game-data installation (see above)
-- PowerShell
+- **Windows:** run `.\windows_dev_prepare.ps1`, then build the `Release_dev | x64` configuration in Visual Studio. The executable is produced at `src_rebuild/bin/Release_dev/REDRIVER2_dev.exe`.
+- **Linux:** install the SDL2, OpenAL, OpenGL and libjpeg development packages, run `./linux_dev_prepare.sh`, then `make -j"$(nproc)" config=release_dev_x64`.
 
-### Clone and prepare
+The game resolves a `DRIVER2/` game-data folder from its working directory, so keep the prepared data next to the executable or set `RED2_DIR` (see [Legal game data](#legal-game-data)).
 
-```powershell
-git clone --recurse-submodules https://github.com/SimStm/REDRIVER2-Plus.git
-Set-Location REDRIVER2-Plus
-```
-
-If you already cloned without submodules:
-
-```powershell
-git submodule update --init --recursive
-```
-
-Install the Windows development dependencies and generate the Visual Studio solution:
-
-```powershell
-.\windows_dev_prepare.ps1
-```
-
-The script downloads the pinned build dependencies and invokes Premake. Apply the project-owned PsyCross integration after the submodule is initialized:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\apply_psycross_patches.ps1
-```
-
-Open [src_rebuild/build/REDRIVER2.sln](src_rebuild/build/REDRIVER2.sln), select the `Release_dev` configuration and `x64` platform, then build the `REDRIVER2` project. The development executable is produced at:
-
-```text
-src_rebuild/bin/Release_dev/REDRIVER2_dev.exe
-```
-
-> The PsyCross patch script is safe to run again. It validates the expected upstream submodule revision and does nothing when the patch has already been applied.
-
-### Linux and other platforms
-
-The upstream project also targets Linux, WebAssembly, and Android. For the current platform-specific prerequisites and generation commands, follow the upstream [contributor guide](https://github.com/OpenDriver2/REDRIVER2/wiki/Contributing-to-project). The Plus-specific PsyCross patch must still be applied after initializing submodules.
-
-## Running and debugging
-
-### Run from Visual Studio
-
-1. Open `src_rebuild/build/REDRIVER2.sln`.
-2. Make `REDRIVER2` the startup project.
-3. Choose `Release_dev | x64`.
-4. In the project's Debugging properties, set **Working Directory** to the repository's `src_rebuild` directory, or set `RED2_DIR` to your prepared game-data path.
-5. Press `F5` to start under the debugger.
-
-For a non-debug launch, run `src_rebuild/bin/Release_dev/REDRIVER2_dev.exe` from a context where its data path resolves, or provide `RED2_DIR` explicitly.
-
-### Common setup checks
-
-- `data/` is populated from a legal installation and is readable.
-- Git submodules are initialized.
-- `scripts/apply_psycross_patches.ps1` completed successfully.
-- Visual Studio is building `Release_dev | x64`, not an incompatible platform/configuration pair.
-- The working directory is `src_rebuild` when launching from Visual Studio unless `RED2_DIR` overrides it.
+**[BUILDING.md](BUILDING.md)** has the complete instructions: prerequisites and how to install them, per-platform build and run steps (including WSL), the deterministic debug-start arguments and capture workflow, the standalone export tests, screenshots, and troubleshooting.
 
 ## Developer panel
 
-Press `F11` while the game is running to toggle the Dear ImGui developer panel. It has three tabs:
+Press `F11` while the game is running to toggle the Dear ImGui developer panel. It has four tabs:
 
 - **Graphics** — live renderer and visual controls.
-- **Game Debug** — explained, live telemetry for primitive-table usage, streaming/spooling, civilian traffic, police, mission limits, vehicle state, and road-state data.
+- **Game Debug** — explained, live telemetry for primitive-table usage, streaming/spooling, civilian traffic, police, mission limits, vehicle state, and road-state data, plus the reproducible-start snapshot tools.
+- **3D Debug** — mod diagnostics and primitive/texture inspection and export.
 - **About** — fork attribution, repository links, and upstream credits.
 
 While the panel is open, disable **Capture game input while panel is open** if you want to keep controlling the game during testing. Hover the information markers in the Game Debug tab for explanations of individual values.
+
+`Debug` and `Release_dev` also accept direct-start arguments that skip the frontend and intro; see [Deterministic debug start](BUILDING.md#deterministic-debug-start).
 
 ## Technology
 
@@ -122,7 +70,7 @@ While the panel is open, disable **Capture game input while panel is open** if y
 | Platform layer | PsyCross, SDL2, OpenGL | Dear ImGui 1.91.9b with SDL2/OpenGL3 backends |
 | Audio and assets | OpenAL Soft and libjpeg | No replacement for proprietary game data |
 | Game origin | Clean-room reconstruction of the PlayStation release | Graphics, QoL, and developer-experience work |
-| Documentation | Upstream wiki and source comments | `AGENTS.md`, OKF knowledge catalog, and Keep a Changelog history |
+| Documentation | Upstream wiki and source comments | `AGENTS.md`, `BUILDING.md`, OKF knowledge catalog, and Keep a Changelog history |
 
 PsyCross remains an upstream submodule. This fork carries only the small integration delta in [`patches/psycross/`](patches/psycross/), applied by [`scripts/apply_psycross_patches.ps1`](scripts/apply_psycross_patches.ps1).
 
@@ -135,7 +83,9 @@ PsyCross remains an upstream submodule. This fork carries only the small integra
 | [`data/`](data/) | Local game data prepared from legally owned media; do not commit proprietary files |
 | [`patches/psycross/`](patches/psycross/) | Versioned fork-specific PsyCross delta |
 | [`scripts/`](scripts/) | Repeatable development and patch-application scripts |
+| [`docs/`](docs/) | Screenshots and images used by the documentation |
 | [`knowledge/`](knowledge/index.md) | Project rules, product notes, and shipped-change records in Open Knowledge Format |
+| [`BUILDING.md`](BUILDING.md) | Build, run and troubleshooting instructions |
 | [`CHANGELOG.md`](CHANGELOG.md) | User-facing change history following Keep a Changelog |
 
 ## Contributing and AI agents

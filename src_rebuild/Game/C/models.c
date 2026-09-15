@@ -427,3 +427,30 @@ int FindModelIdxWithName(char *name)
 
 	return -1;
 }
+
+#ifndef PSX
+static const char* inspectorModelNames[MAX_MODEL_SLOTS];
+static int inspectorModelNameCount = 0;
+
+void Models_SetInspectorNameBuffer(char* buffer, int size)
+{
+	modelname_buffer = buffer;
+	inspectorModelNameCount = 0;
+	if (!buffer || size <= 0) return;
+	const char* cursor = buffer;
+	const char* end = buffer + size;
+	while (cursor < end && inspectorModelNameCount < MAX_MODEL_SLOTS)
+	{
+		const char* terminator = (const char*)memchr(cursor, '\0', end - cursor);
+		if (!terminator) break;
+		inspectorModelNames[inspectorModelNameCount++] = cursor;
+		cursor = terminator + 1;
+	}
+}
+
+const char* GetModelNameByIndex(int modelIndex)
+{
+	if (modelIndex < 0 || modelIndex >= inspectorModelNameCount || modelIndex >= num_models_in_pack) return NULL;
+	return inspectorModelNames[modelIndex];
+}
+#endif

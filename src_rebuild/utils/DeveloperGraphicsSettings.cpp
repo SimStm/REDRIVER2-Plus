@@ -1,4 +1,5 @@
 #include "DeveloperGraphicsSettings.h"
+#include "HdTextureOverrides.h"
 
 #include "driver2.h"
 #include "C/camera.h"
@@ -107,6 +108,9 @@ DeveloperGraphicsSettings DeveloperGraphicsSettings_ReadRuntime()
 	settings.fieldOfView = gCameraDefaultScrZ;
 
 	settings.showLegacyStats = gDisplayDrawStats != 0;
+	HdTextureOverrideDiagnostics hdTextures = {};
+	HdTextureOverrides_GetDiagnostics(&hdTextures);
+	settings.hdTextureOverrides = hdTextures.enabled;
 	return settings;
 }
 
@@ -120,6 +124,7 @@ void DeveloperGraphicsSettings_Apply(const DeveloperGraphicsSettings& settings)
 	gCameraDefaultScrZ = (short)Clamp(settings.fieldOfView, 128, 384);
 
 	gDisplayDrawStats = settings.showLegacyStats != 0;
+	HdTextureOverrides_SetEnabled(settings.hdTextureOverrides);
 }
 
 bool DeveloperGraphicsSettings_LoadAndApply()
@@ -145,6 +150,7 @@ bool DeveloperGraphicsSettings_LoadAndApply()
 		else if (!strcmp(key, "drawDistance")) settings.drawDistance = value;
 		else if (!strcmp(key, "fieldOfView")) settings.fieldOfView = value;
 		else if (!strcmp(key, "showLegacyStats")) settings.showLegacyStats = value;
+		else if (!strcmp(key, "hdTextureOverrides")) settings.hdTextureOverrides = value;
 	}
 
 	const bool readOk = ferror(file) == 0;
@@ -164,16 +170,18 @@ bool DeveloperGraphicsSettings_SaveRuntime()
 	const int written = fprintf(file,
 		"# REDRIVER2 developer graphics settings\n"
 		"# This file is managed separately and never modifies config.ini.\n"
-		"schemaVersion=1\n"
+		"schemaVersion=2\n"
 		"bilinearFiltering=%d\n"
 		"pgxpTextureMapping=%d\n"
 		"pgxpZBuffer=%d\n"
 		"vsync=%d\n"
 		"drawDistance=%d\n"
 		"fieldOfView=%d\n"
-		"showLegacyStats=%d\n",
+		"showLegacyStats=%d\n"
+		"hdTextureOverrides=%d\n",
 		settings.bilinearFiltering, settings.pgxpTextureMapping, settings.pgxpZBuffer,
-		settings.vsync, settings.drawDistance, settings.fieldOfView, settings.showLegacyStats);
+		settings.vsync, settings.drawDistance, settings.fieldOfView, settings.showLegacyStats,
+		settings.hdTextureOverrides);
 
 	bool writeOk = written > 0 && FlushAndSync(file);
 	const int closeResult = fclose(file);
@@ -194,5 +202,6 @@ void DeveloperGraphicsSettings_RestoreDefaults()
 	defaults.drawDistance = 1800;
 	defaults.fieldOfView = 256;
 	defaults.showLegacyStats = 0;
+	defaults.hdTextureOverrides = 1;
 	DeveloperGraphicsSettings_Apply(defaults);
 }

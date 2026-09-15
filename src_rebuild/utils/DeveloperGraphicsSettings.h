@@ -10,6 +10,7 @@ struct DeveloperGraphicsSettings
 	int drawDistance;
 	int fieldOfView;
 	int showLegacyStats;
+	int hdTextureOverrides;
 };
 
 DeveloperGraphicsSettings DeveloperGraphicsSettings_ReadRuntime();

@@ -206,6 +206,10 @@ project "REDRIVER2"
     language "c++"
     targetdir "bin/%{cfg.buildcfg}"
 
+    -- Launch the debugger from the executable folder so config.ini, mods/ and
+    -- developer_debug_start.ini resolve from the expected working directory.
+    debugdir "bin/%{cfg.buildcfg}"
+
     includedirs { 
         "Game", 
     }

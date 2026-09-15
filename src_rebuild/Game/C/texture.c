@@ -7,6 +7,10 @@
 #include "objanim.h"
 #include "ASM/compres.h"
 
+#ifndef PSX
+#include "../utils/HdTextureOverrides.h"
+#endif
+
 SXYPAIR tpagepos[20] =
 {
 	{ 640, 0 },
@@ -168,6 +172,20 @@ void IncrementTPageNum(RECT16 *tpage)
 }
 
 #ifndef PSX
+static void RegisterHdTextureOverridesForPage(int tpage2send)
+{
+	HdTextureOverrides_BeginPage(tpage2send);
+
+	for (int i = 0; i < tpage_texamts[tpage2send]; ++i)
+	{
+		const TEXINF* texture = &tpage_ids[tpage2send][i];
+		HdTextureOverrides_RegisterTexture(tpage2send, i,
+			texturename_buffer + texture->nameoffset,
+			texture_pages[tpage2send], texture_cluts[tpage2send][i],
+			texture->x, texture->y, texture->width, texture->height);
+	}
+}
+
 // [A] - loads TIM files as level textures
 void LoadTPageFromTIMs(int tpage2send)
 {
@@ -268,6 +286,10 @@ void LoadTPageFromTIMs(int tpage2send)
 			LoadImage(&tmpclut, (u_long*)((char*)timClut + sizeof(TIMIMAGEHDR) + j * 32));
 		}
 	}
+
+	// The original TIM and CLUT path above always runs first. The renderer-only
+	// RGBA mapping is registered afterwards and can be toggled off immediately.
+	RegisterHdTextureOverridesForPage(tpage2send);
 }
 #endif
 
@@ -302,6 +324,11 @@ int LoadTPageAndCluts(RECT16 *tpage, RECT16 *cluts, int tpage2send, char *tpagea
 	LoadImage(&temptpage, (u_long*)_other_buffer);
 
 	texture_pages[tpage2send] = GetTPage(0, 0, tpage->x, tpage->y);
+
+#ifndef PSX
+	RegisterHdTextureOverridesForPage(tpage2send);
+#endif
+
 	IncrementTPageNum(tpage);
 
 	return 1;
@@ -394,6 +421,11 @@ void ProcessTextureInfo(char *lump_ptr)
 	int i;
 	char* ptr;
 	tpage_amount =  *(int *)lump_ptr;
+
+#ifndef PSX
+	HdTextureOverrides_Reset();
+#endif
+
 	texamount = *(int *)(lump_ptr + 4);
 	tpage_position = (TP *)(lump_ptr + 8);
 

@@ -20,6 +20,18 @@
 #include "glaunch.h"
 #include "ASM/rndrasm.h"
 
+#ifndef PSX
+#include "PsyX/PsyX_public.h"
+#include <string>
+#include "../../utils/InspectorExport.h"
+#ifdef _WIN32
+#include <windows.h>
+#ifdef LoadImage
+#undef LoadImage
+#endif
+#endif
+#endif
+
 struct plotCarGlobals
 {
 	u_char* primptr;
@@ -1364,6 +1376,10 @@ void DrawCarObject(CAR_MODEL* car, MATRIX* matrix, VECTOR* pos, int palette, CAR
 	VECTOR modelLocation;
 	SVECTOR cog;
 
+#ifndef PSX
+	const void* primitiveBegin = current->primptr;
+#endif
+
 	cog = cp->ap.carCos->cog;
 
 	// [A] mini cars correct position
@@ -1386,7 +1402,131 @@ void DrawCarObject(CAR_MODEL* car, MATRIX* matrix, VECTOR* pos, int palette, CAR
 	gte_SetTransVector(&modelLocation);
 
 	plotNewCarModel(car, palette);
+
+#ifndef PSX
+	char inspectorLabel[PSYX_INSPECTOR_LABEL_LENGTH];
+	snprintf(inspectorLabel, sizeof(inspectorLabel), "Car #%d | model %d | %s detail | palette %d",
+		cp->id, cp->ap.model, detail ? "high" : "low", palette);
+	PsyXInspectorObject inspectorObject = {};
+	snprintf(inspectorObject.key, sizeof(inspectorObject.key), "car:%d:%d:%d", GameLevel, cp->id, cp->ap.model);
+	snprintf(inspectorObject.modelName, sizeof(inspectorObject.modelName), "Resident car %d", cp->ap.model);
+	inspectorObject.modelIndex = cp->ap.model;
+	inspectorObject.polygonCount = car->numFT3 + car->numGT3 + car->numB3;
+	for (int i = 0; i < 3; ++i) inspectorObject.position[i] = cp->hd.where.t[i];
+	PsyX_Inspector_RegisterObjectRange(primitiveBegin, current->primptr, inspectorLabel, &inspectorObject);
+#endif
 }
+
+#ifndef PSX
+static bool IsInspectorModId(const char* modId)
+{
+	if (!modId || modId[0] == '\0')
+		return false;
+	for (const char* character = modId; *character; ++character)
+	{
+		if (!((*character >= 'a' && *character <= 'z') || (*character >= 'A' && *character <= 'Z') ||
+			(*character >= '0' && *character <= '9') || *character == '-' || *character == '_'))
+			return false;
+	}
+	return true;
+}
+
+static int CarModelMaximumVertex(const CAR_POLY* polygons, int count)
+{
+	int maximum = 0;
+	for (int polygonIndex = 0; polygonIndex < count; ++polygonIndex)
+	{
+		const int indices = polygons[polygonIndex].vindices;
+		for (int corner = 0; corner < 3; ++corner)
+		{
+			const int index = (indices >> (corner * 8)) & 0xff;
+			if (index > maximum) maximum = index;
+		}
+	}
+	return maximum;
+}
+
+static void WriteCarModelFaces(std::string& output, const CAR_POLY* polygons, int count)
+{
+	for (int polygonIndex = 0; polygonIndex < count; ++polygonIndex)
+	{
+		const int indices = polygons[polygonIndex].vindices;
+		char line[96];
+		snprintf(line, sizeof(line), "f %d %d %d\n", (indices & 0xff) + 1, ((indices >> 8) & 0xff) + 1,
+			((indices >> 16) & 0xff) + 1);
+		output += line;
+	}
+}
+
+bool Cars_ExportInspectorModel(int carId, const char* modId, char* status, int statusCapacity)
+{
+	if (!status || statusCapacity <= 0)
+		return false;
+	status[0] = '\0';
+	if (carId < 0 || carId >= MAX_CARS || !IsInspectorModId(modId))
+	{
+		snprintf(status, statusCapacity, "Choose a valid car selection and mod id");
+		return false;
+	}
+#ifndef _WIN32
+	snprintf(status, statusCapacity, "Model export is currently available on Windows only");
+	return false;
+#else
+	const int modelNumber = car_data[carId].ap.model;
+	if (modelNumber < 0 || modelNumber >= MAX_CAR_RESIDENT_MODELS)
+	{
+		snprintf(status, statusCapacity, "The selected car has no resident model");
+		return false;
+	}
+	CAR_MODEL model = NewCarModel[modelNumber];
+	model.vlist = gTempCarVertDump[carId];
+	if (!model.vlist)
+	{
+		snprintf(status, statusCapacity, "The selected car model is not currently available");
+		return false;
+	}
+	int maximumVertex = CarModelMaximumVertex(model.pFT3, model.numFT3);
+	const int maximumGtVertex = CarModelMaximumVertex(model.pGT3, model.numGT3);
+	const int maximumBottomVertex = CarModelMaximumVertex(model.pB3, model.numB3);
+	if (maximumGtVertex > maximumVertex) maximumVertex = maximumGtVertex;
+	if (maximumBottomVertex > maximumVertex) maximumVertex = maximumBottomVertex;
+	if (maximumVertex < 0 || maximumVertex >= MAX_DENTING_VERTS)
+	{
+		snprintf(status, statusCapacity, "The selected car model has unsupported vertex indices");
+		return false;
+	}
+	const DWORD modsAttributes = GetFileAttributesA("mods");
+	const DWORD parentModsAttributes = GetFileAttributesA("../mods");
+	const char* modsRoot = modsAttributes != INVALID_FILE_ATTRIBUTES && (modsAttributes & FILE_ATTRIBUTE_DIRECTORY) ? "mods" :
+		parentModsAttributes != INVALID_FILE_ATTRIBUTES && (parentModsAttributes & FILE_ATTRIBUTE_DIRECTORY) ? "../mods" : "mods";
+	char modDirectory[256];
+	char assetsDirectory[320];
+	char modelsDirectory[384];
+	char outputPath[448];
+	snprintf(modDirectory, sizeof(modDirectory), "%s/%s", modsRoot, modId);
+	snprintf(assetsDirectory, sizeof(assetsDirectory), "%s/assets", modDirectory);
+	snprintf(modelsDirectory, sizeof(modelsDirectory), "%s/models", assetsDirectory);
+	snprintf(outputPath, sizeof(outputPath), "%s/car_%d_id_%d.obj", modelsDirectory, modelNumber, carId);
+	CreateDirectoryA(modsRoot, NULL);
+	CreateDirectoryA(modDirectory, NULL);
+	CreateDirectoryA(assetsDirectory, NULL);
+	CreateDirectoryA(modelsDirectory, NULL);
+	char line[192];
+	snprintf(line, sizeof(line), "# REDRIVER2-Plus 3D inspector car export\n# car id: %d\n# model: %d\n", carId, modelNumber);
+	std::string output(line);
+	for (int vertexIndex = 0; vertexIndex <= maximumVertex; ++vertexIndex)
+	{
+		const SVECTOR& vertex = model.vlist[vertexIndex];
+		snprintf(line, sizeof(line), "v %d %d %d\n", vertex.vx, vertex.vy, vertex.vz);
+		output += line;
+	}
+	WriteCarModelFaces(output, model.pFT3, model.numFT3);
+	WriteCarModelFaces(output, model.pGT3, model.numGT3);
+	WriteCarModelFaces(output, model.pB3, model.numB3);
+	return InspectorExport_WriteText(outputPath, output.c_str(), status, statusCapacity);
+#endif
+}
+#endif
 
 // [D] [T] [A]
 void DrawCar(CAR_DATA* cp, int view)

@@ -1,5 +1,5 @@
 diff --git a/include/PsyX/PsyX_public.h b/include/PsyX/PsyX_public.h
-index 91b0297..b8cad91 100644
+index 91b0297..1f6c8c3 100644
 --- a/include/PsyX/PsyX_public.h
 +++ b/include/PsyX/PsyX_public.h
 @@ -1,8 +1,13 @@
@@ -16,7 +16,7 @@ index 91b0297..b8cad91 100644
  
  typedef struct
  {
-@@ -39,6 +44,14 @@ typedef struct
+@@ -39,6 +44,75 @@ typedef struct
  typedef void(*GameDebugKeysHandlerFunc)(int nKey, char down);
  typedef void(*GameDebugMouseHandlerFunc)(int x, int y, int dx, int dy);
  typedef void(*GameOnTextInputHandler)(const char* buf);
@@ -28,10 +28,71 @@ index 91b0297..b8cad91 100644
 +	int vertexCount;
 +	int drawSplitCount;
 +} PsyXRenderStats;
++
++/* A replacement for one rectangular, CLUT-qualified PSX texture region.
++   Texture coordinates are remapped to the complete RGBA image at draw time;
++   the original VRAM contents remain present for the normal fallback path. */
++typedef struct
++{
++	unsigned short tpage;
++	unsigned short clut;
++	unsigned short u;
++	unsigned short v;
++	unsigned short width;
++	unsigned short height;
++	unsigned int textureId;
++} PsyXTextureOverride;
++
++typedef struct
++{
++	int registeredCount;
++	int enabled;
++} PsyXTextureOverrideStats;
++
++#define PSYX_INSPECTOR_LABEL_LENGTH 128
++
++/* A primitive selected from the completed PSX draw stream. The source texture
++   rectangle contains original PSX UV coordinates when an RGBA override was
++   used, so tools can still identify and export the original resource. */
++typedef struct
++{
++	char key[128]; /* Producer-owned identity, independent of LOD/display label. */
++	char modelName[64];
++	int modelIndex;
++	int vertexCount;
++	int polygonCount;
++	int position[3];
++} PsyXInspectorObject;
++
++typedef struct
++{
++	int valid;
++	int primitiveIndex;
++	int textured;
++	int textureOverridden;
++	unsigned short tpage;
++	unsigned short clut;
++	unsigned short u[3];
++	unsigned short v[3];
++	unsigned short sourceU;
++	unsigned short sourceV;
++	unsigned short sourceWidth;
++	unsigned short sourceHeight;
++	char provenance[PSYX_INSPECTOR_LABEL_LENGTH];
++	PsyXInspectorObject object;
++} PsyXInspectorSelection;
++
++/* Normalized window coordinates for a diagnostic, non-depth-tested overlay.
++ * Geometry is refreshed every frame for labelled draw sources. */
++typedef struct
++{
++	float x[3], y[3];
++	unsigned short tpage, clut, u, v, width, height;
++} PsyXInspectorTriangle;
  
  //------------------------------------------------------------------------
  
-@@ -53,6 +66,7 @@ extern int							g_cfg_controllerToSlotMapping[2];
+@@ -53,6 +127,7 @@ extern int							g_cfg_controllerToSlotMapping[2];
  
  /* Game inputs */
  extern GameOnTextInputHandler		g_cfg_gameOnTextInput;
@@ -39,7 +100,7 @@ index 91b0297..b8cad91 100644
  
  /* Graphics configuration */
  extern int							g_cfg_swapInterval;
-@@ -79,6 +93,18 @@ extern void PsyX_SetCursorPosition(int x, int y);
+@@ -79,6 +154,42 @@ extern void PsyX_SetCursorPosition(int x, int y);
  /* Sets mouse relative movement */
  extern void PsyX_SetCursorRelative(int enable);
  
@@ -55,18 +116,62 @@ index 91b0297..b8cad91 100644
 +/* Returns aggregate primitive data for the current rendered frame. */
 +extern void PsyX_GetRenderStats(PsyXRenderStats* stats);
 +
++/* Saves the current window contents to SCREENSHOT.BMP in the working
++   directory. Used by scripted debug captures; unavailable on web/Android. */
++extern void PsyX_TakeScreenshot(void);
++
++/* RGBA texture and texture-region override support. Texture IDs are owned by
++   the caller and must be destroyed with PsyX_DestroyRGBATexture when unused. */
++extern unsigned int PsyX_CreateRGBATexture(int width, int height, const unsigned char* rgbaPixels);
++extern void PsyX_DestroyRGBATexture(unsigned int textureId);
++extern int PsyX_RegisterTextureOverride(const PsyXTextureOverride* textureOverride);
++extern void PsyX_RemoveTextureOverride(int overrideId);
++extern void PsyX_ClearTextureOverrides(void);
++extern void PsyX_SetTextureOverridesEnabled(int enabled);
++extern void PsyX_GetTextureOverrideStats(PsyXTextureOverrideStats* stats);
++
++/* Inspector support. A mouse pick is resolved after the next completed draw
++   stream. Producers may associate a primitive-memory range with a copied,
++   human-readable label; ranges are frame-local and never affect rendering. */
++extern void PsyX_Inspector_RequestPick(int windowX, int windowY);
++extern int PsyX_Inspector_GetSelection(PsyXInspectorSelection* selection);
++extern int PsyX_Inspector_GetTriangle(int index, PsyXInspectorTriangle* triangle);
++extern void PsyX_Inspector_ClearSelection(void);
++extern void PsyX_Inspector_RegisterPrimitiveRange(const void* begin, const void* end, const char* label);
++extern void PsyX_Inspector_RegisterObjectRange(const void* begin, const void* end, const char* label, const PsyXInspectorObject* object);
++
  /* Usually called after ClearOTag/ClearOTagR */
  extern char PsyX_BeginScene(void);
  
-@@ -110,4 +136,4 @@ extern void PsyX_SetSwapInterval(int interval);
+@@ -110,4 +221,4 @@ extern void PsyX_SetSwapInterval(int interval);
  }
  #endif
  
 -#endif
 \ No newline at end of file
 +#endif
+diff --git a/include/PsyX/PsyX_render.h b/include/PsyX/PsyX_render.h
+index ad168c3..ea2ebdb 100644
+--- a/include/PsyX/PsyX_render.h
++++ b/include/PsyX/PsyX_render.h
+@@ -189,6 +189,7 @@ extern void			GR_UpdateVRAM();
+ extern void			GR_ReadFramebufferDataToVRAM();
+ 
+ extern TextureID	GR_CreateRGBATexture(int width, int height, u_char* data /*= nullptr*/);
++extern TextureID	GR_CreateRGBATextureMipmapped(int width, int height, u_char* data /*= nullptr*/);
+ extern ShaderID		GR_Shader_Compile(const char* source, int isPsxShader);
+ 
+ extern void			GR_SetShader(const ShaderID shader);
+@@ -205,6 +206,7 @@ extern void			GR_SetupClipMode(const RECT16* clipRect, int enable);
+ extern void			GR_SetViewPort(int x, int y, int width, int height);
+ extern void			GR_SetTexture(TextureID texture, TexFormat texFormat);
+ extern void			GR_SetOverrideTextureSize(int width, int height);
++extern void			GR_SetOverrideTextureCutout(int enable);
+ extern void			GR_SetWireframe(int enable);
+ 
+ extern void			GR_DestroyTexture(TextureID texture);
 diff --git a/src/PsyX_main.cpp b/src/PsyX_main.cpp
-index f558b40..fd9da94 100644
+index f558b40..ee8f1a0 100644
 --- a/src/PsyX_main.cpp
 +++ b/src/PsyX_main.cpp
 @@ -49,6 +49,9 @@ int							g_cfg_swapInterval = 0;
@@ -162,18 +267,144 @@ index f558b40..fd9da94 100644
  	GR_SwapWindow();
  	
  	SDL_Delay(0);
+@@ -847,18 +879,46 @@ void PsyX_EndScene()
+ #if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__)
+ void PsyX_TakeScreenshot()
+ {
+-	u_char* pixels = (u_char*)malloc(g_windowWidth * g_windowHeight * 4);
+-	
++	const int width = g_windowWidth;
++	const int height = g_windowHeight;
++	const int stride = width * 4;
++
++	if (width <= 0 || height <= 0)
++		return;
++
++	u_char* pixels = (u_char*)malloc((size_t)stride * height);
++	if (!pixels)
++		return;
++
+ #if defined(RENDERER_OGL)
+-	glReadPixels(0, 0, g_windowWidth, g_windowHeight, GL_BGRA, GL_UNSIGNED_BYTE, pixels);
++	glReadPixels(0, 0, width, height, GL_BGRA, GL_UNSIGNED_BYTE, pixels);
+ #elif defined(RENDERER_OGLES)
+-	glReadPixels(0, 0, g_windowWidth, g_windowHeight, GL_RGBA, GL_UNSIGNED_BYTE, pixels);	// FIXME: is that correct format?
++	glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, pixels);	// FIXME: is that correct format?
+ #endif
+ 
+-	SDL_Surface* surface = SDL_CreateRGBSurfaceFrom(pixels, g_windowWidth, g_windowHeight, 8 * 4, g_windowWidth * 4, 0, 0, 0, 0);
++	// glReadPixels returns bottom-up rows; SDL_SaveBMP expects top-down.
++	u_char* swapRow = (u_char*)malloc(stride);
++	if (swapRow)
++	{
++		for (int y = 0; y < height / 2; ++y)
++		{
++			u_char* top = pixels + (size_t)y * stride;
++			u_char* bottom = pixels + (size_t)(height - 1 - y) * stride;
++			memcpy(swapRow, top, stride);
++			memcpy(top, bottom, stride);
++			memcpy(bottom, swapRow, stride);
++		}
++
++		free(swapRow);
++	}
+ 
+-	SDL_SaveBMP(surface, "SCREENSHOT.BMP");
+-	SDL_FreeSurface(surface);
++	SDL_Surface* surface = SDL_CreateRGBSurfaceFrom(pixels, width, height, 8 * 4, stride, 0, 0, 0, 0);
++
++	if (surface)
++	{
++		SDL_SaveBMP(surface, "SCREENSHOT.BMP");
++		SDL_FreeSurface(surface);
++	}
+ 
+ 	free(pixels);
+ }
 diff --git a/src/gpu/PsyX_GPU.cpp b/src/gpu/PsyX_GPU.cpp
-index 6e9e6f6..0ab6f68 100644
+index 6e9e6f6..84049dd 100644
 --- a/src/gpu/PsyX_GPU.cpp
 +++ b/src/gpu/PsyX_GPU.cpp
-@@ -57,6 +57,25 @@ GPUDrawSplit g_splits[MAX_DRAW_SPLITS];
+@@ -8,6 +8,7 @@
+ 
+ #include <assert.h>
+ #include <math.h>
++#include <stdint.h>
+ #include <string.h>
+ 
+ #define GET_TPAGE_FORMAT(tpage) ((TexFormat)((tpage >> 7) & 0x3))
+@@ -29,6 +30,24 @@ TextureID overrideTexture = 0;
+ int overrideTextureWidth = 0;
+ int overrideTextureHeight = 0;
+ 
++static const int MAX_TEXTURE_OVERRIDES = 128;
++static const int OVERRIDE_TEXTURE_UV_SIZE = 255;
++
++struct RegisteredTextureOverride
++{
++	int id;
++	PsyXTextureOverride descriptor;
++};
++
++RegisteredTextureOverride g_textureOverrides[MAX_TEXTURE_OVERRIDES];
++int g_textureOverrideCount = 0;
++int g_nextTextureOverrideId = 1;
++int g_textureOverridesEnabled = 1;
++
++TextureID g_automaticOverrideTexture = 0;
++int g_automaticOverrideTextureWidth = 0;
++int g_automaticOverrideTextureHeight = 0;
++
+ int g_GPUDisabledState = 0;
+ int g_DrawPrimMode = 0;
+ 
+@@ -47,6 +66,12 @@ struct GPUDrawSplit
+ 	u_short			startVertex;
+ 	u_short			numVerts;
+ 
++	int				textureOverridden;
++	unsigned short		inspectorSourceU;
++	unsigned short		inspectorSourceV;
++	unsigned short		inspectorSourceWidth;
++	unsigned short		inspectorSourceHeight;
++
+ 	const char*		debugText;
+ };
+ 
+@@ -57,10 +82,305 @@ GPUDrawSplit g_splits[MAX_DRAW_SPLITS];
  
  int g_vertexIndex = 0;
  int g_splitIndex = 0;
 +PsyXRenderStats g_psyxRenderStats = { 0, 0 };
 +
++static const int MAX_INSPECTOR_RANGES = 2048;
++
++struct InspectorRange
++{
++	uintptr_t begin;
++	uintptr_t end;
++	char label[PSYX_INSPECTOR_LABEL_LENGTH];
++	PsyXInspectorObject object;
++};
++
++InspectorRange g_inspectorRanges[MAX_INSPECTOR_RANGES];
++int g_inspectorRangeCount = 0;
++int g_vertexInspectorRange[MAX_VERTEX_BUFFER_SIZE];
++int g_inspectorPickPending = 0;
++int g_inspectorPickX = 0;
++int g_inspectorPickY = 0;
++PsyXInspectorSelection g_inspectorSelection = {};
++static PsyXInspectorTriangle g_inspectorTriangles[4096];
++static int g_inspectorTriangleCount = 0;
++
++int g_automaticOverrideSourceU = 0;
++int g_automaticOverrideSourceV = 0;
++int g_automaticOverrideSourceWidth = 0;
++int g_automaticOverrideSourceHeight = 0;
++
 +void PsyX_ResetRenderStats()
 +{
++	g_inspectorTriangleCount = 0;
 +	g_psyxRenderStats.vertexCount = 0;
 +	g_psyxRenderStats.drawSplitCount = 0;
 +}
@@ -189,10 +420,523 @@ index 6e9e6f6..0ab6f68 100644
 +	if (stats)
 +		*stats = g_psyxRenderStats;
 +}
++
++void PsyX_Inspector_RequestPick(int windowX, int windowY)
++{
++	g_inspectorPickX = windowX;
++	g_inspectorPickY = windowY;
++	g_inspectorPickPending = 1;
++}
++
++void PsyX_Inspector_ClearSelection()
++{
++	g_inspectorSelection = {};
++	g_inspectorTriangleCount = 0;
++	g_inspectorPickPending = 0;
++}
++
++int PsyX_Inspector_GetTriangle(int index, PsyXInspectorTriangle* triangle)
++{
++	if (!triangle || index < 0 || index >= g_inspectorTriangleCount) return 0;
++	*triangle = g_inspectorTriangles[index];
++	return 1;
++}
++
++int PsyX_Inspector_GetSelection(PsyXInspectorSelection* selection)
++{
++	if (!selection)
++		return 0;
++	*selection = g_inspectorSelection;
++	return selection->valid;
++}
++
++void PsyX_Inspector_RegisterPrimitiveRange(const void* begin, const void* end, const char* label)
++{
++	if (!begin || !end || !label || g_inspectorRangeCount >= MAX_INSPECTOR_RANGES)
++		return;
++
++	const uintptr_t beginAddress = reinterpret_cast<uintptr_t>(begin);
++	const uintptr_t endAddress = reinterpret_cast<uintptr_t>(end);
++	if (endAddress <= beginAddress)
++		return;
++
++	InspectorRange& range = g_inspectorRanges[g_inspectorRangeCount++];
++	memset(&range.object, 0, sizeof(range.object));
++	range.begin = beginAddress;
++	range.end = endAddress;
++	strncpy(range.label, label, sizeof(range.label) - 1);
++	range.label[sizeof(range.label) - 1] = '\0';
++}
++
++void PsyX_Inspector_RegisterObjectRange(const void* begin, const void* end, const char* label, const PsyXInspectorObject* object)
++{
++	const int before = g_inspectorRangeCount;
++	PsyX_Inspector_RegisterPrimitiveRange(begin, end, label);
++	if (object && g_inspectorRangeCount > before)
++	{
++		g_inspectorRanges[before].object = *object;
++		g_inspectorRanges[before].object.key[127] = '\0';
++		g_inspectorRanges[before].object.modelName[63] = '\0';
++	}
++}
++
++static int FindInspectorRange(const void* packet)
++{
++	const uintptr_t address = reinterpret_cast<uintptr_t>(packet);
++	for (int i = g_inspectorRangeCount - 1; i >= 0; --i)
++	{
++		if (address >= g_inspectorRanges[i].begin && address < g_inspectorRanges[i].end)
++			return i;
++	}
++	return -1;
++}
++
++unsigned int PsyX_CreateRGBATexture(int width, int height, const unsigned char* rgbaPixels)
++{
++	if (width <= 0 || height <= 0 || !rgbaPixels)
++		return 0;
++
++	// Fully opaque overrides get mipmaps to stop minification shimmer.
++	// Textures with transparency keep plain filtering so mip averaging cannot
++	// bleed the transparent colour into cutout edges.
++	bool fullyOpaque = true;
++	const unsigned char* pixel = rgbaPixels;
++	for (int i = 0; i < width * height; ++i, pixel += 4)
++	{
++		if (pixel[3] != 255)
++		{
++			fullyOpaque = false;
++			break;
++		}
++	}
++
++	return fullyOpaque
++		? GR_CreateRGBATextureMipmapped(width, height, (u_char*)rgbaPixels)
++		: GR_CreateRGBATexture(width, height, (u_char*)rgbaPixels);
++}
++
++void PsyX_DestroyRGBATexture(unsigned int textureId)
++{
++	if (textureId != 0)
++		GR_DestroyTexture(textureId);
++}
++
++int PsyX_RegisterTextureOverride(const PsyXTextureOverride* textureOverride)
++{
++	if (!textureOverride || textureOverride->textureId == 0 ||
++		textureOverride->width == 0 || textureOverride->height == 0 ||
++		g_textureOverrideCount >= MAX_TEXTURE_OVERRIDES)
++	{
++		return 0;
++	}
++
++	RegisteredTextureOverride* entry = &g_textureOverrides[g_textureOverrideCount++];
++	entry->id = g_nextTextureOverrideId++;
++	if (g_nextTextureOverrideId <= 0)
++		g_nextTextureOverrideId = 1;
++	entry->descriptor = *textureOverride;
++	return entry->id;
++}
++
++void PsyX_RemoveTextureOverride(int overrideId)
++{
++	for (int i = 0; i < g_textureOverrideCount; ++i)
++	{
++		if (g_textureOverrides[i].id != overrideId)
++			continue;
++
++		memmove(&g_textureOverrides[i], &g_textureOverrides[i + 1],
++			sizeof(g_textureOverrides[0]) * (g_textureOverrideCount - i - 1));
++		--g_textureOverrideCount;
++		return;
++	}
++}
++
++void PsyX_ClearTextureOverrides(void)
++{
++	g_textureOverrideCount = 0;
++}
++
++void PsyX_SetTextureOverridesEnabled(int enabled)
++{
++	g_textureOverridesEnabled = enabled != 0;
++}
++
++void PsyX_GetTextureOverrideStats(PsyXTextureOverrideStats* stats)
++{
++	if (!stats)
++		return;
++
++	stats->registeredCount = g_textureOverrideCount;
++	stats->enabled = g_textureOverridesEnabled;
++}
++
++static int ComparableTPage(int tpage)
++{
++	// ABR and dither bits describe the primitive blend state, not its VRAM page.
++	return tpage & 0x19F;
++}
++
++static bool IsInsideOverride(const PsyXTextureOverride& descriptor, const GrVertex* vertices, int vertexCount)
++{
++	for (int i = 0; i < vertexCount; ++i)
++	{
++		const int u = vertices[i].u;
++		const int v = vertices[i].v;
++		if (u < descriptor.u || v < descriptor.v ||
++			u >= descriptor.u + descriptor.width || v >= descriptor.v + descriptor.height)
++		{
++			return false;
++		}
++	}
++
++	return true;
++}
++
++static void ApplyTextureOverride(GrVertex* vertices, int vertexCount)
++{
++	g_automaticOverrideTexture = 0;
++	g_automaticOverrideTextureWidth = 0;
++	g_automaticOverrideTextureHeight = 0;
++	g_automaticOverrideSourceU = 0;
++	g_automaticOverrideSourceV = 0;
++	g_automaticOverrideSourceWidth = 0;
++	g_automaticOverrideSourceHeight = 0;
++
++	if (!g_textureOverridesEnabled || overrideTexture != 0 || !vertices || vertexCount <= 0)
++		return;
++
++	const int page = ComparableTPage((int)vertices[0].page);
++	const int clut = (int)vertices[0].clut;
++	for (int i = 0; i < g_textureOverrideCount; ++i)
++	{
++		const PsyXTextureOverride& descriptor = g_textureOverrides[i].descriptor;
++		if (ComparableTPage(descriptor.tpage) != page || descriptor.clut != clut ||
++			!IsInsideOverride(descriptor, vertices, vertexCount))
++		{
++			continue;
++		}
++
++		for (int vertexIndex = 0; vertexIndex < vertexCount; ++vertexIndex)
++		{
++			const int sourceU = vertices[vertexIndex].u - descriptor.u;
++			const int sourceV = vertices[vertexIndex].v - descriptor.v;
++			vertices[vertexIndex].u = (u_char)(sourceU * OVERRIDE_TEXTURE_UV_SIZE / descriptor.width);
++			vertices[vertexIndex].v = (u_char)(sourceV * OVERRIDE_TEXTURE_UV_SIZE / descriptor.height);
++		}
++
++		g_automaticOverrideTexture = descriptor.textureId;
++		g_automaticOverrideTextureWidth = OVERRIDE_TEXTURE_UV_SIZE;
++		g_automaticOverrideTextureHeight = OVERRIDE_TEXTURE_UV_SIZE;
++		g_automaticOverrideSourceU = descriptor.u;
++		g_automaticOverrideSourceV = descriptor.v;
++		g_automaticOverrideSourceWidth = descriptor.width;
++		g_automaticOverrideSourceHeight = descriptor.height;
++		return;
++	}
++}
++
++static void PrepareTextureOverride(short page, short clut, unsigned char* uv0, unsigned char* uv1,
++	unsigned char* uv2, unsigned char* uv3, int vertexCount)
++{
++	GrVertex probeVertices[4] = {};
++	unsigned char* uvs[4] = { uv0, uv1, uv2, uv3 };
++	for (int i = 0; i < vertexCount; ++i)
++	{
++		probeVertices[i].u = uvs[i][0];
++		probeVertices[i].v = uvs[i][1];
++		probeVertices[i].page = page;
++		probeVertices[i].clut = clut;
++	}
++
++	ApplyTextureOverride(probeVertices, vertexCount);
++}
++
++static void PrepareTextureOverrideRect(short page, short clut, unsigned char* uv, short width, short height)
++{
++	if (int(uv[0]) + width > 255) width = 255 - uv[0];
++	if (int(uv[1]) + height > 255) height = 255 - uv[1];
++
++	unsigned char uv0[] = { uv[0], uv[1] };
++	unsigned char uv1[] = { uv[0], (unsigned char)(uv[1] + height) };
++	unsigned char uv2[] = { (unsigned char)(uv[0] + width), (unsigned char)(uv[1] + height) };
++	unsigned char uv3[] = { (unsigned char)(uv[0] + width), uv[1] };
++	PrepareTextureOverride(page, clut, uv0, uv1, uv2, uv3, 4);
++}
  
  void ClearSplits()
  {
-@@ -785,6 +804,7 @@ void DrawAllSplits()
+ 	currentSplitDebugText = nullptr;
++	g_automaticOverrideTexture = 0;
++	g_automaticOverrideTextureWidth = 0;
++	g_automaticOverrideTextureHeight = 0;
++	g_automaticOverrideSourceU = 0;
++	g_automaticOverrideSourceV = 0;
++	g_automaticOverrideSourceWidth = 0;
++	g_automaticOverrideSourceHeight = 0;
+ 	g_vertexIndex = 0;
+ 	g_splitIndex = 0;
+ 	g_splits[0].texFormat = (TexFormat)0xFFFF;
+@@ -332,6 +652,8 @@ void MakeTexcoordQuad(GrVertex* vertex, unsigned char* uv0, unsigned char* uv1,
+ 	vertex[3].dither = dither;
+ 	vertex[3].page = page;
+ 	vertex[3].clut = clut;
++
++	ApplyTextureOverride(vertex, 4);
+ 	/*
+ 	if (g_cfg_bilinearFiltering)
+ 	{
+@@ -377,6 +699,8 @@ void MakeTexcoordTriangle(GrVertex* vertex, unsigned char* uv0, unsigned char* u
+ 	vertex[2].dither = dither;
+ 	vertex[2].page = page;
+ 	vertex[2].clut = clut;
++
++	ApplyTextureOverride(vertex, 3);
+ 	/*
+ 	if (g_cfg_bilinearFiltering)
+ 	{
+@@ -447,6 +771,8 @@ void MakeTexcoordRect(GrVertex* vertex, unsigned char* uv, short page, short clu
+ 		vertex[3].tcx = -1;
+ 		vertex[3].tcy = -1;
+ 	}
++
++	ApplyTextureOverride(vertex, 4);
+ }
+ 
+ void MakeTexcoordLineZero(GrVertex* vertex, unsigned char dither)
+@@ -678,11 +1004,11 @@ static void AddSplit(bool semiTrans, bool textured)
+ 	TexFormat texFormat = GET_TPAGE_FORMAT(tpage);
+ 	TextureID textureId = textured ? g_vramTexture : g_whiteTexture;
+ 
+-	if (textured && overrideTexture != 0)
++	if (textured && (overrideTexture != 0 || g_automaticOverrideTexture != 0))
+ 	{
+ 		// override texture format, zero tpage
+ 		texFormat = TF_32_BIT_RGBA;
+-		textureId = overrideTexture;
++		textureId = overrideTexture != 0 ? overrideTexture : g_automaticOverrideTexture;
+ 	}
+ 
+ 	// FIXME: compare drawing environment too?
+@@ -695,6 +1021,11 @@ static void AddSplit(bool semiTrans, bool textured)
+ 		curSplit.drawenv.clip.w == activeDrawEnv.clip.w &&
+ 		curSplit.drawenv.clip.h == activeDrawEnv.clip.h &&
+ 		curSplit.drawenv.dfe == activeDrawEnv.dfe &&
++		curSplit.textureOverridden == (g_automaticOverrideTexture != 0) &&
++		curSplit.inspectorSourceU == (unsigned short)g_automaticOverrideSourceU &&
++		curSplit.inspectorSourceV == (unsigned short)g_automaticOverrideSourceV &&
++		curSplit.inspectorSourceWidth == (unsigned short)g_automaticOverrideSourceWidth &&
++		curSplit.inspectorSourceHeight == (unsigned short)g_automaticOverrideSourceHeight &&
+ 		curSplit.debugText == currentSplitDebugText)
+ 	{
+ 		return;
+@@ -717,8 +1048,13 @@ static void AddSplit(bool semiTrans, bool textured)
+ 	split.dispenv = activeDispEnv;
+ 	split.debugText = currentSplitDebugText;
+ 
+-	split.drawenv.tw.w = overrideTextureWidth;
+-	split.drawenv.tw.h = overrideTextureHeight;
++	split.drawenv.tw.w = overrideTexture != 0 ? overrideTextureWidth : g_automaticOverrideTextureWidth;
++	split.drawenv.tw.h = overrideTexture != 0 ? overrideTextureHeight : g_automaticOverrideTextureHeight;
++	split.textureOverridden = g_automaticOverrideTexture != 0;
++	split.inspectorSourceU = (unsigned short)g_automaticOverrideSourceU;
++	split.inspectorSourceV = (unsigned short)g_automaticOverrideSourceV;
++	split.inspectorSourceWidth = (unsigned short)g_automaticOverrideSourceWidth;
++	split.inspectorSourceHeight = (unsigned short)g_automaticOverrideSourceHeight;
+ 
+ 	split.startVertex = g_vertexIndex;
+ 	split.numVerts = 0;
+@@ -734,7 +1070,10 @@ void DrawSplit(const GPUDrawSplit& split)
+ 	GR_SetTexture(split.textureId, split.texFormat);
+ 
+ 	if (split.texFormat == TF_32_BIT_RGBA)
++	{
+ 		GR_SetOverrideTextureSize(split.drawenv.tw.w, split.drawenv.tw.h);
++		GR_SetOverrideTextureCutout(split.textureOverridden);
++	}
+ 
+ 	const bool drawOnScreen = split.drawenv.dfe;
+ 	GR_SetupClipMode(&split.drawenv.clip, drawOnScreen);
+@@ -748,8 +1087,178 @@ void DrawSplit(const GPUDrawSplit& split)
+ 		GR_PopDebugLabel();
+ }
+ 
++static const GPUDrawSplit* FindSplitForVertex(int vertexIndex)
++{
++	for (int i = 1; i <= g_splitIndex; ++i)
++	{
++		const GPUDrawSplit& split = g_splits[i];
++		if (vertexIndex >= split.startVertex && vertexIndex < split.startVertex + split.numVerts)
++			return &split;
++	}
++	return nullptr;
++}
++
++static bool ProjectInspectorTriangle(int vertex, const GPUDrawSplit& split, PsyXInspectorTriangle& triangle)
++{
++	if (split.dispenv.disp.w <= 0 || split.dispenv.disp.h <= 0) return false;
++	for (int i = 0; i < 3; ++i)
++	{
++		const GrVertex& v = g_vertexBuffer[vertex + i];
++#if USE_PGXP
++		// Mirror GR_SetOffscreenState and GTE_PERSPECTIVE_CORRECTION.
++		const float aspect = (float)g_windowWidth / g_windowHeight * (240.0f / 320.0f);
++		if (v.scr_h > 100.0f)
++		{
++			if (v.z <= 0.0f) return false;
++			const float scale = cosf(0.9265f * 0.5f) / sinf(0.9265f * 0.5f) * v.scr_h / v.z;
++			triangle.x[i] = ((v.x + 0.5f) * scale / aspect + v.ofsX) * 0.5f + 0.5f;
++			triangle.y[i] = ((v.y + 0.5f) * scale + v.ofsY) * 0.5f + 0.5f;
++		}
++		else
++		{
++			triangle.x[i] = v.x / aspect + 0.5f;
++			triangle.y[i] = v.y + 0.5f;
++		}
++#else
++		triangle.x[i] = (float)v.x / split.dispenv.disp.w;
++		triangle.y[i] = (float)v.y / split.dispenv.disp.h;
++#endif
++		if (!(triangle.x[i] > -10000.0f && triangle.x[i] < 10000.0f &&
++			triangle.y[i] > -10000.0f && triangle.y[i] < 10000.0f)) return false;
++	}
++	return true;
++}
++
++static bool PointInsideTriangle(float px, float py, const PsyXInspectorTriangle& t)
++{
++	if ((t.x[1] - t.x[0]) * (t.y[2] - t.y[0]) == (t.y[1] - t.y[0]) * (t.x[2] - t.x[0])) return false;
++	const float ab = (px - t.x[1]) * (t.y[0] - t.y[1]) - (t.x[0] - t.x[1]) * (py - t.y[1]);
++	const float bc = (px - t.x[2]) * (t.y[1] - t.y[2]) - (t.x[1] - t.x[2]) * (py - t.y[2]);
++	const float ca = (px - t.x[0]) * (t.y[2] - t.y[0]) - (t.x[2] - t.x[0]) * (py - t.y[0]);
++	return (ab >= 0.0f && bc >= 0.0f && ca >= 0.0f) || (ab <= 0.0f && bc <= 0.0f && ca <= 0.0f);
++}
++
++static void ResolveInspectorPick()
++{
++	if (!g_inspectorPickPending)
++		return;
++
++	g_inspectorPickPending = 0;
++	g_inspectorSelection = {};
++	int windowWidth = 0;
++	int windowHeight = 0;
++	PsyX_GetScreenSize(&windowWidth, &windowHeight);
++	if (windowWidth <= 0 || windowHeight <= 0)
++		return;
++
++	int selectedVertex = -1;
++	for (int vertexIndex = 0; vertexIndex + 2 < g_vertexIndex; vertexIndex += 3)
++	{
++		const GPUDrawSplit* split = FindSplitForVertex(vertexIndex);
++		if (!split || !split->drawenv.dfe)
++			continue;
++
++		const float pickX = (float)g_inspectorPickX / windowWidth;
++		const float pickY = (float)g_inspectorPickY / windowHeight;
++		PsyXInspectorTriangle triangle;
++		if (ProjectInspectorTriangle(vertexIndex, *split, triangle) && PointInsideTriangle(pickX, pickY, triangle))
++		{
++			selectedVertex = vertexIndex;
++		}
++	}
++
++	if (selectedVertex < 0)
++		return;
++
++	const GPUDrawSplit* split = FindSplitForVertex(selectedVertex);
++	const GrVertex* vertices = &g_vertexBuffer[selectedVertex];
++	PsyXInspectorSelection& selection = g_inspectorSelection;
++	selection.valid = 1;
++	selection.primitiveIndex = selectedVertex / 3;
++	selection.tpage = (unsigned short)vertices[0].page;
++	selection.clut = (unsigned short)vertices[0].clut;
++	selection.textured = selection.tpage != 0 || selection.clut != 0;
++	for (int i = 0; i < 3; ++i)
++	{
++		selection.u[i] = vertices[i].u;
++		selection.v[i] = vertices[i].v;
++	}
++	if (split && split->textureOverridden)
++	{
++		selection.textureOverridden = 1;
++		selection.sourceU = split->inspectorSourceU;
++		selection.sourceV = split->inspectorSourceV;
++		selection.sourceWidth = split->inspectorSourceWidth;
++		selection.sourceHeight = split->inspectorSourceHeight;
++	}
++	else
++	{
++		unsigned short minimumU = selection.u[0], maximumU = selection.u[0];
++		unsigned short minimumV = selection.v[0], maximumV = selection.v[0];
++		for (int i = 1; i < 3; ++i)
++		{
++			if (selection.u[i] < minimumU) minimumU = selection.u[i];
++			if (selection.u[i] > maximumU) maximumU = selection.u[i];
++			if (selection.v[i] < minimumV) minimumV = selection.v[i];
++			if (selection.v[i] > maximumV) maximumV = selection.v[i];
++		}
++		selection.sourceU = minimumU;
++		selection.sourceV = minimumV;
++		selection.sourceWidth = maximumU - minimumU + 1;
++		selection.sourceHeight = maximumV - minimumV + 1;
++	}
++
++	const int rangeIndex = g_vertexInspectorRange[selectedVertex];
++	if (rangeIndex >= 0 && rangeIndex < g_inspectorRangeCount)
++	{
++		strncpy(selection.provenance, g_inspectorRanges[rangeIndex].label, sizeof(selection.provenance) - 1);
++		selection.provenance[sizeof(selection.provenance) - 1] = '\0';
++		selection.object = g_inspectorRanges[rangeIndex].object;
++	}
++}
++
+ extern int g_dbg_polygonSelected;
+ 
++static void CaptureInspectorGeometry(bool picked)
++{
++	if (!g_inspectorSelection.valid) return;
++	for (int vertex = 0; vertex + 2 < g_vertexIndex && g_inspectorTriangleCount < 4096; vertex += 3)
++	{
++		const int range = g_vertexInspectorRange[vertex];
++		if (g_inspectorSelection.provenance[0])
++		{
++			if (range < 0 || range >= g_inspectorRangeCount) continue;
++			if (g_inspectorSelection.object.key[0])
++			{
++				if (strcmp(g_inspectorRanges[range].object.key, g_inspectorSelection.object.key) != 0) continue;
++				g_inspectorSelection.object = g_inspectorRanges[range].object;
++			}
++			else if (strcmp(g_inspectorRanges[range].label, g_inspectorSelection.provenance) != 0) continue;
++		}
++		else if (!picked || vertex / 3 != g_inspectorSelection.primitiveIndex) continue;
++		const GPUDrawSplit* split = FindSplitForVertex(vertex);
++		if (!split || !split->drawenv.dfe || split->dispenv.disp.w <= 0 || split->dispenv.disp.h <= 0) continue;
++		PsyXInspectorTriangle& triangle = g_inspectorTriangles[g_inspectorTriangleCount];
++		if (!ProjectInspectorTriangle(vertex, *split, triangle)) continue;
++		const GrVertex* vertices = &g_vertexBuffer[vertex];
++		triangle.tpage = (unsigned short)vertices[0].page;
++		triangle.clut = (unsigned short)vertices[0].clut;
++		unsigned short minU = vertices[0].u, maxU = vertices[0].u, minV = vertices[0].v, maxV = vertices[0].v;
++		for (int i = 1; i < 3; ++i)
++		{
++			if (vertices[i].u < minU) minU = vertices[i].u;
++			if (vertices[i].u > maxU) maxU = vertices[i].u;
++			if (vertices[i].v < minV) minV = vertices[i].v;
++			if (vertices[i].v > maxV) maxV = vertices[i].v;
++		}
++		triangle.u = split->textureOverridden ? split->inspectorSourceU : minU;
++		triangle.v = split->textureOverridden ? split->inspectorSourceV : minV;
++		triangle.width = split->textureOverridden ? split->inspectorSourceWidth : maxU - minU + 1;
++		triangle.height = split->textureOverridden ? split->inspectorSourceHeight : maxV - minV + 1;
++		++g_inspectorTriangleCount;
++	}
++}
++
+ //
+ // Draws all polygons after AggregatePTAG
+ //
+@@ -785,11 +1294,17 @@ void DrawAllSplits()
  #endif // _DEBUG
  
  	// next code ideally should be called before EndScene
@@ -200,6 +944,90 @@ index 6e9e6f6..0ab6f68 100644
  	GR_UpdateVertexBuffer(g_vertexBuffer, g_vertexIndex);
  
  	for (int i = 1; i <= g_splitIndex; i++)
+ 		DrawSplit(g_splits[i]);
+ 
++	const bool inspectorPicked = g_inspectorPickPending != 0;
++	ResolveInspectorPick();
++	CaptureInspectorGeometry(inspectorPicked);
++	g_inspectorRangeCount = 0;
++
+ 	ClearSplits();
+ }
+ 
+@@ -1118,6 +1633,7 @@ static int ProcessFlatPoly(P_TAG* polyTag)
+ 		// It is an official hack from SCE devs to not use DR_TPAGE and instead use null polygon
+ 		if (!IsNull(poly))
+ 		{
++			PrepareTextureOverride(poly->tpage, poly->clut, &poly->u0, &poly->u1, &poly->u2, NULL, 3);
+ 			AddSplit(semiTrans, true);
+ 
+ 			GrVertex* firstVertex = &g_vertexBuffer[g_vertexIndex];
+@@ -1157,6 +1673,7 @@ static int ProcessFlatPoly(P_TAG* polyTag)
+ 		POLY_FT4* poly = (POLY_FT4*)polyTag;
+ 		activeDrawEnv.tpage = poly->tpage;
+ 
++		PrepareTextureOverride(poly->tpage, poly->clut, &poly->u0, &poly->u1, &poly->u3, &poly->u2, 4);
+ 		AddSplit(semiTrans, true);
+ 
+ 		GrVertex* firstVertex = &g_vertexBuffer[g_vertexIndex];
+@@ -1214,6 +1731,7 @@ static int ProcessGouraudPoly(P_TAG* polyTag)
+ 		POLY_GT3* poly = (POLY_GT3*)polyTag;
+ 		activeDrawEnv.tpage = poly->tpage;
+ 
++		PrepareTextureOverride(poly->tpage, poly->clut, &poly->u0, &poly->u1, &poly->u2, NULL, 3);
+ 		AddSplit(semiTrans, true);
+ 
+ 		GrVertex* firstVertex = &g_vertexBuffer[g_vertexIndex];
+@@ -1253,6 +1771,7 @@ static int ProcessGouraudPoly(P_TAG* polyTag)
+ 		POLY_GT4* poly = (POLY_GT4*)polyTag;
+ 		activeDrawEnv.tpage = poly->tpage;
+ 
++		PrepareTextureOverride(poly->tpage, poly->clut, &poly->u0, &poly->u1, &poly->u3, &poly->u2, 4);
+ 		AddSplit(semiTrans, true);
+ 
+ 		GrVertex* firstVertex = &g_vertexBuffer[g_vertexIndex];
+@@ -1311,6 +1830,7 @@ static int ProcessTileAndSprt(P_TAG* polyTag)
+ 	{
+ 		SPRT* poly = (SPRT*)polyTag;
+ 
++		PrepareTextureOverrideRect(activeDrawEnv.tpage, poly->clut, &poly->u0, poly->w, poly->h);
+ 		AddSplit(semiTrans, true);
+ 
+ 		GrVertex* firstVertex = &g_vertexBuffer[g_vertexIndex];
+@@ -1371,6 +1891,7 @@ static int ProcessTileAndSprt(P_TAG* polyTag)
+ 	{
+ 		SPRT_8* poly = (SPRT_8*)polyTag;
+ 
++		PrepareTextureOverrideRect(activeDrawEnv.tpage, poly->clut, &poly->u0, 8, 8);
+ 		AddSplit(semiTrans, true);
+ 
+ 		GrVertex* firstVertex = &g_vertexBuffer[g_vertexIndex];
+@@ -1411,6 +1932,7 @@ static int ProcessTileAndSprt(P_TAG* polyTag)
+ 	{
+ 		SPRT_16* poly = (SPRT_16*)polyTag;
+ 
++		PrepareTextureOverrideRect(activeDrawEnv.tpage, poly->clut, &poly->u0, 16, 16);
+ 		AddSplit(semiTrans, true);
+ 
+ 		GrVertex* firstVertex = &g_vertexBuffer[g_vertexIndex];
+@@ -1533,6 +2055,8 @@ static int ProcessPsyXPrims(P_TAG* polyTag)
+ int ParsePrimitive(P_TAG* polyTag)
+ {
+ 	const int primType = polyTag->code & 0xF0;
++	const int firstVertex = g_vertexIndex;
++	const int inspectorRange = FindInspectorRange(polyTag);
+ 
+ 	int primLength = 0;
+ 
+@@ -1615,5 +2139,8 @@ int ParsePrimitive(P_TAG* polyTag)
+ 		eprinterr("Unhandled zero length %0x primitive\n", primType);
+ 	}
+ 
++	for (int vertexIndex = firstVertex; vertexIndex < g_vertexIndex; ++vertexIndex)
++		g_vertexInspectorRange[vertexIndex] = inspectorRange;
++
+ 	return primLength;
+ }
 diff --git a/src/gpu/PsyX_GPU.h b/src/gpu/PsyX_GPU.h
 index 07c5512..57de5b0 100644
 --- a/src/gpu/PsyX_GPU.h
@@ -251,6 +1079,168 @@ index d073549..258faf1 100644
 -}
 \ No newline at end of file
 +}
+diff --git a/src/render/PsyX_render.cpp b/src/render/PsyX_render.cpp
+index 9324471..5704a2b 100644
+--- a/src/render/PsyX_render.cpp
++++ b/src/render/PsyX_render.cpp
+@@ -348,6 +348,29 @@ int GR_InitialiseGLContext(char* windowName, int fullscreen)
+ }
+ #endif
+ 
++#ifndef GL_TEXTURE_MAX_ANISOTROPY_EXT
++#define GL_TEXTURE_MAX_ANISOTROPY_EXT 0x84FE
++#endif
++#ifndef GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT
++#define GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT 0x84FF
++#endif
++
++// Optional GL_EXT_texture_filter_anisotropic. The glad loader does not expose
++// its token, so it is queried through SDL; the core glTexParameterf() call is
++// used, which drivers accept for the extension enum. A value <= 1 leaves it off.
++static GLfloat g_maxAnisotropy = 0.0f;
++
++// Anisotropy sharpens mipmapped overrides viewed at grazing angles (roads,
++// ground) without changing the PSX nearest-filtered path.
++static void GR_ApplyOverrideAnisotropy()
++{
++	if (g_maxAnisotropy <= 1.0f)
++		return;
++
++	const GLfloat level = g_maxAnisotropy > 4.0f ? 4.0f : g_maxAnisotropy;
++	glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY_EXT, level);
++}
++
+ int GR_InitialiseGLExt()
+ {
+ #ifdef USE_GLAD
+@@ -367,6 +390,16 @@ int GR_InitialiseGLExt()
+ 	const char* glslVersionStr = (const char*)glGetString(GL_SHADING_LANGUAGE_VERSION);
+ 	eprintf("*GLSL version: %s\n", glslVersionStr);
+ 
++	if (SDL_GL_ExtensionSupported("GL_EXT_texture_filter_anisotropic"))
++	{
++		glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT, &g_maxAnisotropy);
++		eprintf("*Anisotropic filtering: up to %.0fx\n", g_maxAnisotropy);
++	}
++	else
++	{
++		eprintf("*Anisotropic filtering: not supported by this driver\n");
++	}
++
+ 	return 1;
+ }
+ 
+@@ -493,6 +526,7 @@ typedef struct
+ 	GLint projection3DLoc;
+ 	GLint bilinearFilterLoc;
+ 	GLint texelSizeLoc;
++	GLint overrideCutoutLoc;
+ 	GLint texLoc;
+ 	GLint lutLoc;
+ #endif
+@@ -508,6 +542,7 @@ PSXGPU_Shader g_gpu_shader_32_rgba;
+ GLint u_projectionLoc;
+ GLint u_projection3DLoc;
+ GLint u_texelSizeLoc;
++GLint u_overrideCutoutLoc;
+ 
+ #define GPU_SAMPLE_TEXTURE_4BIT_FUNC\
+     "   // returns 16 bit colour\n"\
+@@ -634,9 +669,12 @@ const char* gpu_shader_16 = GPU_FRAGMENT_SAMPLE_SHADER(16);
+ const char* gpu_shader_32_rgba = 
+ 	"	uniform sampler2D s_texture;\n"\
+ 	"	uniform vec2 texelSize;\n"\
++	"	uniform int overrideCutout;\n"\
+ 	"	void main() {\n"\
+ 	"		vec2 tc = v_texcoord.xy * texelSize + texelSize * 0.5;\n"\
+ 	"		vec4 color = texture2D(s_texture, tc);\n"\
++	"		// Cutout only for override images; original PSX behaviour is unchanged.\n"\
++	"		if (overrideCutout != 0 && color.a < 0.5) { discard; }\n"\
+ 	"		fragColor = dither(color * v_color);\n"\
+ 	"	}\n";
+ 
+@@ -916,6 +954,26 @@ TextureID GR_CreateRGBATexture(int width, int height, u_char* data /*= nullptr*/
+ 	return newTexture;
+ }
+ 
++TextureID GR_CreateRGBATextureMipmapped(int width, int height, u_char* data /*= nullptr*/)
++{
++	TextureID newTexture;
++	glGenTextures(1, &newTexture);
++
++	glBindTexture(GL_TEXTURE_2D, newTexture);
++	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, g_cfg_bilinearFiltering ? GL_LINEAR : GL_NEAREST);
++	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, g_cfg_bilinearFiltering ? GL_LINEAR_MIPMAP_LINEAR : GL_NEAREST_MIPMAP_NEAREST);
++
++	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
++	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
++
++	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, data);
++	glGenerateMipmap(GL_TEXTURE_2D);
++	GR_ApplyOverrideAnisotropy();
++	glBindTexture(GL_TEXTURE_2D, 0);
++
++	return newTexture;
++}
++
+ void GR_CompilePSXShader(PSXGPU_Shader* sh, const char* source)
+ {
+ 	sh->shader = GR_Shader_Compile(source, true);
+@@ -924,6 +982,7 @@ void GR_CompilePSXShader(PSXGPU_Shader* sh, const char* source)
+ 	sh->bilinearFilterLoc = glGetUniformLocation(sh->shader, "bilinearFilter");
+ 	sh->projectionLoc = glGetUniformLocation(sh->shader, "Projection");
+ 	sh->texelSizeLoc = glGetUniformLocation(sh->shader, "texelSize");
++	sh->overrideCutoutLoc = glGetUniformLocation(sh->shader, "overrideCutout");
+ 	sh->texLoc = glGetUniformLocation(sh->shader, "s_texture");
+ 	sh->lutLoc = glGetUniformLocation(sh->shader, "s_rgLut");
+ #if USE_PGXP
+@@ -1249,6 +1308,7 @@ void GR_SetTexture(TextureID texture, TexFormat texFormat)
+ 		texLoc = g_gpu_shader_4.texLoc;
+ 		lutLoc = g_gpu_shader_4.lutLoc;
+ 		u_texelSizeLoc = -1;
++		u_overrideCutoutLoc = -1;
+ 		break;
+ 	case TF_8_BIT:
+ 		GR_SetShader(g_gpu_shader_8.shader);
+@@ -1258,6 +1318,7 @@ void GR_SetTexture(TextureID texture, TexFormat texFormat)
+ 		texLoc = g_gpu_shader_8.texLoc;
+ 		lutLoc = g_gpu_shader_8.lutLoc;
+ 		u_texelSizeLoc = -1;
++		u_overrideCutoutLoc = -1;
+ 		break;
+ 	case TF_16_BIT:
+ 		GR_SetShader(g_gpu_shader_16.shader);
+@@ -1267,6 +1328,7 @@ void GR_SetTexture(TextureID texture, TexFormat texFormat)
+ 		texLoc = g_gpu_shader_16.texLoc;
+ 		lutLoc = g_gpu_shader_16.lutLoc;
+ 		u_texelSizeLoc = -1;
++		u_overrideCutoutLoc = -1;
+ 		break;
+ 	case TF_32_BIT_RGBA:
+ 		GR_SetShader(g_gpu_shader_32_rgba.shader);
+@@ -1276,6 +1338,7 @@ void GR_SetTexture(TextureID texture, TexFormat texFormat)
+ 		texLoc = g_gpu_shader_32_rgba.texLoc;
+ 		lutLoc = -1;
+ 		u_texelSizeLoc = g_gpu_shader_32_rgba.texelSizeLoc;
++		u_overrideCutoutLoc = g_gpu_shader_32_rgba.overrideCutoutLoc;
+ 		break;
+ 	}
+ 
+@@ -1316,6 +1379,14 @@ void GR_SetOverrideTextureSize(int width, int height)
+ 	glUniform2fv(u_texelSizeLoc, 1, vec);
+ }
+ 
++void GR_SetOverrideTextureCutout(int enable)
++{
++	if (u_overrideCutoutLoc == -1)
++		return;
++
++	glUniform1i(u_overrideCutoutLoc, enable ? 1 : 0);
++}
++
+ void GR_DestroyTexture(TextureID texture)
+ {
+ 	if (texture == -1)
 diff --git a/third_party/imgui/.editorconfig b/third_party/imgui/.editorconfig
 new file mode 100644
 index 0000000..5adfefa

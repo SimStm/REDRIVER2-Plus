@@ -5,6 +5,7 @@ extern int game_over;
 extern int gDemoLevel;
 
 extern XZPAIR gStartPos;
+extern int gStartDir;
 
 extern int xa_timeout;
 extern int FrameCnt;

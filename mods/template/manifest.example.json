@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "id": "water-hd",
+  "name": "Water HD",
+  "description": "High-resolution water textures.",
+  "textures": [
+    {
+      "texture": "SEA",
+      "file": "assets/LEVELS/CHICAGO/PAGE_12/SEA.png"
+    }
+  ]
+}

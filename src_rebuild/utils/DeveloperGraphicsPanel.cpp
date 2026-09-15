@@ -1,6 +1,8 @@
 #include "DeveloperGraphicsPanel.h"
 
+#include "DeveloperDebugStart.h"
 #include "DeveloperGraphicsSettings.h"
+#include "HdTextureOverrides.h"
 
 #if defined(_WIN32) || defined(__linux__)
 
@@ -45,7 +47,10 @@ namespace
 bool g_initialised = false;
 bool g_visible = false;
 bool g_captureGameInput = true;
+bool g_inspectorPickMode = false;
 char g_persistenceStatus[96] = "Session settings only";
+char g_inspectorExportModId[48] = "inspector-export";
+char g_inspectorExportStatus[192] = "Select a texture to export it into a new or existing mod directory.";
 
 void UpdateInputCapture()
 {
@@ -187,6 +192,289 @@ void DrawGameDebugTab()
 			ImGui::TextUnformatted("No road or junction metadata is available for this surface.");
 		}
 	}
+
+	if (ImGui::CollapsingHeader("Reproduce this state (launch snapshot)", ImGuiTreeNodeFlags_DefaultOpen))
+	{
+		ImGui::TextWrapped("Capture the current mission, vehicle and position, then start a Debug or Release_dev build directly in it without the frontend or intro.");
+		ImGui::SameLine();
+		HelpMarker("The generated command uses -mission, -playercar, -startpos, -players and -chase, which require a Debug or Release_dev build. A replay or attract demo is reproduced with -replay instead. developer_graphics.ini and installed mods still load normally.");
+
+		static char command[512] = "";
+		static char snapshotStatus[256] = "";
+
+		if (ImGui::Button("Refresh launch command"))
+		{
+			if (!DeveloperDebugStart_BuildCommandLine(command, sizeof(command)))
+				snprintf(command, sizeof(command), "No reproducible session yet; start a mission or a replay first.");
+		}
+		ImGui::SameLine();
+		if (ImGui::Button("Copy launch command"))
+		{
+			if (DeveloperDebugStart_BuildCommandLine(command, sizeof(command)))
+				ImGui::SetClipboardText(command);
+			else
+				snprintf(command, sizeof(command), "No reproducible session yet; start a mission or a replay first.");
+		}
+		ImGui::SameLine();
+		if (ImGui::Button("Save as debug start"))
+		{
+			DeveloperDebugStart_SaveSnapshot(snapshotStatus, sizeof(snapshotStatus));
+			DeveloperDebugStart_BuildCommandLine(command, sizeof(command));
+		}
+
+		if (command[0] != '\0')
+			ImGui::TextWrapped("Command: %s", command);
+
+		if (ImGui::Button("Enable debug start"))
+			DeveloperDebugStart_SetEnabled(1, snapshotStatus, sizeof(snapshotStatus));
+		ImGui::SameLine();
+		if (ImGui::Button("Disable debug start"))
+			DeveloperDebugStart_SetEnabled(0, snapshotStatus, sizeof(snapshotStatus));
+		ImGui::SameLine();
+		if (ImGui::Button("Delete snapshot"))
+			DeveloperDebugStart_Clear(snapshotStatus, sizeof(snapshotStatus));
+
+		if (snapshotStatus[0] == '\0')
+			DeveloperDebugStart_GetStatus(snapshotStatus, sizeof(snapshotStatus));
+
+		ImGui::TextWrapped("%s", snapshotStatus);
+		ImGui::TextDisabled("%s is applied at startup only when no -mission or -replay argument is present.", DeveloperDebugStart_GetFilePath());
+	}
+}
+
+void DrawThreeDDebugTab()
+{
+	static bool showHighlight = true;
+	static bool showLabel = true;
+	static float highlightColour[4] = { 0.1f, 0.85f, 1.0f, 0.25f };
+	HdTextureOverrideDiagnostics diagnostics = {};
+	HdTextureOverrides_GetDiagnostics(&diagnostics);
+	ImGui::TextUnformatted("Texture and mod inspector");
+	ImGui::SameLine();
+	HelpMarker("Click picking resolves the visible PSX primitive, its page, CLUT, UV region, and any renderer provenance. Car bodies and city tiles currently provide named provenance; uninstrumented render paths still expose their GPU texture details.");
+	ImGui::Text("Mods: %d discovered | %d enabled | %d texture entries", diagnostics.discoveredMods,
+		diagnostics.activeMods, diagnostics.manifestEntries);
+	ImGui::Text("Loaded RGBA images: %d | active renderer mappings: %d", diagnostics.loadedImages,
+		diagnostics.registeredOverrides);
+	ImGui::TextWrapped("%s", diagnostics.status);
+
+	ImGui::Separator();
+	ImGui::Checkbox("Pick visible primitive", &g_inspectorPickMode);
+	ImGui::SameLine();
+	HelpMarker("With this enabled, left-click a visible game primitive outside the ImGui windows. The selection is resolved from the completed PSX draw stream on the next frame.");
+	ImGui::Checkbox("Highlight selected draw source", &showHighlight);
+	ImGui::Checkbox("Show selection label", &showLabel);
+	ImGui::ColorEdit4("Highlight colour", highlightColour);
+	if (ImGui::Button("Clear selection")) PsyX_Inspector_ClearSelection();
+	if (ImGui::Button("Reload mod manifests and images"))
+		HdTextureOverrides_Reload();
+	ImGui::SameLine();
+	HelpMarker("Reloads JSON manifests and PNG files, then re-registers texture regions already loaded by the current level. It never reloads or edits original game data.");
+	PsyXInspectorSelection selection = {};
+	const bool hasSelection = PsyX_Inspector_GetSelection(&selection) != 0;
+	HdTextureInspectorInfo textureInfo = {};
+	const bool hasTexture = hasSelection && HdTextureOverrides_FindTextureInfo(selection.tpage, selection.clut,
+		selection.sourceU, selection.sourceV, selection.sourceWidth, selection.sourceHeight, &textureInfo);
+	int selectedCarId = -1;
+	const bool hasCar = hasSelection && sscanf(selection.provenance, "Car #%d", &selectedCarId) == 1 &&
+		selectedCarId >= 0 && selectedCarId < MAX_CARS;
+	if (hasSelection)
+	{
+		ImGui::Text("Selected primitive: %d", selection.primitiveIndex);
+		ImGui::Text("Texture page: %u | CLUT: %u", selection.tpage, selection.clut);
+		ImGui::Text("UV: (%u, %u), (%u, %u), (%u, %u)", selection.u[0], selection.v[0],
+			selection.u[1], selection.v[1], selection.u[2], selection.v[2]);
+		ImGui::Text("Source region: %u, %u — %u x %u%s", selection.sourceU, selection.sourceV,
+			selection.sourceWidth, selection.sourceHeight, selection.textureOverridden ? " (override source)" : "");
+		if (hasTexture)
+		{
+			ImGui::Text("Texture: %s | level page %d | index %d", textureInfo.textureName,
+				textureInfo.texturePage, textureInfo.textureIndex);
+			if (textureInfo.hasOverride)
+				ImGui::Text("Override: %s :: %s", textureInfo.modId, textureInfo.overridePath);
+			ImGui::Text("Full texture: %u x %u at UV %u, %u", textureInfo.width, textureInfo.height, textureInfo.u, textureInfo.v);
+			if (textureInfo.previewTextureId)
+			{
+				ImGui::TextUnformatted("Loaded override preview (not the original VRAM texture)");
+				const float size = ImGui::GetContentRegionAvail().x < 192.0f ? ImGui::GetContentRegionAvail().x : 192.0f;
+				ImGui::Image((ImTextureID)textureInfo.previewTextureId, ImVec2(size, size));
+			}
+		}
+		else if (selection.textured)
+		{
+			ImGui::TextDisabled("Texture name is not registered by the current level texture set.");
+		}
+		ImGui::TextWrapped("Object: %s", selection.provenance[0] ? selection.provenance : "Unlabelled draw source");
+		if (selection.object.key[0])
+		{
+			ImGui::Text("Object key: %s", selection.object.key);
+			ImGui::Text("Model name: %s | source slot: %d", selection.object.modelName, selection.object.modelIndex);
+			ImGui::Text("Rendered model: %d polygons | %d vertices (0 = not reported)", selection.object.polygonCount, selection.object.vertexCount);
+			ImGui::Text("World position: %d, %d, %d", selection.object.position[0], selection.object.position[1], selection.object.position[2]);
+			ImGui::TextDisabled("Object highlighting groups submitted triangles across textures and LOD changes. The texture above belongs to the clicked face.");
+		}
+		if (hasCar)
+		{
+			const int* position = car_data[selectedCarId].hd.where.t;
+			ImGui::Text("Live car position (game units): %d, %d, %d", position[0], position[1], position[2]);
+			ImGui::Text("Live model slot: %d | speed: %d", car_data[selectedCarId].ap.model, car_data[selectedCarId].hd.speed);
+			ImGui::TextDisabled("Tracking uses the current car slot; reselect after changing mission or spawning cars.");
+		}
+	}
+	else
+	{
+		ImGui::TextDisabled("No primitive selected. Enable picking and click a visible element outside this panel.");
+	}
+	ImGui::SeparatorText("Export");
+	ImGui::InputText("Export mod id", g_inspectorExportModId, sizeof(g_inspectorExportModId));
+	char modsDirectory[512];
+	HdTextureOverrides_GetModsDirectory(modsDirectory, sizeof(modsDirectory));
+	ImGui::TextWrapped("Mods root: %s", modsDirectory);
+	ImGui::TextWrapped("Texture destination: %s/assets/inspector/\nModel destination: %s/assets/models/", g_inspectorExportModId, g_inspectorExportModId);
+#ifdef _WIN32
+	const bool exportSupported = true;
+#else
+	const bool exportSupported = false;
+	ImGui::TextDisabled("PNG and OBJ export currently require Windows.");
+#endif
+	ImGui::BeginDisabled(!hasTexture || !exportSupported);
+	if (ImGui::Button("Export original full texture (PNG)"))
+		HdTextureOverrides_ExportTexture(selection.tpage, selection.clut, textureInfo.u, textureInfo.v,
+			textureInfo.width, textureInfo.height, textureInfo.textureName, textureInfo.texturePage,
+			textureInfo.textureIndex, g_inspectorExportModId, g_inspectorExportStatus, sizeof(g_inspectorExportStatus));
+	ImGui::EndDisabled();
+	if (!hasTexture) ImGui::TextDisabled("PNG unavailable: select a primitive inside a registered texture region.");
+	ImGui::BeginDisabled(!hasCar || !exportSupported);
+	if (ImGui::Button("Export selected car geometry (OBJ)"))
+		Cars_ExportInspectorModel(selectedCarId, g_inspectorExportModId, g_inspectorExportStatus, sizeof(g_inspectorExportStatus));
+	ImGui::EndDisabled();
+	if (!hasCar) ImGui::TextDisabled("OBJ unavailable: only labelled car bodies currently support model export.");
+	ImGui::BeginDisabled(!hasSelection);
+	char report[2048];
+	snprintf(report, sizeof(report),
+		"REDRIVER2-Plus inspector selection\nObject: %s\nPrimitive: %d\nGPU page: %u\nCLUT: %u\n"
+		"UV: %u,%u / %u,%u / %u,%u\nTexture: %s\nLevel page/index: %d/%d\n"
+		"Full region: %u,%u %ux%u\nLoaded override mod: %s\nOverride path: %s\nMods root: %s\n"
+		"Object key: %s\nModel name: %s\nModel slot: %d\nVertices/polygons: %d/%d\nWorld position: %d,%d,%d\n"
+		"Model archive filename: not recorded by this draw source\nPicking: draw-stream approximation, not depth-tested\n",
+		selection.provenance[0] ? selection.provenance : "Unlabelled", selection.primitiveIndex, selection.tpage, selection.clut,
+		selection.u[0], selection.v[0], selection.u[1], selection.v[1], selection.u[2], selection.v[2],
+		hasTexture ? textureInfo.textureName : "Unregistered", hasTexture ? textureInfo.texturePage : -1,
+		hasTexture ? textureInfo.textureIndex : -1, textureInfo.u, textureInfo.v, textureInfo.width, textureInfo.height,
+		textureInfo.hasOverride ? textureInfo.modId : "None", textureInfo.overridePath, modsDirectory,
+		selection.object.key, selection.object.modelName, selection.object.modelIndex, selection.object.vertexCount,
+		selection.object.polygonCount, selection.object.position[0], selection.object.position[1], selection.object.position[2]);
+	if (ImGui::Button("Copy selection details")) ImGui::SetClipboardText(report);
+	ImGui::BeginDisabled(!exportSupported);
+	if (ImGui::Button("Export selection details (TXT)"))
+		HdTextureOverrides_ExportInspectorReport(g_inspectorExportModId, report, g_inspectorExportStatus, sizeof(g_inspectorExportStatus));
+	ImGui::EndDisabled();
+	ImGui::EndDisabled();
+	ImGui::TextWrapped("%s", g_inspectorExportStatus);
+	ImGui::TextDisabled("Each successful export replaces that file. Failed writes preserve the previous export. PNG exports original VRAM pixels; edit the PNG, declare it in manifest.json, enable the mod and reload above. OBJ is geometry-only; model re-import is not implemented.");
+	ImGui::TextDisabled("Names are runtime texture names and model slots, not inferred archive filenames. Picking/highlighting is a diagnostic draw-stream approximation, not a depth-tested editor selection.");
+
+	PsyXInspectorTriangle triangle;
+	int triangleCount = 0;
+	const ImVec2 display = ImGui::GetIO().DisplaySize;
+	ImDrawList* overlay = ImGui::GetBackgroundDrawList();
+	const ImU32 fill = ImGui::ColorConvertFloat4ToU32(ImVec4(highlightColour[0], highlightColour[1], highlightColour[2], highlightColour[3]));
+	const ImU32 edge = ImGui::ColorConvertFloat4ToU32(ImVec4(highlightColour[0], highlightColour[1], highlightColour[2], 1.0f));
+	while (PsyX_Inspector_GetTriangle(triangleCount, &triangle))
+	{
+		ImVec2 points[3];
+		for (int i = 0; i < 3; ++i) points[i] = ImVec2(triangle.x[i] * display.x, triangle.y[i] * display.y);
+		if (showHighlight)
+		{
+			overlay->AddTriangleFilled(points[0], points[1], points[2], fill);
+			overlay->AddTriangle(points[0], points[1], points[2], edge);
+		}
+		if (showLabel && triangleCount == 0)
+			overlay->AddText(points[0], edge, selection.provenance[0] ? selection.provenance : "Selected triangle");
+		++triangleCount;
+	}
+	ImGui::Text("Highlighted triangles this frame: %d (limit 4096)", triangleCount);
+	if (hasSelection && !triangleCount) ImGui::TextDisabled("Selected draw source not found this frame. Unlabelled primitives require another click; labelled sources track while rendered.");
+
+	if (hasSelection && ImGui::CollapsingHeader("Textures on the selected object", ImGuiTreeNodeFlags_DefaultOpen))
+	{
+		struct ObjectTexture { HdTextureInspectorInfo info; unsigned short page, clut; };
+		static ObjectTexture textures[128];
+		static int textureCount = 0;
+		static char cachedKey[128] = {};
+		static double nextRefresh = 0;
+		const char* key = selection.object.key[0] ? selection.object.key : selection.provenance;
+		if (!triangleCount || strcmp(cachedKey, key) || ImGui::GetTime() >= nextRefresh)
+		{
+			snprintf(cachedKey, sizeof(cachedKey), "%s", key);
+			nextRefresh = ImGui::GetTime() + 0.25;
+			textureCount = 0;
+			for (int i = 0; i < triangleCount && textureCount < 128; ++i)
+			{
+				PsyX_Inspector_GetTriangle(i, &triangle);
+				bool found = false;
+				for (int j = 0; j < textureCount; ++j)
+				{
+					const ObjectTexture& item = textures[j];
+					if (item.page == triangle.tpage && item.clut == triangle.clut && triangle.u >= item.info.u && triangle.v >= item.info.v &&
+						triangle.u + triangle.width <= item.info.u + item.info.width && triangle.v + triangle.height <= item.info.v + item.info.height)
+					{ found = true; break; }
+				}
+				if (found) continue;
+				ObjectTexture item = {};
+				if (!HdTextureOverrides_FindTextureInfo(triangle.tpage, triangle.clut, triangle.u, triangle.v, triangle.width, triangle.height, &item.info)) continue;
+				item.page = triangle.tpage; item.clut = triangle.clut;
+				textures[textureCount++] = item;
+			}
+		}
+		ImGui::Text("%d registered texture/palette bindings (limit 128)", textureCount);
+		ImGui::TextDisabled("Uses submitted geometry, not all materials in the source archive. Unregistered regions are omitted.");
+		for (int i = 0; i < textureCount; ++i)
+		{
+			const ObjectTexture& item = textures[i];
+			ImGui::PushID(i);
+			ImGui::Text("%s | page %d / index %d | %u x %u | CLUT %u", item.info.textureName, item.info.texturePage,
+				item.info.textureIndex, item.info.width, item.info.height, item.clut);
+			ImGui::BeginDisabled(!exportSupported);
+			if (ImGui::Button("Export this texture"))
+				HdTextureOverrides_ExportTexture(item.page, item.clut, item.info.u, item.info.v, item.info.width, item.info.height,
+					item.info.textureName, item.info.texturePage, item.info.textureIndex, g_inspectorExportModId, g_inspectorExportStatus, sizeof(g_inspectorExportStatus));
+			ImGui::EndDisabled();
+			ImGui::PopID();
+		}
+	}
+
+	if (ImGui::CollapsingHeader("Enabled mod order", ImGuiTreeNodeFlags_DefaultOpen))
+	{
+		ImGui::TextDisabled("Later enabled mods have higher texture-override priority.");
+		for (int i = 0; i < HdTextureOverrides_GetModCount(); ++i)
+		{
+			HdTextureOverrideModInfo mod = {};
+			if (!HdTextureOverrides_GetModInfo(i, &mod))
+				continue;
+			ImGui::BulletText("%s%s — %s (%d texture entries)", mod.enabled ? "" : "[disabled] ",
+				mod.id, mod.name, mod.textureEntries);
+			if (mod.description[0] != '\0')
+				ImGui::TextDisabled("    %s", mod.description);
+		}
+	}
+
+	if (ImGui::CollapsingHeader("Declared texture overrides", ImGuiTreeNodeFlags_DefaultOpen))
+	{
+		ImGui::TextDisabled("Entries are resolved by texture name and can be narrowed with texturePage and textureIndex in manifest.json.");
+		ImGui::BeginChild("ModTextureEntries", ImVec2(0.0f, 190.0f), true);
+		for (int i = 0; i < HdTextureOverrides_GetEntryCount(); ++i)
+		{
+			HdTextureOverrideEntryInfo entry = {};
+			if (!HdTextureOverrides_GetEntryInfo(i, &entry))
+				continue;
+			ImGui::Text("%s :: %s", entry.modId, entry.textureName);
+			ImGui::TextDisabled("%s%s", entry.active ? "loaded — " : "pending — ", entry.assetPath);
+			if (entry.texturePage >= 0 || entry.textureIndex >= 0)
+				ImGui::TextDisabled("    page: %d  index: %d", entry.texturePage, entry.textureIndex);
+		}
+		ImGui::EndChild();
+	}
 }
 
 void DrawAboutTab()
@@ -229,6 +517,13 @@ int HandleSDLEvent(const SDL_Event* event)
 		return 1;
 	}
 
+	if (g_visible && g_inspectorPickMode && event->type == SDL_MOUSEBUTTONDOWN &&
+		event->button.button == SDL_BUTTON_LEFT && !ImGui::IsWindowHovered(ImGuiHoveredFlags_AnyWindow))
+	{
+		PsyX_Inspector_RequestPick(event->button.x, event->button.y);
+		return 1;
+	}
+
 	if (!g_visible || !g_captureGameInput)
 		return 0;
 
@@ -256,9 +551,12 @@ void RenderOverlay()
 	ImGui_ImplSDL2_NewFrame();
 	ImGui::NewFrame();
 
-	ImGui::SetNextWindowSize(ImVec2(520.0f, 0.0f), ImGuiCond_FirstUseEver);
+	const ImVec2 displaySize = ImGui::GetIO().DisplaySize;
+	ImGui::SetNextWindowSizeConstraints(ImVec2(320.0f, 240.0f), ImVec2(displaySize.x, displaySize.y * 0.95f));
+	ImGui::SetNextWindowSize(ImVec2(620.0f, displaySize.y * 0.85f), ImGuiCond_FirstUseEver);
 	if (ImGui::Begin("Developer Graphics Panel", &g_visible))
 	{
+		ImGui::PushTextWrapPos(0.0f);
 		ImGui::TextUnformatted("F11 closes this panel. Settings are live.");
 		if (ImGui::Checkbox("Capture game input while panel is open", &g_captureGameInput))
 			UpdateInputCapture();
@@ -292,6 +590,25 @@ void RenderOverlay()
 				ImGui::Text("Draw splits: %d", renderStats.drawSplitCount);
 
 				ImGui::Separator();
+				HdTextureOverrideDiagnostics hdTextures = {};
+				HdTextureOverrides_GetDiagnostics(&hdTextures);
+				if (hdTextures.supported)
+				{
+					bool enabled = hdTextures.enabled != 0;
+					if (ImGui::Checkbox("Enable HD texture overrides", &enabled))
+						HdTextureOverrides_SetEnabled(enabled);
+					ImGui::SameLine();
+					HelpMarker("This switch takes effect on the next primitive without reloading the level. It only changes the renderer binding: original TIM and VRAM uploads continue and are used immediately when disabled. Changes to the manifest or PNG files require a level reload or restart.");
+				}
+				else
+				{
+					ImGui::TextUnformatted("HD texture PNG loading is not available on this platform.");
+				}
+				ImGui::Text("Mods: %d discovered | %d enabled | %d texture entries", hdTextures.discoveredMods, hdTextures.activeMods, hdTextures.manifestEntries);
+				ImGui::Text("RGBA images: %d | registered mappings: %d", hdTextures.loadedImages, hdTextures.registeredOverrides);
+				ImGui::TextWrapped("%s", hdTextures.status);
+
+				ImGui::Separator();
 				if (ImGui::Button("Save developer settings"))
 					snprintf(g_persistenceStatus, sizeof(g_persistenceStatus), "%s", DeveloperGraphicsSettings_SaveRuntime() ? "Saved developer_graphics.ini" : "Save failed; settings remain in session");
 				ImGui::SameLine();
@@ -310,6 +627,12 @@ void RenderOverlay()
 				ImGui::EndTabItem();
 			}
 
+			if (ImGui::BeginTabItem("3D Debug"))
+			{
+				DrawThreeDDebugTab();
+				ImGui::EndTabItem();
+			}
+
 			if (ImGui::BeginTabItem("About"))
 			{
 				DrawAboutTab();
@@ -317,6 +640,7 @@ void RenderOverlay()
 			}
 			ImGui::EndTabBar();
 		}
+		ImGui::PopTextWrapPos();
 	}
 	ImGui::End();
 

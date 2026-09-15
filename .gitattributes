@@ -1,0 +1,5 @@
+# Patch files applied with `git apply` carry a binary payload. Keep them LF so a
+# Windows checkout (core.autocrlf=true) does not rewrite line endings and break
+# patch application in a fresh clone. They are generated artifacts, so they are
+# excluded from text diffs and `git diff --check` whitespace warnings.
+patches/**/*.patch text eol=lf -diff

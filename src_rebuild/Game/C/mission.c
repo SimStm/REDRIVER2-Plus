@@ -510,7 +510,7 @@ void LoadMission(int missionnum)
 #ifdef DEBUG_OPTIONS
 		if(gStartPos.x != 0 && gStartPos.z != 0)
 		{
-			PlayerStartInfo[0]->rotation = 0;
+			PlayerStartInfo[0]->rotation = (gStartDir >= 0) ? (gStartDir & 0xFFF) : 0;
 			PlayerStartInfo[0]->position.vx = gStartPos.x;
 			PlayerStartInfo[0]->position.vz = gStartPos.z;
 		}

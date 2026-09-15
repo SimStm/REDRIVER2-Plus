@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "mods": [
+    {
+      "id": "water-hd",
+      "enabled": true
+    },
+    {
+      "id": "car-x",
+      "enabled": false
+    }
+  ]
+}

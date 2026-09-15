@@ -45,6 +45,7 @@ extern void DrawCar(CAR_DATA *cp, int view); // 0x000210B8
 #ifndef PSX
 // [A] loads car model from file
 char* LoadCarModelFromFile(char* dest, int modelNumber, int type);
+bool Cars_ExportInspectorModel(int carId, const char* modId, char* status, int statusCapacity);
 #endif
 
 extern MODEL* GetCarModel(char *src, char **dest, int KeepNormals); // 0x00065134
