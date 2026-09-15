@@ -1,7 +1,7 @@
 ---
 type: Discussion
 title: Recommended sequence for renderer modernization
-status: exploring
+status: roadmap-adopted
 created: 2026-09-15
 updated: 2026-09-15
 tags: [discussions, rendering, experiments, pbr]
@@ -9,17 +9,29 @@ tags: [discussions, rendering, experiments, pbr]
 
 # Recommended sequence for renderer modernization
 
-This is a sequence to discuss, not an adopted roadmap or authorization to run
-experiments. No milestones below have been executed as part of this discussion.
-See the [main record](index.md) for evidence, assumptions and unresolved decisions.
+This note explains the technical sequence behind the
+[adopted renderer roadmap](../../roadmap/planned/renderer-modernization.md).
+The user selected a playground-first approach on 2026-09-15. No milestones below
+have been executed as part of this discussion. See the [main record](index.md)
+for evidence, assumptions and unresolved decisions.
 No calendar estimates or performance numbers are asserted without measurement.
 
 ![Suggested exploration sequence with decision gates](diagrams/exploration-sequence.png)
 
+## Adopted prerequisite: the playable playground
+
+Implement and validate [playground milestones P1-P4](../../roadmap/planned/playable-testing-playground.md)
+using the existing renderer before the modern mesh experiment in step 3 below
+(roadmap R2). This fixture supplies a drivable floor, legacy-rendered obstacles,
+stable scene/spawn/camera identity, captures and safe reset/teardown.
+Read-only baseline/contract work can precede it. Menu integration is P5; JSON,
+an editor and cross-city assets do not block the handoff. Keep original-city
+tests alongside the playground throughout modernization.
+
 ## 0. Define the first product target
 
 Choose a specific result, such as a static custom object with controllable PBR
-lighting in an existing city, while preserving the normal game mode. Decide
+lighting in the dedicated playground, while preserving the normal game mode. Decide
 initial platforms, representative hardware, resolution, frame-time/memory
 budgets and the desired visual relationship to the original art.
 
@@ -73,6 +85,8 @@ Use a synthetic mesh first, without adding an importer dependency. Draw it
 through an experimental modern submission path on the existing OpenGL backend
 when capabilities permit. Share one device/context and explicit state boundaries.
 Do not attempt OpenGL/Vulkan interoperation as the first integration mechanism.
+Start in the validated playground with legacy-rendered floor/obstacles, then
+repeat the integration checks in an original city before advancing to materials.
 
 Prove camera alignment, coordinate scale and depth by moving the camera around
 the object and behind legacy walls. Test mutual occlusion, near clipping,
@@ -109,6 +123,12 @@ Make any visual/collision mismatch explicit.
 **Exit evidence:** one static custom asset imports consistently, survives reload
 and unload, rejects unsupported input clearly and draws through the proven bridge.
 
+The user selected Meshy via the implementation agent's configured MCP for the
+first prompt-generated external fixture. Discover the tool schema, generate one
+static prop with supported PBR options and retain the export and provenance.
+Follow the [roadmap workflow](../../roadmap/planned/renderer-modernization.md#meshy-mcp-test-asset-workflow).
+The generation service is not needed to build the playground or run regressions.
+
 ## 5. Add a reference PBR material and simple Forward lighting
 
 Start with a metallic/roughness model, correct normals, base colour and one
@@ -125,6 +145,8 @@ lighting/IBL when needed, with explicit ownership of generated resources.
 Leave legacy content in its compatibility shading mode initially. Define an
 opt-in conversion policy for assets whose colours already encode lighting.
 Avoid two sources of baked and dynamic illumination being applied accidentally.
+Validate the retained Meshy asset's actual map bindings and colour spaces under
+the same controlled lights; keep analytic samples alongside generated assets.
 
 **Exit evidence:** coherent material response under moving lights, documented
 colour-space handling, stable legacy output and measured cost. This reference
@@ -203,18 +225,15 @@ to a city. Increasing draw distance alone cannot make missing data available.
 checks. Keep visual loading, gameplay compatibility and playable-map support
 as separate claims and later roadmap scopes.
 
-## Before any roadmap entry
+## Roadmap adoption and first implementation boundary
 
-The discussion should first settle the desired initial outcome, platform/hardware
-target, compatibility requirements, ownership boundaries and first measurable
-experiment. That bounded experiment can then become a roadmap proposal; it is
-not necessary to run these experiments before documenting their adopted scope.
-
-**Suggested first scope if adopted:** prove a switchable synthetic static mesh
-sharing camera and depth with the original renderer on an existing desktop
-target. Keep PBR, asset import and alternative backends as subsequent scopes.
-This is smaller than the earlier conceptual mesh-plus-PBR example because it
-isolates the most fundamental integration risk first.
+The user has now adopted a playground-first track. Start implementation with
+its session/world contract (P1), followed by the minimal drivable fixture P2-P4.
+Then prove a switchable synthetic static mesh sharing camera/depth with that
+fixture (renderer R2, step 3 here). PBR, asset import and alternative backends
+remain later stages. Initial platform/hardware budgets and ownership details
+are resolved within the first bounded milestones, not silently assumed complete.
+See both linked roadmaps for acceptance criteria and completion requirements.
 
 ## What would change this recommendation?
 

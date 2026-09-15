@@ -93,17 +93,20 @@ def architecture():
 
 
 def sequence():
-    image, draw = canvas(1370, 'Recommended sequence: prove one boundary at a time',
-                         'EXPLORING / NOT A ROADMAP  |  No experiment has been executed  |  2026-09-15')
+    image, draw = canvas(1550, 'Adopted sequence: playground before modern rendering',
+                         'PLANNED / NOT IMPLEMENTED  |  Technical choices remain gated  |  2026-09-15')
     stages = [
+        ('P1-P4  Build the minimum playable playground first',
+         ['Existing renderer, drivable floor, obstacles, fixed camera/spawn and safe reset/exit.',
+          'Gate: validated fixture and baseline; menu P5 follows, JSON/editor are deferred.']),
         ('0-2  Define target, measure baseline, specify contracts',
          ['Choose the first visible result and hardware; trace one object to the renderer.',
           'Gate: reproducible comparison and an explicit scene/depth boundary.']),
-        ('3  Prove a synthetic unlit mesh in the original world',
+        ('3  Prove an unlit mesh in the playground, then an original city',
          ['Share camera and depth; verify occlusion, clipping, HUD and legacy state.',
           'Gate: reliable hybrid rendering and a toggle restoring the original output.']),
         ('4-5  Import one static asset; establish reference PBR',
-         ['Bound the asset format; add normals, colour-space handling and one light.',
+         ['Use Meshy MCP test assets; validate normals, PBR maps and one-light response.',
           'Gate: correct material response, resource lifetime and measured cost.']),
         ('6-7  Expand lighting and select a measured pipeline',
          ['Add shadows and AO separately; compare Forward with the relevant candidate.',
@@ -120,8 +123,8 @@ def sequence():
         if i:
             arrow(draw, [(750, y - 30), (750, y)])
         box(draw, (75, y, 1425, y + 150), title, lines, True)
-    text(draw, (75, 1270), 'Before roadmap adoption: agree on the target, compatibility requirements and first bounded experiment.', 24, INK)
-    text(draw, (75, 1310), 'Suggested first scope: step 3 with only the necessary baseline and contract work from steps 0-2.', 24, MUTED)
+    text(draw, (75, 1450), 'Roadmaps: playground 13 -> renderer 14. Read-only renderer audits may precede the playground handoff.', 24, INK)
+    text(draw, (75, 1490), 'Keep original-city regression scenes; a controlled test pad does not cover every legacy rendering path.', 24, MUTED)
     image.save(OUT / 'exploration-sequence.png')
 
 

@@ -1,7 +1,7 @@
 ---
 type: Discussion
 title: Renderer modernization while retaining PsyCross compatibility
-status: exploring
+status: roadmap-adopted
 created: 2026-09-15
 updated: 2026-09-15
 tags: [discussions, architecture, rendering, psycross, pbr, modding]
@@ -20,11 +20,14 @@ introduce a richer scene submission path alongside the legacy graphics path.
 Refine graphics backend boundaries incrementally. Replacing the whole
 compatibility layer is not a prerequisite for these goals.
 
-The user authorized documenting this discussion and maintaining such records
-in future conversations. The user requested a recommended sequence **before**
-creating a roadmap entry. No rendering implementation, experiment execution,
-backend selection, pipeline selection, schedule, or platform expansion has
-been authorized by this record. The sequence below remains a recommendation.
+After the initial exploration, the user requested roadmap adoption on 2026-09-15
+with the dedicated playground implemented first. The
+[renderer roadmap](../../roadmap/planned/renderer-modernization.md) and
+[playground roadmap](../../roadmap/planned/playable-testing-playground.md)
+now govern the staged plan. Playground P1-P4 are the prerequisite for the first
+modern in-game mesh slice (R2); renderer audits can happen earlier.
+Backend/pipeline choices and hardware budgets remain decision gates.
+Creating these records does not start implementation or establish shipped support.
 
 ## Reading guide
 
@@ -134,10 +137,11 @@ correctly occlude and be occluded by legacy geometry. PSX ordering and special
 blend behaviour need explicit compatibility treatment; shared depth may require
 an adapter or a prepass rather than direct reuse. This is an open technical risk.
 
-The first modern slice should use a synthetic static mesh, one material and one
-controllable light inside a reproducible game scene. Preserve original assets
-and simulation. Use OpenGL for this first slice if its available capabilities
-suffice; a future backend should exercise a meaningful, tested interface.
+The first modern slice uses a synthetic unlit static mesh in the validated
+playground, followed by materials and a controllable light. This supersedes the
+earlier combined mesh-plus-PBR example. Preserve original assets and simulation;
+repeat integration checks in original cities. Use OpenGL initially if its
+capabilities suffice; a future backend exercises a meaningful, tested interface.
 
 ## Feature implications
 
@@ -171,22 +175,65 @@ suffice; a future backend should exercise a meaningful, tested interface.
    but significantly expands migration scope. Reconsider only if evidence shows
    the bridge cannot satisfy the desired product and maintenance constraints.
 
-## Questions to settle before roadmap adoption
+## Meshy MCP for external PBR test assets
+
+**User-selected workflow, 2026-09-15:** use Meshy through MCP to generate 3D
+objects with PBR materials from prompts for the external-asset experiments.
+The user reports that the MCP is configured on the implementation agent.
+This session has not verified that configuration or generated an asset.
+
+The [renderer roadmap](../../roadmap/planned/renderer-modernization.md) places
+this workflow in R3 (static import) and R4 (PBR validation), after the playground
+and synthetic geometry/depth bridge. Meshy generation is not a prerequisite for
+the procedural floor or simple obstacles. The game will consume retained local
+assets; it does not need an MCP connection at runtime.
+
+Discover the actual MCP tool schemas on the configured agent. Request PBR maps
+where supported by the chosen generation model, and verify the exported material
+references. The [Meshy Text to 3D API](https://docs.meshy.ai/en/api/text-to-3d)
+documents PBR controls and GLB output, but model restrictions exist and the MCP
+wrapper may expose different names/options. A generated preview alone is not
+evidence of correct in-game material setup.
+
+Start with one static prop and a material-focused prompt, for example:
+"A single freestanding painted steel bollard, simple cylindrical silhouette,
+matte yellow paint with small exposed metal areas, no base scene or text."
+This is a draft prompt, not a submitted generation job. Specify actual budgets
+through supported settings and inspect the result; the prompt is not validation.
+
+Retain the prompt, parameters/version exposed by the service, task ID, date,
+mesh/maps and hashes in fixture metadata. Normalize scale/orientation through
+recorded conversion, validate UVs/normals/tangents and PBR channel/colour-space
+conventions, and add a separate collision proxy if needed. Keep a fixed object
+placement, camera and lighting setup for regression captures. Preserve downloaded
+assets rather than regenerating them during tests; outputs may vary for the
+same prompt. Keep analytic material samples for diagnosing shader correctness.
+Do not store credentials or temporary signed URLs in project knowledge.
+
+This selects the authoring tool, not a final game import format or a graphics
+backend. The existing asset import and PBR milestones still need implementation.
+
+## Decisions remaining within the adopted roadmap
 
 - What is the first visible goal: original assets with optional enhancements,
   or new PBR assets in a more remastered art direction?
 - What hardware, resolution, frame-time and memory budgets matter first?
 - Are Windows/Linux the first experimental targets? When is Apple support needed?
-- Is initial custom content static scenery, cars, characters, or a playable map?
 - Which legacy behaviours must remain visually exact in compatibility mode?
-- Is a small shared OpenGL scene/depth prototype the desired first milestone?
 
-These are pending product decisions, not assumed user preferences. Provisional
-defaults for discussion are static scenery, a faithful fallback and a small
-OpenGL experiment on an existing desktop target.
+The adopted plan starts with a finite playable playground, then an unlit static
+mesh/depth prototype, static asset import and PBR. A faithful fallback remains
+part of the plan. Hardware/platform details and the final pipeline/backend
+choices are pending, with OpenGL on an existing desktop target the initial approach.
 
 ## Related project records
 
+- [Playable testing playground discussion](../playable-testing-playground/index.md):
+  the first implementation stage and controlled graphics test environment.
+- [Playground roadmap](../../roadmap/planned/playable-testing-playground.md):
+  minimum handoff P1-P4; Take a Ride integration follows at P5.
+- [Renderer modernization roadmap](../../roadmap/planned/renderer-modernization.md):
+  the adopted staged plan, distinct from bounded legacy graphics improvements.
 - [Model round trips](../../roadmap/planned/model-export-import-roundtrip.md)
 - [Asset identity](../../roadmap/planned/asset-catalog-identity.md)
 - [Tool interoperability](../../roadmap/planned/modding-toolchain-integration.md)
@@ -195,9 +242,9 @@ OpenGL experiment on an existing desktop target.
   explicitly excludes arbitrary PBR conversion and major renderer replacement.
 - [Implemented texture alpha semantics](../../product/texture-alpha-semantics.md)
 
-The planned records are context only. They neither implement nor authorize
-this broader modernization, and need not all be completed before a synthetic
-experiment. Add links to adopted scopes here if that decision is made later.
+The playground and renderer records document adopted plans, not implemented
+features. Other listed plans provide related context and are not blanket
+prerequisites for this track. Verify actual dependency evidence before coding.
 
 ## External technical references
 
@@ -232,3 +279,32 @@ exploration note. Refined the recommendation: prove shared camera/depth and
 legacy compatibility before PBR complexity; evaluate pipelines and APIs through
 separate gates; custom playable maps remain a distinct gameplay/tooling effort.
 The user explicitly requested exploration before a new roadmap entry.
+
+### 2026-09-15 - Companion playable playground
+
+The user endorsed the sequence as a sound direction and asked whether a separate
+flat driving playground could be generated in code or JSON and selected through
+Take a Ride. Opened a linked discussion with source evidence for level loading,
+wheel surfaces, object collision and frontend integration. No new roadmap scope
+or implementation was requested. A playable playground can help repeatable
+graphics experiments, but is not required before the synthetic rendering slice;
+it adds world initialization and collision work of its own.
+
+### 2026-09-15 - Adopt playground-first execution
+
+User requested linked roadmaps and chose the dedicated playground before modern
+rendering work. Created a renderer roadmap because the previous record was a
+discussion only; the existing graphics-quality roadmap excludes broad renderer
+replacement. The new track is playground P1-P4, then renderer R2 and later work.
+P5 menu integration can proceed after handoff without blocking rendering. This
+supersedes the prior optional-playground recommendation. Original-city tests
+remain necessary; the controlled fixture alone cannot cover streaming and all
+legacy effects. No implementation was performed.
+
+### 2026-09-15 - Meshy MCP selected for generated PBR fixtures
+
+User asked to include prompt-based Meshy generation in the rendering discussion
+and roadmap and stated the MCP is configured on the implementation agent.
+Added the workflow to R3/R4 with local fixture retention, material validation and
+provenance. This does not request generation in the documentation task or add
+a runtime service dependency, and does not block the minimum playground.

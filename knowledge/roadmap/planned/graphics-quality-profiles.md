@@ -26,6 +26,11 @@ This record does not authorize arbitrary PBR conversion, ray tracing, new art, m
 
 ## Dependencies and risks
 
+The broader [renderer modernization roadmap](renderer-modernization.md) owns
+modern scene submission, PBR and backend migration experiments and links its
+[playground prerequisite](playable-testing-playground.md). This record remains
+focused on bounded improvements and profiles for implemented settings.
+
 Order 12 after the relevant correctness and measurement work in [01](../done/texture-alpha-semantics.md), [02](../done/texture-flicker-diagnostics.md), [10](runtime-settings-gui.md) and [11](draw-distance-streaming.md). Smaller independent improvements need only their actual prerequisites.
 
 ## Suggested execution order

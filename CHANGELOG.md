@@ -10,6 +10,11 @@ where release policy permits it.
 
 ### Added
 
+- Linked playground and renderer-modernization roadmaps, with a validated
+  minimum playground preceding modern scene experiments and original-city
+  regression checks retained alongside the dedicated test environment.
+- A planned Meshy MCP workflow for prompt-generated PBR test assets, with
+  export validation and reproducible local fixtures for renderer development.
 - A source-backed discussion of a procedural driving playground, declarative
   scene options, collision requirements, and Take a Ride integration.
 - An evolving knowledge discussion catalog, with automatic topic maintenance

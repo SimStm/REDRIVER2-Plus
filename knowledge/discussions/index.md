@@ -15,7 +15,11 @@ Follow the [discussion maintenance rule](../rules/discussion-records.md).
 
 - [Renderer modernization](renderer-modernization/index.md): PsyCross's role,
   modern scene submission, PBR materials, lighting, graphics backends, custom
-  assets, and a proposed sequence of experiments. **Exploring.**
+  assets, and a staged sequence of experiments. **Roadmap adopted; not implemented.**
+- [Playable testing playground](playable-testing-playground/index.md): a
+  procedural or declarative driving test environment, world-data requirements,
+  reusable city assets, and Take a Ride/debug/command-line entry points.
+  **Roadmap adopted; first in the modernization track; not implemented.**
 
 ## Structure and lifecycle
 

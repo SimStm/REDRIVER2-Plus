@@ -32,6 +32,24 @@ precedence over the simple reading order.
 11. **11 — [Draw distance, LOD and streaming budgets](draw-distance-streaming.md)**
 12. **12 — [Measured graphics improvements and quality profiles](graphics-quality-profiles.md)**
 
+## Playground and renderer modernization track
+
+The user adopted this track on 2026-09-15 with the playground first. Labels
+13 and 14 extend the catalog without renumbering existing records; they do not
+require completing every unrelated entry above before starting this track.
+
+1. **13 — [Playable testing playground](playable-testing-playground.md)**:
+   build the resident driving fixture on the existing renderer; milestones
+   P1-P4 provide the minimum handoff. P5 adds Take a Ride access.
+2. **14 — [Renderer modernization](renderer-modernization.md)**:
+   use that fixture for modern meshes, PBR, lighting and measured pipeline/backend
+   work. R2 waits for verified playground P1-P4; R1 audits can happen earlier.
+
+The playground has no dependency on modern rendering. JSON authoring, an editor
+and cross-city assets are outside its initial scope. Original-city regression
+scenes remain required alongside controlled playground tests. See the linked
+discussions inside both records for the reasoning and adopted decision.
+
 ## Completed
 
 - **01 — [Texture alpha and PSX blending correctness](../done/texture-alpha-semantics.md)**:
