@@ -25,7 +25,8 @@ the frontend, and prefer the most deterministic entry point available.
 - The Developer Graphics Panel's **Game Debug** tab generates the matching
   command line and persists it to `developer_debug_start.ini`. Keep the file
   disabled when not testing; it is applied only when `enabled=1` and no
-  `-mission`/`-replay` argument is present.
+  `-mission`/`-replay` argument is present. An enabled snapshot also skips the
+  intro movie, so no separate `-nointro` is needed.
 
 For automated captures, do not inject F12: window focus is unreliable in
 headless or scripted sessions. Set `[game] captureAfterSeconds=<seconds>` so the

@@ -1884,7 +1884,7 @@ int redriver2_main(int argc, char** argv)
 
 	// TODO: divide game by the states, place main loop here.
 	
-	if (argc <= 1)
+	if (argc <= 1 && !DeveloperDebugStart_ShouldSkipIntro())
 #elif !defined(PSX)
 	
 	InitStringMng();

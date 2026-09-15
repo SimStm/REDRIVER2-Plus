@@ -66,6 +66,11 @@ where release policy permits it.
   upscales such as `GRASS01C`. Overrides that contain transparency keep plain
   filtering so mip averaging cannot bleed the transparent colour into cutout
   edges.
+- Exported textures encode the PSX STP semi-transparency flag as half alpha
+  (`128`) instead of opaque, so semitransparent texels survive the
+  export/re-import round trip and blend on semitransparent primitives.
+- An enabled `developer_debug_start.ini` now also skips the intro movie, as if
+  `-nointro` had been passed.
 
 - Documented how to reconstruct explicit texture manifest entries from
   inspector-export filenames, including renamed upscaled variants.

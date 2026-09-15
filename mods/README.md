@@ -52,9 +52,11 @@ UV rectangle before applying an image.
 
 Override draws use an alpha cutout: fragments below 0.5 alpha are discarded, so
 transparent PNG regions no longer render black or occlude the geometry behind
-them. This is a cutout, not conventional smooth alpha blending; the primitive's
-original PSX blend mode is unchanged, and exported originals still encode only
-fully transparent versus opaque coverage.
+them. Exported originals encode PSX coverage: colour `0` becomes alpha `0`, a
+CLUT entry with the STP flag becomes alpha `128`, and everything else stays
+opaque. The primitive's original PSX blend mode is still what decides whether
+those texels blend, so this is a cutout plus preserved semi-transparency flag,
+not global smooth alpha.
 
 This first resolver is connected to the level `TEXINF` texture-page loader.
 It does not yet replace packed `CCARS.RAW` vehicle models or their spooled

@@ -47,6 +47,10 @@ const char* DeveloperDebugStart_GetFilePath(void);
    jump straight into the saved session instead of the frontend. */
 int DeveloperDebugStart_TryApply(void);
 
+/* Returns non-zero when an enabled snapshot will start a session, so the
+   caller can skip the intro movie as if -nointro had been passed. */
+int DeveloperDebugStart_ShouldSkipIntro(void);
+
 /* Scripted capture: after the given number of rendered game seconds, save
    SCREENSHOT.BMP once. Zero disables it. */
 void DeveloperDebugStart_ConfigureCapture(int seconds);

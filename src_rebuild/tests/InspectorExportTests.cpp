@@ -13,6 +13,11 @@ void PsyX_GetTextureOverrideStats(PsyXTextureOverrideStats* stats) { memset(stat
 void GR_ReadVRAM(unsigned short* dst, int, int, int width, int height)
 {
 	for (int i = 0; i < width * height; ++i) dst[i] = 0x001f;
+
+	// Zero texture word at page X base 64 so the sampled colour index is 0,
+	// and an STP (semi-transparent) red CLUT entry at CLUT base (16, 0).
+	dst[64] = 0x0000;
+	dst[16] = 0x801f;
 }
 
 static int failures = 0;
@@ -59,6 +64,11 @@ int main()
 	decoded = NULL;
 	Check(LoadPngRgba(destination, &decoded, &width, &height), "previous PNG remains readable after failed replacement");
 	free(decoded);
+	Check(HdTextureOverrides_ExportTexture(1, 1, 0, 0, 4, 4, "SEMI", 1, 5, "regression", status, sizeof(status)), "STP texture export");
+	decoded = NULL;
+	Check(LoadPngRgba("mods/regression/assets/inspector/SEMI_p1_i5.png", &decoded, &width, &height) &&
+		decoded[3] == 128, "PSX STP colours export as half alpha");
+	free(decoded);
 	Check(!HdTextureOverrides_ExportTexture(256, 0, 255, 0, 4, 4, "RED", 1, 1, "regression", status, sizeof(status)), "out-of-range source rejected");
 	Check(!HdTextureOverrides_ExportInspectorReport("../outside", "invalid", status, sizeof(status)), "unsafe mod id rejected");
 
@@ -78,6 +88,23 @@ int main()
 	Check(HdTextureOverrides_ExportTexture(256, 0, 0, 0, 4, 4, "GREEN", 1, 3, "regression", status, sizeof(status)), "export into a manifest with unknown fields");
 	mergedManifest = ReadTextFile("mods/regression/manifest.json", &mergedBytes);
 	Check(mergedManifest && strstr(mergedManifest, "\"keep\"") && strstr(mergedManifest, "\"GREEN\"") && strstr(mergedManifest, "\"RED\""), "merge preserves unknown fields and existing registrations");
+	free(mergedManifest);
+
+	const char* wildcardManifest = "{ \"schemaVersion\": 1, \"id\": \"regression\", \"textures\": [ { \"texture\": \"RED\", \"file\": \"assets/inspector/RED_wild.png\" } ] }";
+	Check(InspectorExport_WriteText("mods/regression/manifest.json", wildcardManifest, status, sizeof(status)), "write a wildcard manifest");
+	Check(HdTextureOverrides_ExportTexture(256, 0, 0, 0, 4, 4, "RED", 1, 9, "regression", status, sizeof(status)), "export alongside a wildcard entry");
+	mergedManifest = ReadTextFile("mods/regression/manifest.json", &mergedBytes);
+	Check(mergedManifest && strstr(mergedManifest, "RED_wild.png") && strstr(mergedManifest, "RED_p1_i9.png"), "wildcard entry is preserved and a specific entry is appended");
+	free(mergedManifest);
+
+	const char* duplicateManifest = "{ \"schemaVersion\": 1, \"id\": \"regression\", \"textures\": [ { \"texture\": \"RED\", \"texturePage\": 1, \"textureIndex\": 9, \"file\": \"a.png\" }, { \"texture\": \"RED\", \"texturePage\": 1, \"textureIndex\": 9, \"file\": \"b.png\" } ] }";
+	Check(InspectorExport_WriteText("mods/regression/manifest.json", duplicateManifest, status, sizeof(status)), "write a manifest with a duplicate legacy pair");
+	Check(HdTextureOverrides_ExportTexture(256, 0, 0, 0, 4, 4, "RED", 1, 9, "regression", status, sizeof(status)), "export with duplicate legacy entries");
+	mergedManifest = ReadTextFile("mods/regression/manifest.json", &mergedBytes);
+	int duplicateCount = 0;
+	if (mergedManifest)
+		for (char* scan = mergedManifest; (scan = strstr(scan, "\"textureIndex\": 9")) != NULL; ++scan) ++duplicateCount;
+	Check(duplicateCount == 2, "duplicate legacy entries are left untouched and no third entry is added");
 	free(mergedManifest);
 
 	Check(InspectorExport_WriteText("mods/regression/manifest.json", "{ this is not json", status, sizeof(status)), "write a malformed manifest");

@@ -1270,7 +1270,9 @@ bool HdTextureOverrides_ExportTexture(unsigned short tpage, unsigned short clut,
 			pixel[0] = (unsigned char)(((colour & 31) << 3) | ((colour & 31) >> 2));
 			pixel[1] = (unsigned char)((((colour >> 5) & 31) << 3) | ((colour >> 5) & 31) >> 2);
 			pixel[2] = (unsigned char)((((colour >> 10) & 31) << 3) | ((colour >> 10) & 31) >> 2);
-			pixel[3] = colour == 0 ? 0 : 255;
+			// colour 0 is PSX transparent; bit 15 is the STP semi-transparency
+			// flag, exported as half alpha so it survives round trips.
+			pixel[3] = colour == 0 ? 0 : ((colour & 0x8000) ? 128 : 255);
 		}
 	}
 	if (!valid)

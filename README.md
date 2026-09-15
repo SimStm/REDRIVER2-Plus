@@ -117,7 +117,7 @@ REDRIVER2_dev.exe -nointro -replay "DRIVER2/REPLAYS/ATTRACT.400"
 - `-gametype` and `-level` are required for a faithful reproduction: `GAME_TAKEADRIVE` recomputes the mission number from `GameLevel`, so `-mission` alone does not select the map.
 - `-replay <file.d2rp>` starts a recorded replay deterministically and also works in a plain `Release` build. The attract replays in `data/DRIVER2/REPLAYS/` are reproducible scenes; `-replay` is the best choice when comparing the same frame with a setting on and off. Scripted campaign ("Undercover") missions reload through the mission ladder and are not exactly restored by the direct-start arguments.
 
-The **Game Debug** tab of the developer panel has a **Reproduce this state** section. It captures the current mission, level, vehicle, position, players, and chase; copies the matching command line; and saves it to `developer_debug_start.ini`. When that file has `enabled=1`, a debug build applies it at startup unless `-mission` or `-replay` was given.
+The **Game Debug** tab of the developer panel has a **Reproduce this state** section. It captures the current mission, game type, level, vehicle, position, heading, players, and chase; copies the matching command line; and saves it to `developer_debug_start.ini`. When that file has `enabled=1`, a debug build applies it at startup — skipping the intro and frontend — unless `-mission` or `-replay` was given.
 
 [`scripts/run_debug_start.ps1`](scripts/run_debug_start.ps1) launches from explicit arguments, the saved snapshot, or a replay:
 

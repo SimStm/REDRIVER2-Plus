@@ -342,6 +342,19 @@ void DeveloperDebugStart_Tick(void)
 	}
 }
 
+int DeveloperDebugStart_ShouldSkipIntro(void)
+{
+#ifdef DEBUG_OPTIONS
+	DeveloperDebugStartState state;
+	if (!ReadSnapshot(&state) || !state.enabled)
+		return 0;
+
+	return state.mission > 0;
+#else
+	return 0;
+#endif
+}
+
 int DeveloperDebugStart_TryApply(void)
 {
 #ifdef DEBUG_OPTIONS
