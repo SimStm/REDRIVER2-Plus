@@ -10,16 +10,25 @@ tags: [roadmap, release, validation]
 
 ## Progress
 
-Milestones 1, 2, 3 (correctness portion), 5 (Windows) and 6 are covered by the
-2026-09-15 audit record at
+Milestones 1, 2, 3 (correctness portion), 4, 5 (Windows) and 6 are covered by
+the 2026-09-15 audit record at
 [`knowledge/changes/2026-09-15/mod-system-pr-readiness/`](../../changes/2026-09-15/mod-system-pr-readiness/index.md).
 The override cutout, PSX `STP` export, append-only manifest merge, regenerated
 PsyCross patch, reproducible debug-start tooling, and Windows builds/tests are
-complete. Milestone 4 is only partially evidenced (the patch was validated
-against a fresh PsyCross worktree, not a disposable parent checkout), and Linux
-coverage remains unavailable because the WSL distribution lacks the development
-headers and cannot install them. The record stays `planned` until those checks
-and the scoped PR review are finished.
+complete.
+
+Milestone 4 is now verified in a disposable checkout: a fresh local clone at
+the branch head, `git submodule update --init`, and
+`scripts/apply_psycross_patches.ps1` reproduce the pinned PsyCross tree and
+build `Release_dev|x64`. That run exposed and fixed two reproducibility defects:
+the patch was corrupted by CRLF on Windows checkouts (now `.gitattributes`
+LF-only) and the applier hung under Windows PowerShell 5.1 (now captures
+`git apply` output instead of redirecting stderr to `$null`).
+
+Linux coverage remains unavailable because the WSL distribution lacks the
+development headers and cannot install them. Milestone 7 (scoped diff review
+and PR description) is the remaining item before the record can move to
+`done/`.
 
 ## Problem
 

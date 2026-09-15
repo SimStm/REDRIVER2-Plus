@@ -103,9 +103,19 @@ The debug and correctness work continued after the initial audit:
   transparent overrides keep plain filtering to avoid alpha bleed.
 - Export tests now cover STP alpha, wildcard entries, duplicate legacy pairs,
   malformed documents and repeated writes (31 checks).
-- `git diff --check` is clean, `Release_dev`/`x64` and `Debug`/`x64` build, and
-  the regenerated PsyCross patch still applies cleanly and idempotently to a
-  fresh worktree at the pinned commit.
+- `git diff --check` is clean, and `Release_dev`/`x64` and `Debug`/`x64` build.
+- Disposable-checkout verification (milestone 4): a fresh local clone at the
+  branch head, `git submodule update --init --recursive` (pinned `e56e4cde`),
+  `scripts/apply_psycross_patches.ps1`, `premake5 vs2022`, and
+  `msbuild /p:Configuration=Release_dev /p:Platform=x64` all succeed and
+  produce `bin/Release_dev/REDRIVER2_dev.exe`. The patched submodule tree is
+  byte-identical to the local one (same `git status --porcelain` set), and
+  re-running the applier reports the patch as already applied.
+- That checkout exposed two reproducibility defects, both fixed: the patch was
+  corrupted by CRLF on Windows (`core.autocrlf=true`) checkouts, and the
+  applier hung under Windows PowerShell 5.1 because a failing `git apply` with
+  stderr redirected to `$null` deadlocks while `$ErrorActionPreference` is
+  `Stop`.
 - Runtime alpha verification in the Chicago debug-start scene by overriding
   `GRASS01C` (page 1, index 5) with a flat red PNG: alpha `128` renders an
   opaque ground, alpha `100` is discarded and the ground becomes a hole. This
@@ -123,11 +133,11 @@ The debug and correctness work continued after the initial audit:
   installed. The Linux-specific paths (`_WIN32`-guarded file replacement,
   `<SDL.h>` for `SDL_GetTicks`, desktop-only guards) were reviewed but not
   compiled; record as unavailable coverage rather than passed.
-- The Premake regeneration and build were not repeated in a disposable parent
-  checkout; only the patch was validated against a fresh PsyCross worktree.
-- A side-by-side override on/off capture of the same frame was not completed in
-  the automated environment; the cutout result was observed on live override
-  scenes.
-- Exported originals still encode only fully transparent versus opaque
-  coverage, so original PSX semi-transparency (`STP`) is not preserved by
-  export, and smooth semi-transparent overrides are not implemented.
+- The F11 panel's own buttons were compile-verified only: automated input does
+  not reach the SDL window, so panel interaction was validated manually. Device
+  screenshot capture by window title works.
+- Smooth alpha below the 0.5 cutout and `BM_ADD`/`BM_SUBTRACT` alpha fading are
+  not implemented by design; they are documented as limitations rather than
+  regressions.
+- Milestone 7 (scoped diff review and PR description) is not complete; no PR has
+  been opened.

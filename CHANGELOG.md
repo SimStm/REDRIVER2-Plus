@@ -112,6 +112,9 @@ where release policy permits it.
 - The PsyCross `developer-overlay.patch` now checks out with LF line endings
   (`.gitattributes`), so a fresh Windows clone with `core.autocrlf=true`
   applies it instead of failing on the corrupted binary payload.
+- `scripts/apply_psycross_patches.ps1` no longer hangs under Windows PowerShell
+  5.1. With `$ErrorActionPreference='Stop'`, redirecting the stderr of a failing
+  `git apply` to `$null` deadlocked; the combined output is captured instead.
 
 ## [8.0] - 2026-07-02
 
