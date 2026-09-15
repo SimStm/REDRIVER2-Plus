@@ -61,6 +61,12 @@ where release policy permits it.
 
 ### Changed
 
+- Fully opaque texture overrides now generate mipmaps and use mipmap
+  minification, which reduces the minification shimmer reported for large
+  upscales such as `GRASS01C`. Overrides that contain transparency keep plain
+  filtering so mip averaging cannot bleed the transparent colour into cutout
+  edges.
+
 - Documented how to reconstruct explicit texture manifest entries from
   inspector-export filenames, including renamed upscaled variants.
 - Developer-panel text wraps within the available window width. Texture

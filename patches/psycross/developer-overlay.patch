@@ -151,10 +151,18 @@ index 91b0297..1f6c8c3 100644
 \ No newline at end of file
 +#endif
 diff --git a/include/PsyX/PsyX_render.h b/include/PsyX/PsyX_render.h
-index ad168c3..2c1e372 100644
+index ad168c3..ea2ebdb 100644
 --- a/include/PsyX/PsyX_render.h
 +++ b/include/PsyX/PsyX_render.h
-@@ -205,6 +205,7 @@ extern void			GR_SetupClipMode(const RECT16* clipRect, int enable);
+@@ -189,6 +189,7 @@ extern void			GR_UpdateVRAM();
+ extern void			GR_ReadFramebufferDataToVRAM();
+ 
+ extern TextureID	GR_CreateRGBATexture(int width, int height, u_char* data /*= nullptr*/);
++extern TextureID	GR_CreateRGBATextureMipmapped(int width, int height, u_char* data /*= nullptr*/);
+ extern ShaderID		GR_Shader_Compile(const char* source, int isPsxShader);
+ 
+ extern void			GR_SetShader(const ShaderID shader);
+@@ -205,6 +206,7 @@ extern void			GR_SetupClipMode(const RECT16* clipRect, int enable);
  extern void			GR_SetViewPort(int x, int y, int width, int height);
  extern void			GR_SetTexture(TextureID texture, TexFormat texFormat);
  extern void			GR_SetOverrideTextureSize(int width, int height);
@@ -314,7 +322,7 @@ index f558b40..ee8f1a0 100644
  	free(pixels);
  }
 diff --git a/src/gpu/PsyX_GPU.cpp b/src/gpu/PsyX_GPU.cpp
-index 6e9e6f6..858eeba 100644
+index 6e9e6f6..84049dd 100644
 --- a/src/gpu/PsyX_GPU.cpp
 +++ b/src/gpu/PsyX_GPU.cpp
 @@ -8,6 +8,7 @@
@@ -363,7 +371,7 @@ index 6e9e6f6..858eeba 100644
  	const char*		debugText;
  };
  
-@@ -57,10 +82,289 @@ GPUDrawSplit g_splits[MAX_DRAW_SPLITS];
+@@ -57,10 +82,305 @@ GPUDrawSplit g_splits[MAX_DRAW_SPLITS];
  
  int g_vertexIndex = 0;
  int g_splitIndex = 0;
@@ -488,7 +496,23 @@ index 6e9e6f6..858eeba 100644
 +	if (width <= 0 || height <= 0 || !rgbaPixels)
 +		return 0;
 +
-+	return GR_CreateRGBATexture(width, height, (u_char*)rgbaPixels);
++	// Fully opaque overrides get mipmaps to stop minification shimmer.
++	// Textures with transparency keep plain filtering so mip averaging cannot
++	// bleed the transparent colour into cutout edges.
++	bool fullyOpaque = true;
++	const unsigned char* pixel = rgbaPixels;
++	for (int i = 0; i < width * height; ++i, pixel += 4)
++	{
++		if (pixel[3] != 255)
++		{
++			fullyOpaque = false;
++			break;
++		}
++	}
++
++	return fullyOpaque
++		? GR_CreateRGBATextureMipmapped(width, height, (u_char*)rgbaPixels)
++		: GR_CreateRGBATexture(width, height, (u_char*)rgbaPixels);
 +}
 +
 +void PsyX_DestroyRGBATexture(unsigned int textureId)
@@ -653,7 +677,7 @@ index 6e9e6f6..858eeba 100644
  	g_vertexIndex = 0;
  	g_splitIndex = 0;
  	g_splits[0].texFormat = (TexFormat)0xFFFF;
-@@ -332,6 +636,8 @@ void MakeTexcoordQuad(GrVertex* vertex, unsigned char* uv0, unsigned char* uv1,
+@@ -332,6 +652,8 @@ void MakeTexcoordQuad(GrVertex* vertex, unsigned char* uv0, unsigned char* uv1,
  	vertex[3].dither = dither;
  	vertex[3].page = page;
  	vertex[3].clut = clut;
@@ -662,7 +686,7 @@ index 6e9e6f6..858eeba 100644
  	/*
  	if (g_cfg_bilinearFiltering)
  	{
-@@ -377,6 +683,8 @@ void MakeTexcoordTriangle(GrVertex* vertex, unsigned char* uv0, unsigned char* u
+@@ -377,6 +699,8 @@ void MakeTexcoordTriangle(GrVertex* vertex, unsigned char* uv0, unsigned char* u
  	vertex[2].dither = dither;
  	vertex[2].page = page;
  	vertex[2].clut = clut;
@@ -671,7 +695,7 @@ index 6e9e6f6..858eeba 100644
  	/*
  	if (g_cfg_bilinearFiltering)
  	{
-@@ -447,6 +755,8 @@ void MakeTexcoordRect(GrVertex* vertex, unsigned char* uv, short page, short clu
+@@ -447,6 +771,8 @@ void MakeTexcoordRect(GrVertex* vertex, unsigned char* uv, short page, short clu
  		vertex[3].tcx = -1;
  		vertex[3].tcy = -1;
  	}
@@ -680,7 +704,7 @@ index 6e9e6f6..858eeba 100644
  }
  
  void MakeTexcoordLineZero(GrVertex* vertex, unsigned char dither)
-@@ -678,11 +988,11 @@ static void AddSplit(bool semiTrans, bool textured)
+@@ -678,11 +1004,11 @@ static void AddSplit(bool semiTrans, bool textured)
  	TexFormat texFormat = GET_TPAGE_FORMAT(tpage);
  	TextureID textureId = textured ? g_vramTexture : g_whiteTexture;
  
@@ -694,7 +718,7 @@ index 6e9e6f6..858eeba 100644
  	}
  
  	// FIXME: compare drawing environment too?
-@@ -695,6 +1005,11 @@ static void AddSplit(bool semiTrans, bool textured)
+@@ -695,6 +1021,11 @@ static void AddSplit(bool semiTrans, bool textured)
  		curSplit.drawenv.clip.w == activeDrawEnv.clip.w &&
  		curSplit.drawenv.clip.h == activeDrawEnv.clip.h &&
  		curSplit.drawenv.dfe == activeDrawEnv.dfe &&
@@ -706,7 +730,7 @@ index 6e9e6f6..858eeba 100644
  		curSplit.debugText == currentSplitDebugText)
  	{
  		return;
-@@ -717,8 +1032,13 @@ static void AddSplit(bool semiTrans, bool textured)
+@@ -717,8 +1048,13 @@ static void AddSplit(bool semiTrans, bool textured)
  	split.dispenv = activeDispEnv;
  	split.debugText = currentSplitDebugText;
  
@@ -722,7 +746,7 @@ index 6e9e6f6..858eeba 100644
  
  	split.startVertex = g_vertexIndex;
  	split.numVerts = 0;
-@@ -734,7 +1054,10 @@ void DrawSplit(const GPUDrawSplit& split)
+@@ -734,7 +1070,10 @@ void DrawSplit(const GPUDrawSplit& split)
  	GR_SetTexture(split.textureId, split.texFormat);
  
  	if (split.texFormat == TF_32_BIT_RGBA)
@@ -733,7 +757,7 @@ index 6e9e6f6..858eeba 100644
  
  	const bool drawOnScreen = split.drawenv.dfe;
  	GR_SetupClipMode(&split.drawenv.clip, drawOnScreen);
-@@ -748,8 +1071,178 @@ void DrawSplit(const GPUDrawSplit& split)
+@@ -748,8 +1087,178 @@ void DrawSplit(const GPUDrawSplit& split)
  		GR_PopDebugLabel();
  }
  
@@ -912,7 +936,7 @@ index 6e9e6f6..858eeba 100644
  //
  // Draws all polygons after AggregatePTAG
  //
-@@ -785,11 +1278,17 @@ void DrawAllSplits()
+@@ -785,11 +1294,17 @@ void DrawAllSplits()
  #endif // _DEBUG
  
  	// next code ideally should be called before EndScene
@@ -930,7 +954,7 @@ index 6e9e6f6..858eeba 100644
  	ClearSplits();
  }
  
-@@ -1118,6 +1617,7 @@ static int ProcessFlatPoly(P_TAG* polyTag)
+@@ -1118,6 +1633,7 @@ static int ProcessFlatPoly(P_TAG* polyTag)
  		// It is an official hack from SCE devs to not use DR_TPAGE and instead use null polygon
  		if (!IsNull(poly))
  		{
@@ -938,7 +962,7 @@ index 6e9e6f6..858eeba 100644
  			AddSplit(semiTrans, true);
  
  			GrVertex* firstVertex = &g_vertexBuffer[g_vertexIndex];
-@@ -1157,6 +1657,7 @@ static int ProcessFlatPoly(P_TAG* polyTag)
+@@ -1157,6 +1673,7 @@ static int ProcessFlatPoly(P_TAG* polyTag)
  		POLY_FT4* poly = (POLY_FT4*)polyTag;
  		activeDrawEnv.tpage = poly->tpage;
  
@@ -946,7 +970,7 @@ index 6e9e6f6..858eeba 100644
  		AddSplit(semiTrans, true);
  
  		GrVertex* firstVertex = &g_vertexBuffer[g_vertexIndex];
-@@ -1214,6 +1715,7 @@ static int ProcessGouraudPoly(P_TAG* polyTag)
+@@ -1214,6 +1731,7 @@ static int ProcessGouraudPoly(P_TAG* polyTag)
  		POLY_GT3* poly = (POLY_GT3*)polyTag;
  		activeDrawEnv.tpage = poly->tpage;
  
@@ -954,7 +978,7 @@ index 6e9e6f6..858eeba 100644
  		AddSplit(semiTrans, true);
  
  		GrVertex* firstVertex = &g_vertexBuffer[g_vertexIndex];
-@@ -1253,6 +1755,7 @@ static int ProcessGouraudPoly(P_TAG* polyTag)
+@@ -1253,6 +1771,7 @@ static int ProcessGouraudPoly(P_TAG* polyTag)
  		POLY_GT4* poly = (POLY_GT4*)polyTag;
  		activeDrawEnv.tpage = poly->tpage;
  
@@ -962,7 +986,7 @@ index 6e9e6f6..858eeba 100644
  		AddSplit(semiTrans, true);
  
  		GrVertex* firstVertex = &g_vertexBuffer[g_vertexIndex];
-@@ -1311,6 +1814,7 @@ static int ProcessTileAndSprt(P_TAG* polyTag)
+@@ -1311,6 +1830,7 @@ static int ProcessTileAndSprt(P_TAG* polyTag)
  	{
  		SPRT* poly = (SPRT*)polyTag;
  
@@ -970,7 +994,7 @@ index 6e9e6f6..858eeba 100644
  		AddSplit(semiTrans, true);
  
  		GrVertex* firstVertex = &g_vertexBuffer[g_vertexIndex];
-@@ -1371,6 +1875,7 @@ static int ProcessTileAndSprt(P_TAG* polyTag)
+@@ -1371,6 +1891,7 @@ static int ProcessTileAndSprt(P_TAG* polyTag)
  	{
  		SPRT_8* poly = (SPRT_8*)polyTag;
  
@@ -978,7 +1002,7 @@ index 6e9e6f6..858eeba 100644
  		AddSplit(semiTrans, true);
  
  		GrVertex* firstVertex = &g_vertexBuffer[g_vertexIndex];
-@@ -1411,6 +1916,7 @@ static int ProcessTileAndSprt(P_TAG* polyTag)
+@@ -1411,6 +1932,7 @@ static int ProcessTileAndSprt(P_TAG* polyTag)
  	{
  		SPRT_16* poly = (SPRT_16*)polyTag;
  
@@ -986,7 +1010,7 @@ index 6e9e6f6..858eeba 100644
  		AddSplit(semiTrans, true);
  
  		GrVertex* firstVertex = &g_vertexBuffer[g_vertexIndex];
-@@ -1533,6 +2039,8 @@ static int ProcessPsyXPrims(P_TAG* polyTag)
+@@ -1533,6 +2055,8 @@ static int ProcessPsyXPrims(P_TAG* polyTag)
  int ParsePrimitive(P_TAG* polyTag)
  {
  	const int primType = polyTag->code & 0xF0;
@@ -995,7 +1019,7 @@ index 6e9e6f6..858eeba 100644
  
  	int primLength = 0;
  
-@@ -1615,5 +2123,8 @@ int ParsePrimitive(P_TAG* polyTag)
+@@ -1615,5 +2139,8 @@ int ParsePrimitive(P_TAG* polyTag)
  		eprinterr("Unhandled zero length %0x primitive\n", primType);
  	}
  
@@ -1056,7 +1080,7 @@ index d073549..258faf1 100644
 \ No newline at end of file
 +}
 diff --git a/src/render/PsyX_render.cpp b/src/render/PsyX_render.cpp
-index 9324471..aa32d3b 100644
+index 9324471..351c755 100644
 --- a/src/render/PsyX_render.cpp
 +++ b/src/render/PsyX_render.cpp
 @@ -493,6 +493,7 @@ typedef struct
@@ -1088,7 +1112,33 @@ index 9324471..aa32d3b 100644
  	"		fragColor = dither(color * v_color);\n"\
  	"	}\n";
  
-@@ -924,6 +929,7 @@ void GR_CompilePSXShader(PSXGPU_Shader* sh, const char* source)
+@@ -916,6 +921,25 @@ TextureID GR_CreateRGBATexture(int width, int height, u_char* data /*= nullptr*/
+ 	return newTexture;
+ }
+ 
++TextureID GR_CreateRGBATextureMipmapped(int width, int height, u_char* data /*= nullptr*/)
++{
++	TextureID newTexture;
++	glGenTextures(1, &newTexture);
++
++	glBindTexture(GL_TEXTURE_2D, newTexture);
++	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, g_cfg_bilinearFiltering ? GL_LINEAR : GL_NEAREST);
++	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, g_cfg_bilinearFiltering ? GL_LINEAR_MIPMAP_LINEAR : GL_NEAREST_MIPMAP_NEAREST);
++
++	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
++	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
++
++	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, data);
++	glGenerateMipmap(GL_TEXTURE_2D);
++	glBindTexture(GL_TEXTURE_2D, 0);
++
++	return newTexture;
++}
++
+ void GR_CompilePSXShader(PSXGPU_Shader* sh, const char* source)
+ {
+ 	sh->shader = GR_Shader_Compile(source, true);
+@@ -924,6 +948,7 @@ void GR_CompilePSXShader(PSXGPU_Shader* sh, const char* source)
  	sh->bilinearFilterLoc = glGetUniformLocation(sh->shader, "bilinearFilter");
  	sh->projectionLoc = glGetUniformLocation(sh->shader, "Projection");
  	sh->texelSizeLoc = glGetUniformLocation(sh->shader, "texelSize");
@@ -1096,7 +1146,7 @@ index 9324471..aa32d3b 100644
  	sh->texLoc = glGetUniformLocation(sh->shader, "s_texture");
  	sh->lutLoc = glGetUniformLocation(sh->shader, "s_rgLut");
  #if USE_PGXP
-@@ -1249,6 +1255,7 @@ void GR_SetTexture(TextureID texture, TexFormat texFormat)
+@@ -1249,6 +1274,7 @@ void GR_SetTexture(TextureID texture, TexFormat texFormat)
  		texLoc = g_gpu_shader_4.texLoc;
  		lutLoc = g_gpu_shader_4.lutLoc;
  		u_texelSizeLoc = -1;
@@ -1104,7 +1154,7 @@ index 9324471..aa32d3b 100644
  		break;
  	case TF_8_BIT:
  		GR_SetShader(g_gpu_shader_8.shader);
-@@ -1258,6 +1265,7 @@ void GR_SetTexture(TextureID texture, TexFormat texFormat)
+@@ -1258,6 +1284,7 @@ void GR_SetTexture(TextureID texture, TexFormat texFormat)
  		texLoc = g_gpu_shader_8.texLoc;
  		lutLoc = g_gpu_shader_8.lutLoc;
  		u_texelSizeLoc = -1;
@@ -1112,7 +1162,7 @@ index 9324471..aa32d3b 100644
  		break;
  	case TF_16_BIT:
  		GR_SetShader(g_gpu_shader_16.shader);
-@@ -1267,6 +1275,7 @@ void GR_SetTexture(TextureID texture, TexFormat texFormat)
+@@ -1267,6 +1294,7 @@ void GR_SetTexture(TextureID texture, TexFormat texFormat)
  		texLoc = g_gpu_shader_16.texLoc;
  		lutLoc = g_gpu_shader_16.lutLoc;
  		u_texelSizeLoc = -1;
@@ -1120,7 +1170,7 @@ index 9324471..aa32d3b 100644
  		break;
  	case TF_32_BIT_RGBA:
  		GR_SetShader(g_gpu_shader_32_rgba.shader);
-@@ -1276,6 +1285,7 @@ void GR_SetTexture(TextureID texture, TexFormat texFormat)
+@@ -1276,6 +1304,7 @@ void GR_SetTexture(TextureID texture, TexFormat texFormat)
  		texLoc = g_gpu_shader_32_rgba.texLoc;
  		lutLoc = -1;
  		u_texelSizeLoc = g_gpu_shader_32_rgba.texelSizeLoc;
@@ -1128,7 +1178,7 @@ index 9324471..aa32d3b 100644
  		break;
  	}
  
-@@ -1316,6 +1326,14 @@ void GR_SetOverrideTextureSize(int width, int height)
+@@ -1316,6 +1345,14 @@ void GR_SetOverrideTextureSize(int width, int height)
  	glUniform2fv(u_texelSizeLoc, 1, vec);
  }
  

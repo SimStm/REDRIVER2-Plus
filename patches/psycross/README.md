@@ -25,5 +25,9 @@ fragments whose alpha is below 0.5 only while a region override is active.
 Original PSX sampling and the high-resolution font/texture path keep their
 previous alpha behaviour, so disabling overrides restores the original
 renderer state without leaking the cutout uniform.
+
+Fully opaque overrides are created with mipmaps (`GR_CreateRGBATextureMipmapped`)
+to reduce minification shimmer; overrides with transparency use plain
+filtering to avoid mip-averaging alpha bleed into cutout edges.
 The script refuses to apply it to another revision and succeeds harmlessly
 when the patch is already present.

@@ -79,9 +79,15 @@ alpha is not the cause. Inspected overrides larger than the source, sampled
 without mipmaps under `GL_LINEAR`/`GL_NEAREST` minification, produce
 minification aliasing. Override binding masks only ABR/dither bits and
 requires full UV containment, so a binding failure would fall back to the
-low-resolution VRAM texture rather than shimmer. The shimmer is therefore an
-aliasing quality issue, not a binding or depth regression; mipmap generation
-and minification filtering belong to the follow-up flicker record.
+low-resolution VRAM texture rather than shimmer. The shimmer was therefore an
+aliasing quality issue, not a binding or depth regression.
+
+Fully opaque overrides now use `GR_CreateRGBATextureMipmapped`
+(`glGenerateMipmap`) with mipmap minification. Overrides containing any
+transparency keep plain filtering so mip averaging cannot bleed the
+transparent colour into cutout edges. Runtime captures of the `GRASS01C`
+scene with overrides on and off confirm the scene renders without black cutout
+regions.
 
 ## Limitations and pending checks
 

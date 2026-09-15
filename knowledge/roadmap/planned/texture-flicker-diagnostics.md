@@ -8,6 +8,17 @@ tags: [roadmap, textures, performance]
 
 # Texture flicker diagnosis and sampling stability
 
+## Progress
+
+Milestones 1-4 are covered by the 2026-09-15 audit record at
+[`knowledge/changes/2026-09-15/mod-system-pr-readiness/`](../../changes/2026-09-15/mod-system-pr-readiness/index.md).
+`GRASS01C` was measured as fully opaque, so the shimmer was classified as
+minification aliasing rather than a binding/depth regression. Fully opaque
+overrides now generate mipmaps with mipmap minification; transparent overrides
+keep plain filtering to avoid alpha bleed. A reproducible capture route now
+exists through `scripts/run_debug_start.ps1 -Capture`. Anisotropy and
+alpha-coverage-preserving mipmaps remain open.
+
 ## Problem
 
 GRASS01C was reported to shimmer. Inspected original and upscaled files were fully opaque, so its own alpha is not a sufficient explanation. The sample grew from 64x64 to 1024x1024 and the override path lacks mipmaps. Aliasing, Z-fighting, LOD changes and unstable bindings must be distinguished.
