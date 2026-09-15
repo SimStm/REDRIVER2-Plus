@@ -8,6 +8,17 @@ tags: [roadmap, release, validation]
 
 # Mod-system branch PR readiness
 
+## Progress
+
+Milestones 1, 2, 3 (correctness portion), 5 (Windows) and 6 are covered by the
+2026-09-15 audit record at
+[`knowledge/changes/2026-09-15/mod-system-pr-readiness/`](../../changes/2026-09-15/mod-system-pr-readiness/index.md).
+The override cutout, append-only manifest merge, regenerated PsyCross patch, and
+Windows build/tests are complete. Milestone 4 is only partially evidenced (the
+patch was validated against a fresh PsyCross worktree, not a disposable parent
+checkout), and Linux coverage remains unavailable. The record stays `planned`
+until those checks and the scoped PR review are finished.
+
 ## Problem
 
 The current modular-mod branch combines mod loading, export, inspector hooks and renderer patches. Known PNG transparency defects remain; build success alone does not establish runtime correctness. The working tree also contains unrelated game-data changes, dependency archives and untracked implementation files.

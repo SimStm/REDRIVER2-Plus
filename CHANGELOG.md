@@ -54,6 +54,11 @@ where release policy permits it.
   is decoded and dimension-checked before publication.
 - Kept the previous `mods/hd_textures/manifest.ini` mapping as a compatibility
   fallback when no JSON mod manifests are present.
+- Exporting a texture into an existing texture mod now appends a missing
+  `(texture, texturePage, textureIndex)` registration instead of only reporting
+  the entry to add. Unknown manifest fields, existing file references and user
+  edits are preserved, repeated exports stay idempotent, and an unreadable
+  `textures` array is reported without rewriting the manifest.
 - Texture manifests and PNG overrides can now be reloaded for texture pages
   already present in the current level without changing original game assets.
 
@@ -69,6 +74,10 @@ where release policy permits it.
 - Fixed zero-byte PNG exports caused by rejecting the WIC encoder's BGRA
   pixel-format negotiation after opening the destination file. RGBA pixels
   are now explicitly converted to BGRA, retaining alpha and colour channels.
+- Transparent PNG texture overrides no longer render black or incorrectly
+  occlude geometry. Override draws now discard fragments below 0.5 alpha; the
+  cutout is limited to active region overrides, so original PSX sampling,
+  high-resolution fonts, and the fallback path keep their previous behaviour.
 
 ## [8.0] - 2026-07-02
 

@@ -11,6 +11,9 @@ tags: [okf, rules]
   recover texture names and page/index selectors from original or upscaled exports.
 - [Validate inspector exports before publication](inspector-export-validation.md):
   repeated exports replace completed files, while failed writes preserve them.
+- [Append texture registrations without rewriting manifest data](manifest-append-merge.md):
+  add missing `(texture, texturePage, textureIndex)` entries atomically while
+  preserving unknown fields and existing mappings.
 - [Regenerate build files after source additions](generated-build-files.md):
   generated IDE projects do not discover newly added source files on their own.
 - [Keep PsyCross changes as patches](psycross-patches.md): project-specific

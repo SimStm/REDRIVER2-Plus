@@ -61,6 +61,34 @@ int main()
 	free(decoded);
 	Check(!HdTextureOverrides_ExportTexture(256, 0, 255, 0, 4, 4, "RED", 1, 1, "regression", status, sizeof(status)), "out-of-range source rejected");
 	Check(!HdTextureOverrides_ExportInspectorReport("../outside", "invalid", status, sizeof(status)), "unsafe mod id rejected");
+
+	// Append-only manifest merging.
+	Check(HdTextureOverrides_ExportTexture(256, 0, 0, 0, 4, 4, "BLUE", 1, 2, "regression", status, sizeof(status)), "second distinct texture export");
+	int mergedBytes = 0;
+	char* mergedManifest = ReadTextFile("mods/regression/manifest.json", &mergedBytes);
+	int redCount = 0;
+	if (mergedManifest)
+		for (char* scan = mergedManifest; (scan = strstr(scan, "\"RED\"")) != NULL; ++scan) ++redCount;
+	Check(mergedManifest && strstr(mergedManifest, "\"RED\"") && strstr(mergedManifest, "\"BLUE\""), "manifest appends a second texture instead of replacing the first");
+	Check(redCount == 1, "repeated export leaves exactly one registration per texture");
+	free(mergedManifest);
+
+	const char* customManifest = "{ \"schemaVersion\": 1, \"id\": \"regression\", \"custom\": { \"keep\": true }, \"textures\": [ { \"texture\": \"RED\", \"texturePage\": 1, \"textureIndex\": 1, \"file\": \"assets/inspector/RED_p1_i1.png\" } ] }";
+	Check(InspectorExport_WriteText("mods/regression/manifest.json", customManifest, status, sizeof(status)), "rewrite manifest containing an unknown field");
+	Check(HdTextureOverrides_ExportTexture(256, 0, 0, 0, 4, 4, "GREEN", 1, 3, "regression", status, sizeof(status)), "export into a manifest with unknown fields");
+	mergedManifest = ReadTextFile("mods/regression/manifest.json", &mergedBytes);
+	Check(mergedManifest && strstr(mergedManifest, "\"keep\"") && strstr(mergedManifest, "\"GREEN\"") && strstr(mergedManifest, "\"RED\""), "merge preserves unknown fields and existing registrations");
+	free(mergedManifest);
+
+	Check(InspectorExport_WriteText("mods/regression/manifest.json", "{ this is not json", status, sizeof(status)), "write a malformed manifest");
+	Check(!HdTextureOverrides_ExportTexture(256, 0, 0, 0, 4, 4, "YELLOW", 1, 4, "regression", status, sizeof(status)), "malformed manifest blocks registration");
+	int malformedBytes = 0;
+	char* malformed = ReadTextFile("mods/regression/manifest.json", &malformedBytes);
+	Check(malformed && strstr(malformed, "this is not json"), "malformed manifest is left untouched");
+	free(malformed);
+	decoded = NULL;
+	Check(LoadPngRgba("mods/regression/assets/inspector/YELLOW_p1_i4.png", &decoded, &width, &height) && width == 4, "PNG is published even when registration fails");
+	free(decoded);
 	Check(InspectorExport_WriteText("car.obj", "v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n", status, sizeof(status)) &&
 		InspectorExport_WriteText("car.obj", "v 0 0 1\nv 1 0 1\nv 0 1 1\nf 1 2 3\n", status, sizeof(status)), "OBJ text writer supports repeat export");
 	printf("%d failures\n", failures);

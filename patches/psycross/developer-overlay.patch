@@ -146,6 +146,18 @@ index 91b0297..c16e3d4 100644
 -#endif
 \ No newline at end of file
 +#endif
+diff --git a/include/PsyX/PsyX_render.h b/include/PsyX/PsyX_render.h
+index ad168c3..2c1e372 100644
+--- a/include/PsyX/PsyX_render.h
++++ b/include/PsyX/PsyX_render.h
+@@ -205,6 +205,7 @@ extern void			GR_SetupClipMode(const RECT16* clipRect, int enable);
+ extern void			GR_SetViewPort(int x, int y, int width, int height);
+ extern void			GR_SetTexture(TextureID texture, TexFormat texFormat);
+ extern void			GR_SetOverrideTextureSize(int width, int height);
++extern void			GR_SetOverrideTextureCutout(int enable);
+ extern void			GR_SetWireframe(int enable);
+ 
+ extern void			GR_DestroyTexture(TextureID texture);
 diff --git a/src/PsyX_main.cpp b/src/PsyX_main.cpp
 index f558b40..fd9da94 100644
 --- a/src/PsyX_main.cpp
@@ -244,7 +256,7 @@ index f558b40..fd9da94 100644
  	
  	SDL_Delay(0);
 diff --git a/src/gpu/PsyX_GPU.cpp b/src/gpu/PsyX_GPU.cpp
-index 6e9e6f6..1d21760 100644
+index 6e9e6f6..858eeba 100644
 --- a/src/gpu/PsyX_GPU.cpp
 +++ b/src/gpu/PsyX_GPU.cpp
 @@ -8,6 +8,7 @@
@@ -652,7 +664,18 @@ index 6e9e6f6..1d21760 100644
  
  	split.startVertex = g_vertexIndex;
  	split.numVerts = 0;
-@@ -748,8 +1068,178 @@ void DrawSplit(const GPUDrawSplit& split)
+@@ -734,7 +1054,10 @@ void DrawSplit(const GPUDrawSplit& split)
+ 	GR_SetTexture(split.textureId, split.texFormat);
+ 
+ 	if (split.texFormat == TF_32_BIT_RGBA)
++	{
+ 		GR_SetOverrideTextureSize(split.drawenv.tw.w, split.drawenv.tw.h);
++		GR_SetOverrideTextureCutout(split.textureOverridden);
++	}
+ 
+ 	const bool drawOnScreen = split.drawenv.dfe;
+ 	GR_SetupClipMode(&split.drawenv.clip, drawOnScreen);
+@@ -748,8 +1071,178 @@ void DrawSplit(const GPUDrawSplit& split)
  		GR_PopDebugLabel();
  }
  
@@ -831,7 +854,7 @@ index 6e9e6f6..1d21760 100644
  //
  // Draws all polygons after AggregatePTAG
  //
-@@ -785,11 +1275,17 @@ void DrawAllSplits()
+@@ -785,11 +1278,17 @@ void DrawAllSplits()
  #endif // _DEBUG
  
  	// next code ideally should be called before EndScene
@@ -849,7 +872,7 @@ index 6e9e6f6..1d21760 100644
  	ClearSplits();
  }
  
-@@ -1118,6 +1614,7 @@ static int ProcessFlatPoly(P_TAG* polyTag)
+@@ -1118,6 +1617,7 @@ static int ProcessFlatPoly(P_TAG* polyTag)
  		// It is an official hack from SCE devs to not use DR_TPAGE and instead use null polygon
  		if (!IsNull(poly))
  		{
@@ -857,7 +880,7 @@ index 6e9e6f6..1d21760 100644
  			AddSplit(semiTrans, true);
  
  			GrVertex* firstVertex = &g_vertexBuffer[g_vertexIndex];
-@@ -1157,6 +1654,7 @@ static int ProcessFlatPoly(P_TAG* polyTag)
+@@ -1157,6 +1657,7 @@ static int ProcessFlatPoly(P_TAG* polyTag)
  		POLY_FT4* poly = (POLY_FT4*)polyTag;
  		activeDrawEnv.tpage = poly->tpage;
  
@@ -865,7 +888,7 @@ index 6e9e6f6..1d21760 100644
  		AddSplit(semiTrans, true);
  
  		GrVertex* firstVertex = &g_vertexBuffer[g_vertexIndex];
-@@ -1214,6 +1712,7 @@ static int ProcessGouraudPoly(P_TAG* polyTag)
+@@ -1214,6 +1715,7 @@ static int ProcessGouraudPoly(P_TAG* polyTag)
  		POLY_GT3* poly = (POLY_GT3*)polyTag;
  		activeDrawEnv.tpage = poly->tpage;
  
@@ -873,7 +896,7 @@ index 6e9e6f6..1d21760 100644
  		AddSplit(semiTrans, true);
  
  		GrVertex* firstVertex = &g_vertexBuffer[g_vertexIndex];
-@@ -1253,6 +1752,7 @@ static int ProcessGouraudPoly(P_TAG* polyTag)
+@@ -1253,6 +1755,7 @@ static int ProcessGouraudPoly(P_TAG* polyTag)
  		POLY_GT4* poly = (POLY_GT4*)polyTag;
  		activeDrawEnv.tpage = poly->tpage;
  
@@ -881,7 +904,7 @@ index 6e9e6f6..1d21760 100644
  		AddSplit(semiTrans, true);
  
  		GrVertex* firstVertex = &g_vertexBuffer[g_vertexIndex];
-@@ -1311,6 +1811,7 @@ static int ProcessTileAndSprt(P_TAG* polyTag)
+@@ -1311,6 +1814,7 @@ static int ProcessTileAndSprt(P_TAG* polyTag)
  	{
  		SPRT* poly = (SPRT*)polyTag;
  
@@ -889,7 +912,7 @@ index 6e9e6f6..1d21760 100644
  		AddSplit(semiTrans, true);
  
  		GrVertex* firstVertex = &g_vertexBuffer[g_vertexIndex];
-@@ -1371,6 +1872,7 @@ static int ProcessTileAndSprt(P_TAG* polyTag)
+@@ -1371,6 +1875,7 @@ static int ProcessTileAndSprt(P_TAG* polyTag)
  	{
  		SPRT_8* poly = (SPRT_8*)polyTag;
  
@@ -897,7 +920,7 @@ index 6e9e6f6..1d21760 100644
  		AddSplit(semiTrans, true);
  
  		GrVertex* firstVertex = &g_vertexBuffer[g_vertexIndex];
-@@ -1411,6 +1913,7 @@ static int ProcessTileAndSprt(P_TAG* polyTag)
+@@ -1411,6 +1916,7 @@ static int ProcessTileAndSprt(P_TAG* polyTag)
  	{
  		SPRT_16* poly = (SPRT_16*)polyTag;
  
@@ -905,7 +928,7 @@ index 6e9e6f6..1d21760 100644
  		AddSplit(semiTrans, true);
  
  		GrVertex* firstVertex = &g_vertexBuffer[g_vertexIndex];
-@@ -1533,6 +2036,8 @@ static int ProcessPsyXPrims(P_TAG* polyTag)
+@@ -1533,6 +2039,8 @@ static int ProcessPsyXPrims(P_TAG* polyTag)
  int ParsePrimitive(P_TAG* polyTag)
  {
  	const int primType = polyTag->code & 0xF0;
@@ -914,7 +937,7 @@ index 6e9e6f6..1d21760 100644
  
  	int primLength = 0;
  
-@@ -1615,5 +2120,8 @@ int ParsePrimitive(P_TAG* polyTag)
+@@ -1615,5 +2123,8 @@ int ParsePrimitive(P_TAG* polyTag)
  		eprinterr("Unhandled zero length %0x primitive\n", primType);
  	}
  
@@ -974,6 +997,94 @@ index d073549..258faf1 100644
 -}
 \ No newline at end of file
 +}
+diff --git a/src/render/PsyX_render.cpp b/src/render/PsyX_render.cpp
+index 9324471..aa32d3b 100644
+--- a/src/render/PsyX_render.cpp
++++ b/src/render/PsyX_render.cpp
+@@ -493,6 +493,7 @@ typedef struct
+ 	GLint projection3DLoc;
+ 	GLint bilinearFilterLoc;
+ 	GLint texelSizeLoc;
++	GLint overrideCutoutLoc;
+ 	GLint texLoc;
+ 	GLint lutLoc;
+ #endif
+@@ -508,6 +509,7 @@ PSXGPU_Shader g_gpu_shader_32_rgba;
+ GLint u_projectionLoc;
+ GLint u_projection3DLoc;
+ GLint u_texelSizeLoc;
++GLint u_overrideCutoutLoc;
+ 
+ #define GPU_SAMPLE_TEXTURE_4BIT_FUNC\
+     "   // returns 16 bit colour\n"\
+@@ -634,9 +636,12 @@ const char* gpu_shader_16 = GPU_FRAGMENT_SAMPLE_SHADER(16);
+ const char* gpu_shader_32_rgba = 
+ 	"	uniform sampler2D s_texture;\n"\
+ 	"	uniform vec2 texelSize;\n"\
++	"	uniform int overrideCutout;\n"\
+ 	"	void main() {\n"\
+ 	"		vec2 tc = v_texcoord.xy * texelSize + texelSize * 0.5;\n"\
+ 	"		vec4 color = texture2D(s_texture, tc);\n"\
++	"		// Cutout only for override images; original PSX behaviour is unchanged.\n"\
++	"		if (overrideCutout != 0 && color.a < 0.5) { discard; }\n"\
+ 	"		fragColor = dither(color * v_color);\n"\
+ 	"	}\n";
+ 
+@@ -924,6 +929,7 @@ void GR_CompilePSXShader(PSXGPU_Shader* sh, const char* source)
+ 	sh->bilinearFilterLoc = glGetUniformLocation(sh->shader, "bilinearFilter");
+ 	sh->projectionLoc = glGetUniformLocation(sh->shader, "Projection");
+ 	sh->texelSizeLoc = glGetUniformLocation(sh->shader, "texelSize");
++	sh->overrideCutoutLoc = glGetUniformLocation(sh->shader, "overrideCutout");
+ 	sh->texLoc = glGetUniformLocation(sh->shader, "s_texture");
+ 	sh->lutLoc = glGetUniformLocation(sh->shader, "s_rgLut");
+ #if USE_PGXP
+@@ -1249,6 +1255,7 @@ void GR_SetTexture(TextureID texture, TexFormat texFormat)
+ 		texLoc = g_gpu_shader_4.texLoc;
+ 		lutLoc = g_gpu_shader_4.lutLoc;
+ 		u_texelSizeLoc = -1;
++		u_overrideCutoutLoc = -1;
+ 		break;
+ 	case TF_8_BIT:
+ 		GR_SetShader(g_gpu_shader_8.shader);
+@@ -1258,6 +1265,7 @@ void GR_SetTexture(TextureID texture, TexFormat texFormat)
+ 		texLoc = g_gpu_shader_8.texLoc;
+ 		lutLoc = g_gpu_shader_8.lutLoc;
+ 		u_texelSizeLoc = -1;
++		u_overrideCutoutLoc = -1;
+ 		break;
+ 	case TF_16_BIT:
+ 		GR_SetShader(g_gpu_shader_16.shader);
+@@ -1267,6 +1275,7 @@ void GR_SetTexture(TextureID texture, TexFormat texFormat)
+ 		texLoc = g_gpu_shader_16.texLoc;
+ 		lutLoc = g_gpu_shader_16.lutLoc;
+ 		u_texelSizeLoc = -1;
++		u_overrideCutoutLoc = -1;
+ 		break;
+ 	case TF_32_BIT_RGBA:
+ 		GR_SetShader(g_gpu_shader_32_rgba.shader);
+@@ -1276,6 +1285,7 @@ void GR_SetTexture(TextureID texture, TexFormat texFormat)
+ 		texLoc = g_gpu_shader_32_rgba.texLoc;
+ 		lutLoc = -1;
+ 		u_texelSizeLoc = g_gpu_shader_32_rgba.texelSizeLoc;
++		u_overrideCutoutLoc = g_gpu_shader_32_rgba.overrideCutoutLoc;
+ 		break;
+ 	}
+ 
+@@ -1316,6 +1326,14 @@ void GR_SetOverrideTextureSize(int width, int height)
+ 	glUniform2fv(u_texelSizeLoc, 1, vec);
+ }
+ 
++void GR_SetOverrideTextureCutout(int enable)
++{
++	if (u_overrideCutoutLoc == -1)
++		return;
++
++	glUniform1i(u_overrideCutoutLoc, enable ? 1 : 0);
++}
++
+ void GR_DestroyTexture(TextureID texture)
+ {
+ 	if (texture == -1)
 diff --git a/third_party/imgui/.editorconfig b/third_party/imgui/.editorconfig
 new file mode 100644
 index 0000000..5adfefa

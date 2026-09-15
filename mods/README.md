@@ -50,6 +50,12 @@ cannot safely be identified from a filename alone. Declare the resource in the
 manifest instead. The renderer additionally verifies page, CLUT, and the full
 UV rectangle before applying an image.
 
+Override draws use an alpha cutout: fragments below 0.5 alpha are discarded, so
+transparent PNG regions no longer render black or occlude the geometry behind
+them. This is a cutout, not conventional smooth alpha blending; the primitive's
+original PSX blend mode is unchanged, and exported originals still encode only
+fully transparent versus opaque coverage.
+
 This first resolver is connected to the level `TEXINF` texture-page loader.
 It does not yet replace packed `CCARS.RAW` vehicle models or their spooled
 texture data; the `car-x` layout is reserved for that next asset-resolver step.
@@ -78,9 +84,13 @@ source model. Other renderer paths still provide their GPU resource details.
 
 Selected level textures can be exported as PNG to
 `mods/<id>/assets/inspector/`. Exporting into a new id creates a minimal
-manifest; exporting into an existing mod deliberately preserves its manifest
-and reports the entry to add. Use **Reload mod manifests and images** to apply
-PNG or manifest edits to texture pages already loaded by the level.
+manifest. Exporting into an existing mod appends the new `(texture,
+texturePage, textureIndex)` registration when it is missing, preserving all
+existing entries, unknown fields, and user edits; re-exporting an already
+registered texture replaces only its PNG. A manifest whose `textures` array
+cannot be read is reported and left untouched, and the created PNG is still
+announced. Use **Reload mod manifests and images** to apply PNG or manifest
+edits to texture pages already loaded by the level.
 
 Selected car bodies can also be exported as OBJ under `assets/models/`. OBJ
 import is intentionally not enabled yet: vehicle data is packed and needs a

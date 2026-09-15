@@ -1,9 +1,10 @@
 # Inspector export regression tests
 
 `InspectorExportTests.cpp` tests the production WIC encoder, original-texture
-export path, report writer, and shared atomic text writer without game assets
-or an OpenGL context. The renderer is stubbed with synthetic red VRAM. It does
-not test mesh picking, the game car serializer, or visual highlighting.
+export path, report writer, shared atomic text writer, and append-only manifest
+merging without game assets or an OpenGL context. The renderer is stubbed with
+synthetic red VRAM. It does not test mesh picking, the game car serializer, or
+visual highlighting.
 
 From an x64 Visual Studio Native Tools command prompt, in `src_rebuild`:
 

@@ -822,6 +822,138 @@ void RegisterKnownTexture(int texturePage, int textureIndex, const char* texture
 	known->width = width;
 	known->height = height;
 }
+
+bool FindTexturesArraySpan(const char* text, int byteCount, const char** spanBegin, const char** spanEnd)
+{
+	if (!text || byteCount <= 0 || !spanBegin || !spanEnd) return false;
+	JsonReader reader = { text, text + byteCount };
+	if (!Consume(&reader, '{')) return false;
+	while (true)
+	{
+		char key[64];
+		if (!ParseString(&reader, key, sizeof(key)) || !Consume(&reader, ':')) return false;
+		if (strcmp(key, "textures") == 0)
+		{
+			SkipWhitespace(&reader);
+			if (reader.cursor >= reader.end || *reader.cursor != '[') return false;
+			JsonReader probe = reader;
+			if (!SkipArray(&probe, 0)) return false;
+			*spanBegin = reader.cursor + 1;
+			*spanEnd = probe.cursor - 1;
+			return true;
+		}
+		if (!SkipValue(&reader, 0)) return false;
+		if (Consume(&reader, '}')) return false;
+		if (!Consume(&reader, ',')) return false;
+	}
+}
+
+bool ManifestTexturesContain(const char* spanBegin, const char* spanEnd,
+	const char* textureName, int texturePage, int textureIndex)
+{
+	JsonReader reader = { spanBegin, spanEnd };
+	SkipWhitespace(&reader);
+	if (reader.cursor >= reader.end || *reader.cursor == ']') return false;
+	while (true)
+	{
+		if (!Consume(&reader, '{')) return false;
+		char candidateName[48] = {};
+		int candidatePage = -1;
+		int candidateIndex = -1;
+		while (true)
+		{
+			char key[64];
+			if (!ParseString(&reader, key, sizeof(key)) || !Consume(&reader, ':')) return false;
+			if (strcmp(key, "texture") == 0 || strcmp(key, "name") == 0)
+			{
+				if (!ParseString(&reader, candidateName, sizeof(candidateName))) return false;
+			}
+			else if (strcmp(key, "texturePage") == 0)
+			{
+				if (!ParseInteger(&reader, &candidatePage)) return false;
+			}
+			else if (strcmp(key, "textureIndex") == 0)
+			{
+				if (!ParseInteger(&reader, &candidateIndex)) return false;
+			}
+			else if (!SkipValue(&reader, 0)) return false;
+			if (Consume(&reader, '}')) break;
+			if (!Consume(&reader, ',')) return false;
+		}
+		if (candidateName[0] != '\0' && strcmp(candidateName, textureName) == 0 &&
+			candidatePage == texturePage && candidateIndex == textureIndex)
+			return true;
+		if (Consume(&reader, ']')) return false;
+		if (!Consume(&reader, ',')) return false;
+	}
+}
+
+std::string BuildManifestEntry(const std::string& escapedTextureName, int texturePage, int textureIndex, const char* safeName)
+{
+	char entry[640];
+	snprintf(entry, sizeof(entry),
+		"{ \"texture\": \"%s\", \"texturePage\": %d, \"textureIndex\": %d, \"file\": \"assets/inspector/%s_p%d_i%d.png\" }",
+		escapedTextureName.c_str(), texturePage, textureIndex, safeName, texturePage, textureIndex);
+	return std::string(entry);
+}
+
+std::string MergeManifestEntry(const char* text, int byteCount, const char* spanBegin, const char* spanEnd, const std::string& entry)
+{
+	std::string inner(spanBegin, spanEnd);
+	size_t endTrim = inner.size();
+	while (endTrim > 0 && (inner[endTrim - 1] == ' ' || inner[endTrim - 1] == '\t' ||
+		inner[endTrim - 1] == '\r' || inner[endTrim - 1] == '\n'))
+		--endTrim;
+	const std::string trimmed = inner.substr(0, endTrim);
+	const std::string trailing = inner.substr(endTrim);
+	const size_t prefixLength = (size_t)(spanBegin - text);
+	const size_t suffixOffset = (size_t)(spanEnd - text);
+	std::string result(text, prefixLength);
+	if (trimmed.empty())
+		result += "\n    " + entry + "\n  ";
+	else
+		result += trimmed + ",\n    " + entry + trailing;
+	result.append(text + suffixOffset, (size_t)byteCount - suffixOffset);
+	return result;
+}
+
+#ifdef _WIN32
+bool PublishManifestFile(const char* path, const char* originalText, int originalBytes,
+	const std::string& content, char* status, int statusCapacity)
+{
+	char temporary[MAX_PATH];
+	if (!InspectorExport_Temporary(path, temporary, status, statusCapacity)) return false;
+	HANDLE file = CreateFileA(temporary, GENERIC_WRITE, 0, NULL, TRUNCATE_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+	DWORD written = 0;
+	const DWORD size = (DWORD)content.size();
+	bool ok = file != INVALID_HANDLE_VALUE && size > 0 &&
+		WriteFile(file, content.data(), size, &written, NULL) && written == size;
+	if (file != INVALID_HANDLE_VALUE)
+	{
+		if (ok) ok = FlushFileBuffers(file) != 0;
+		if (!CloseHandle(file)) ok = false;
+	}
+	if (!ok)
+	{
+		DeleteFileA(temporary);
+		snprintf(status, statusCapacity, "Manifest write failed; the previous manifest was preserved.");
+		return false;
+	}
+	int currentBytes = 0;
+	char* current = ReadTextFile(path, &currentBytes);
+	const bool unchanged = originalText
+		? (current && currentBytes == originalBytes && memcmp(current, originalText, (size_t)originalBytes) == 0)
+		: (current == NULL);
+	free(current);
+	if (!unchanged)
+	{
+		DeleteFileA(temporary);
+		snprintf(status, statusCapacity, "Manifest changed on disk; the PNG was exported but not registered. Retry to merge it.");
+		return false;
+	}
+	return InspectorExport_Commit(temporary, path, status, statusCapacity);
+}
+#endif
 }
 
 void HdTextureOverrides_Reset()
@@ -1203,13 +1335,7 @@ bool HdTextureOverrides_ExportTexture(unsigned short tpage, unsigned short clut,
 
 	char manifestPath[320];
 	JoinPath(manifestPath, sizeof(manifestPath), modDirectory, "manifest.json", NULL);
-	FILE* existingManifest = fopen(manifestPath, "rb");
-	if (existingManifest)
-	{
-		fclose(existingManifest);
-		snprintf(status, statusCapacity, "Exported %s; add assets/inspector/%s_p%d_i%d.png to the existing manifest", textureName, safeName, texturePage, textureIndex);
-		return true;
-	}
+
 	std::string escapedTextureName;
 	for (const unsigned char* c = (const unsigned char*)textureName; *c; ++c)
 	{
@@ -1222,12 +1348,40 @@ bool HdTextureOverrides_ExportTexture(unsigned short tpage, unsigned short clut,
 		}
 		else escapedTextureName += (char)*c;
 	}
+	const std::string entry = BuildManifestEntry(escapedTextureName, texturePage, textureIndex, safeName);
+
+	int existingBytes = 0;
+	char* existingText = ReadTextFile(manifestPath, &existingBytes);
+	if (existingText)
+	{
+		const char* spanBegin = NULL;
+		const char* spanEnd = NULL;
+		if (!FindTexturesArraySpan(existingText, existingBytes, &spanBegin, &spanEnd))
+		{
+			free(existingText);
+			snprintf(status, statusCapacity, "PNG exported, but the existing manifest.json has no readable textures array; it was not modified.");
+			return false;
+		}
+		if (ManifestTexturesContain(spanBegin, spanEnd, textureName, texturePage, textureIndex))
+		{
+			free(existingText);
+			snprintf(status, statusCapacity, "Exported and replaced %s; it was already registered in mod %s", textureName, modId);
+			return true;
+		}
+		const std::string merged = MergeManifestEntry(existingText, existingBytes, spanBegin, spanEnd, entry);
+		const bool published = PublishManifestFile(manifestPath, existingText, existingBytes, merged, status, statusCapacity);
+		free(existingText);
+		if (published)
+			snprintf(status, statusCapacity, "Exported PNG and appended %s to mod %s; reload mod manifests to apply it", textureName, modId);
+		return published;
+	}
+
 	char manifestText[2048];
 	const int manifestBytes = snprintf(manifestText, sizeof(manifestText),
 		"{\n  \"schemaVersion\": 1,\n  \"id\": \"%s\",\n  \"name\": \"%s Inspector Export\",\n"
 		"  \"description\": \"Texture exported locally by the 3D inspector.\",\n  \"textures\": [\n"
-		"    { \"texture\": \"%s\", \"texturePage\": %d, \"textureIndex\": %d, \"file\": \"assets/inspector/%s_p%d_i%d.png\" }\n  ]\n}\n",
-		modId, modId, escapedTextureName.c_str(), texturePage, textureIndex, safeName, texturePage, textureIndex);
+		"    %s\n  ]\n}\n",
+		modId, modId, entry.c_str());
 	if (manifestBytes <= 0 || manifestBytes >= (int)sizeof(manifestText))
 	{
 		snprintf(status, statusCapacity, "PNG exported, but generated manifest exceeds its size limit.");
