@@ -1,5 +1,6 @@
 #include "DeveloperGraphicsPanel.h"
 
+#include "DeveloperDebugStart.h"
 #include "DeveloperGraphicsSettings.h"
 #include "HdTextureOverrides.h"
 
@@ -190,6 +191,54 @@ void DrawGameDebugTab()
 		{
 			ImGui::TextUnformatted("No road or junction metadata is available for this surface.");
 		}
+	}
+
+	if (ImGui::CollapsingHeader("Reproduce this state (launch snapshot)", ImGuiTreeNodeFlags_DefaultOpen))
+	{
+		ImGui::TextWrapped("Capture the current mission, vehicle and position, then start a Debug or Release_dev build directly in it without the frontend or intro.");
+		ImGui::SameLine();
+		HelpMarker("The generated command uses -mission, -playercar, -startpos, -players and -chase, which require a Debug or Release_dev build. A replay or attract demo is reproduced with -replay instead. developer_graphics.ini and installed mods still load normally.");
+
+		static char command[512] = "";
+		static char snapshotStatus[256] = "";
+
+		if (ImGui::Button("Refresh launch command"))
+		{
+			if (!DeveloperDebugStart_BuildCommandLine(command, sizeof(command)))
+				snprintf(command, sizeof(command), "No reproducible session yet; start a mission or a replay first.");
+		}
+		ImGui::SameLine();
+		if (ImGui::Button("Copy launch command"))
+		{
+			if (DeveloperDebugStart_BuildCommandLine(command, sizeof(command)))
+				ImGui::SetClipboardText(command);
+			else
+				snprintf(command, sizeof(command), "No reproducible session yet; start a mission or a replay first.");
+		}
+		ImGui::SameLine();
+		if (ImGui::Button("Save as debug start"))
+		{
+			DeveloperDebugStart_SaveSnapshot(snapshotStatus, sizeof(snapshotStatus));
+			DeveloperDebugStart_BuildCommandLine(command, sizeof(command));
+		}
+
+		if (command[0] != '\0')
+			ImGui::TextWrapped("Command: %s", command);
+
+		if (ImGui::Button("Enable debug start"))
+			DeveloperDebugStart_SetEnabled(1, snapshotStatus, sizeof(snapshotStatus));
+		ImGui::SameLine();
+		if (ImGui::Button("Disable debug start"))
+			DeveloperDebugStart_SetEnabled(0, snapshotStatus, sizeof(snapshotStatus));
+		ImGui::SameLine();
+		if (ImGui::Button("Delete snapshot"))
+			DeveloperDebugStart_Clear(snapshotStatus, sizeof(snapshotStatus));
+
+		if (snapshotStatus[0] == '\0')
+			DeveloperDebugStart_GetStatus(snapshotStatus, sizeof(snapshotStatus));
+
+		ImGui::TextWrapped("%s", snapshotStatus);
+		ImGui::TextDisabled("%s is applied at startup only when no -mission or -replay argument is present.", DeveloperDebugStart_GetFilePath());
 	}
 }
 

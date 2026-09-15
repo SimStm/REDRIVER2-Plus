@@ -22,7 +22,9 @@
 #include "C/draw.h"
 
 #include "utils/ini.h"
+#include "utils/DeveloperDebugStart.h"
 #include "utils/DeveloperGraphicsPanel.h"
+#include "utils/HdTextureOverrides.h"
 
 #include <SDL_scancode.h>
 #include <SDL_gamecontroller.h>
@@ -543,6 +545,10 @@ int main(int argc, char** argv)
 	int fullScreen = 0;
 	int vsync = 0;
 	int enableFreecamera = 0;
+	int textureOverrides = 1;
+	int captureAfterSeconds = 0;
+
+	DeveloperDebugStart_SetProgramName(argv[0]);
 
 	extern int gUserLanguage;
 
@@ -572,6 +578,7 @@ int main(int argc, char** argv)
 		ini_sget(config, "render", "pgxpTextureMapping", "%d", &g_cfg_pgxpTextureCorrection);
 		ini_sget(config, "render", "pgxpZbuffer", "%d", &g_cfg_pgxpZBuffer);
 		ini_sget(config, "render", "bilinearFiltering", "%d", &g_cfg_bilinearFiltering);
+		ini_sget(config, "render", "textureOverrides", "%d", &textureOverrides);
 
 		// configure host game
 		ini_sget(config, "game", "drawDistance", "%d", &gDrawDistance);
@@ -586,6 +593,7 @@ int main(int argc, char** argv)
 		ini_sget(config, "game", "fastLoadingScreens", "%d", &gFastLoadingScreens);
 		ini_sget(config, "game", "languageId", "%d", &gUserLanguage);
 		ini_sget(config, "game", "overrideContent", "%d", &gContentOverride);
+		ini_sget(config, "game", "captureAfterSeconds", "%d", &captureAfterSeconds);
 		
 	
 		gCameraDefaultScrZ = MAX(MIN(newScrZ, 384), 128);
@@ -658,6 +666,11 @@ int main(int argc, char** argv)
 	// start with menu mapping
 	SwitchMappings(1);
 	DeveloperGraphicsPanel_Initialise();
+
+	// config.ini is applied after the panel so an explicit ini can force
+	// texture overrides off for reproducible captures.
+	HdTextureOverrides_SetEnabled(textureOverrides);
+	DeveloperDebugStart_ConfigureCapture(captureAfterSeconds);
 
 	redriver2_main(argc, argv);
 

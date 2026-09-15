@@ -21,5 +21,8 @@ tags: [okf, rules]
 - [Maintain roadmap records](roadmap-lifecycle.md): planned features remain
   separate from implementation evidence and require product documentation when
   completed.
+- [Reproduce gameplay with debug start snapshots](developer-debug-start.md):
+  start a debug build directly at a known mission, vehicle, and position, and
+  capture frames without input injection.
 - [Self-learning rules](self-learning.md): turn repeated, evidenced constraints
   into durable project knowledge.

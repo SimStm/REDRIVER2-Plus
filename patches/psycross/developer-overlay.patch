@@ -1,5 +1,5 @@
 diff --git a/include/PsyX/PsyX_public.h b/include/PsyX/PsyX_public.h
-index 91b0297..c16e3d4 100644
+index 91b0297..1f6c8c3 100644
 --- a/include/PsyX/PsyX_public.h
 +++ b/include/PsyX/PsyX_public.h
 @@ -1,8 +1,13 @@
@@ -100,7 +100,7 @@ index 91b0297..c16e3d4 100644
  
  /* Graphics configuration */
  extern int							g_cfg_swapInterval;
-@@ -79,6 +154,38 @@ extern void PsyX_SetCursorPosition(int x, int y);
+@@ -79,6 +154,42 @@ extern void PsyX_SetCursorPosition(int x, int y);
  /* Sets mouse relative movement */
  extern void PsyX_SetCursorRelative(int enable);
  
@@ -115,6 +115,10 @@ index 91b0297..c16e3d4 100644
 +
 +/* Returns aggregate primitive data for the current rendered frame. */
 +extern void PsyX_GetRenderStats(PsyXRenderStats* stats);
++
++/* Saves the current window contents to SCREENSHOT.BMP in the working
++   directory. Used by scripted debug captures; unavailable on web/Android. */
++extern void PsyX_TakeScreenshot(void);
 +
 +/* RGBA texture and texture-region override support. Texture IDs are owned by
 +   the caller and must be destroyed with PsyX_DestroyRGBATexture when unused. */
@@ -139,7 +143,7 @@ index 91b0297..c16e3d4 100644
  /* Usually called after ClearOTag/ClearOTagR */
  extern char PsyX_BeginScene(void);
  
-@@ -110,4 +217,4 @@ extern void PsyX_SetSwapInterval(int interval);
+@@ -110,4 +221,4 @@ extern void PsyX_SetSwapInterval(int interval);
  }
  #endif
  
@@ -159,7 +163,7 @@ index ad168c3..2c1e372 100644
  
  extern void			GR_DestroyTexture(TextureID texture);
 diff --git a/src/PsyX_main.cpp b/src/PsyX_main.cpp
-index f558b40..fd9da94 100644
+index f558b40..ee8f1a0 100644
 --- a/src/PsyX_main.cpp
 +++ b/src/PsyX_main.cpp
 @@ -49,6 +49,9 @@ int							g_cfg_swapInterval = 0;
@@ -255,6 +259,60 @@ index f558b40..fd9da94 100644
  	GR_SwapWindow();
  	
  	SDL_Delay(0);
+@@ -847,18 +879,46 @@ void PsyX_EndScene()
+ #if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__)
+ void PsyX_TakeScreenshot()
+ {
+-	u_char* pixels = (u_char*)malloc(g_windowWidth * g_windowHeight * 4);
+-	
++	const int width = g_windowWidth;
++	const int height = g_windowHeight;
++	const int stride = width * 4;
++
++	if (width <= 0 || height <= 0)
++		return;
++
++	u_char* pixels = (u_char*)malloc((size_t)stride * height);
++	if (!pixels)
++		return;
++
+ #if defined(RENDERER_OGL)
+-	glReadPixels(0, 0, g_windowWidth, g_windowHeight, GL_BGRA, GL_UNSIGNED_BYTE, pixels);
++	glReadPixels(0, 0, width, height, GL_BGRA, GL_UNSIGNED_BYTE, pixels);
+ #elif defined(RENDERER_OGLES)
+-	glReadPixels(0, 0, g_windowWidth, g_windowHeight, GL_RGBA, GL_UNSIGNED_BYTE, pixels);	// FIXME: is that correct format?
++	glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, pixels);	// FIXME: is that correct format?
+ #endif
+ 
+-	SDL_Surface* surface = SDL_CreateRGBSurfaceFrom(pixels, g_windowWidth, g_windowHeight, 8 * 4, g_windowWidth * 4, 0, 0, 0, 0);
++	// glReadPixels returns bottom-up rows; SDL_SaveBMP expects top-down.
++	u_char* swapRow = (u_char*)malloc(stride);
++	if (swapRow)
++	{
++		for (int y = 0; y < height / 2; ++y)
++		{
++			u_char* top = pixels + (size_t)y * stride;
++			u_char* bottom = pixels + (size_t)(height - 1 - y) * stride;
++			memcpy(swapRow, top, stride);
++			memcpy(top, bottom, stride);
++			memcpy(bottom, swapRow, stride);
++		}
++
++		free(swapRow);
++	}
+ 
+-	SDL_SaveBMP(surface, "SCREENSHOT.BMP");
+-	SDL_FreeSurface(surface);
++	SDL_Surface* surface = SDL_CreateRGBSurfaceFrom(pixels, width, height, 8 * 4, stride, 0, 0, 0, 0);
++
++	if (surface)
++	{
++		SDL_SaveBMP(surface, "SCREENSHOT.BMP");
++		SDL_FreeSurface(surface);
++	}
+ 
+ 	free(pixels);
+ }
 diff --git a/src/gpu/PsyX_GPU.cpp b/src/gpu/PsyX_GPU.cpp
 index 6e9e6f6..858eeba 100644
 --- a/src/gpu/PsyX_GPU.cpp

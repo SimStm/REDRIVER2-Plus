@@ -59,6 +59,7 @@
 #include "platform.h"
 #include "state.h"
 #include "cutrecorder.h"
+#include "../utils/DeveloperDebugStart.h"
 
 int levelstartpos[8][4] = {
 	{ 4785, -1024, -223340, 0},
@@ -1635,6 +1636,8 @@ void DrawGame(void)
 #ifndef PSX
 	if (!FadingScreen)
 		PsyX_EndScene();
+
+	DeveloperDebugStart_Tick();
 #endif
 
 	FrameCnt++;
@@ -1713,6 +1716,8 @@ void PrintCommandLineArguments()
 		"  -playercar <number>, -player2car <number> : set player wanted car\n"
 		"  -chase <number> : using specified chase number for mission\n"
 		"  -mission <number> : starts specified mission\n"
+		"  -gametype <number> : override the game type set by -mission\n"
+		"  -level <number> : select the city/level for the started session\n"
 #endif // DEBUG_OPTIONS
 		"  -replay <filename.d2rp> : starts replay from file\n"
 #ifdef CUTSCENE_RECORDER
@@ -1910,6 +1915,7 @@ int redriver2_main(int argc, char** argv)
 #ifndef PSX	
 	int commandLinePropsShown;
 	commandLinePropsShown = 0;
+	int launchedFromCommandLine = 0;
 
 	for (int i = 1; i < argc; i++)
 	{
@@ -2004,6 +2010,30 @@ int redriver2_main(int argc, char** argv)
 
 			GameType = GAME_TAKEADRIVE;
 			SetState(STATE_GAMELAUNCH);
+
+			launchedFromCommandLine = 1;
+		}
+		else if (!strcmp(argv[i], "-gametype"))
+		{
+			if (argc - i < 2)
+			{
+				printError("-gametype missing number argument!");
+				return -1;
+			}
+
+			GameType = (GAMETYPE)atoi(argv[i + 1]);
+			i++;
+		}
+		else if (!strcmp(argv[i], "-level"))
+		{
+			if (argc - i < 2)
+			{
+				printError("-level missing number argument!");
+				return -1;
+			}
+
+			GameLevel = atoi(argv[i + 1]);
+			i++;
 		}
 #endif // _DEBUG_OPTIONS
 		else if (!strcmp(argv[i], "-replay"))
@@ -2039,6 +2069,7 @@ int redriver2_main(int argc, char** argv)
 					gLoadedReplay = 1;
 					
 					SetState(STATE_GAMELAUNCH);
+					launchedFromCommandLine = 1;
 				}
 				else
 				{
@@ -2083,6 +2114,20 @@ int redriver2_main(int argc, char** argv)
 			commandLinePropsShown = 1;
 		}
 	}
+
+#ifdef DEBUG_OPTIONS
+	if (!launchedFromCommandLine && DeveloperDebugStart_TryApply())
+	{
+		SetFEDrawMode();
+
+		gInFrontend = 0;
+		AttractMode = 0;
+		GameType = GAME_TAKEADRIVE;
+
+		SetState(STATE_GAMELAUNCH);
+	}
+#endif
+
 #endif // PSX
 
 	DoStateLoop();

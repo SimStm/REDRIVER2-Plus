@@ -36,6 +36,20 @@ where release policy permits it.
   can be mapped by `TEXINF` name with original TIM/VRAM and CLUT fallback
   preserved, plus manifest documentation and Developer Graphics Panel
   diagnostics.
+- A **Reproduce this state** section in the developer panel's Game Debug tab
+  that generates and copies the direct-start command line for the current
+  mission, vehicle, position, players, and chase, and persists it to
+  `developer_debug_start.ini` for automatic startup.
+- `scripts/run_debug_start.ps1`, which launches a debug build at a saved or
+  explicit session and can capture the same scene with texture overrides on and
+  off. Scripted captures use the new `[game] captureAfterSeconds` setting and
+  `[render] textureOverrides` instead of injecting keyboard input.
+- Added `-gametype <n>` and `-level <n>` debug arguments so a direct start can
+  restore the game mode and city; `GAME_TAKEADRIVE` derives the mission from the
+  level, so `-mission` alone was not sufficient.
+- Documented deterministic launch arguments: `-mission`, `-gametype`, `-level`,
+  `-playercar`, `-startpos`, `-players`, `-chase`, `-replay`, `-nointro`, and
+  `-nofmv`.
 - Dear ImGui developer panel, opened with F11, with live graphics controls and
   an explained game-debug tab for renderer, streaming, traffic, police,
   mission, vehicle, and road-state telemetry.
@@ -78,6 +92,9 @@ where release policy permits it.
   occlude geometry. Override draws now discard fragments below 0.5 alpha; the
   cutout is limited to active region overrides, so original PSX sampling,
   high-resolution fonts, and the fallback path keep their previous behaviour.
+- Screenshots saved by `PsyX_TakeScreenshot` (F12 or `captureAfterSeconds`) are
+  no longer vertically mirrored. `glReadPixels` rows are flipped before
+  `SDL_SaveBMP`, matching the displayed orientation.
 
 ## [8.0] - 2026-07-02
 
