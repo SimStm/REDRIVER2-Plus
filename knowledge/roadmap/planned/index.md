@@ -21,8 +21,7 @@ acceptance criteria and validation plan. Dependencies inside the record take
 precedence over the simple reading order.
 
 1. **00 — [Mod-system branch PR readiness](mod-system-pr-readiness.md)**
-2. **02 — [Texture flicker diagnosis and sampling stability](texture-flicker-diagnostics.md)**
-3. **03 — [Append-only texture registration and safe manifest merging](texture-manifest-merge.md)**
+2. **03 — [Append-only texture registration and safe manifest merging](texture-manifest-merge.md)**
 4. **04 — [Source-aware asset catalog and material identity](asset-catalog-identity.md)**
 5. **05 — [Batch texture export with model references](object-texture-batch-export.md)**
 6. **06 — [Whole-object selection across renderer categories](inspector-selection-coverage.md)**
@@ -38,8 +37,12 @@ precedence over the simple reading order.
 - **01 — [Texture alpha and PSX blending correctness](../done/texture-alpha-semantics.md)**:
   implemented 2026-09-15; see
   [`knowledge/product/texture-alpha-semantics.md`](../../product/texture-alpha-semantics.md).
-  The order labels of the remaining entries are unchanged, so the sequence has
-  an intentional gap at 01.
+- **02 — [Texture flicker diagnosis and sampling stability](../done/texture-flicker-diagnostics.md)**:
+  implemented 2026-09-15; see
+  [`knowledge/product/texture-flicker-diagnostics.md`](../../product/texture-flicker-diagnostics.md).
+
+The order labels of the remaining entries are unchanged, so the sequence has
+intentional gaps at 01 and 02.
 
 ## Current-branch merge boundary
 

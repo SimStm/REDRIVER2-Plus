@@ -48,7 +48,7 @@ Do not implement general model import, new graphics effects or every inspector c
 
 ## Dependencies and risks
 
-Run this audit first. Complete the correctness portion of [01](../done/texture-alpha-semantics.md) before merge. Use [02](texture-flicker-diagnostics.md) to classify flicker: a binding/depth regression blocks merge; broader quality improvements can be deferred. [03](texture-manifest-merge.md) is recommended before promising a complete export-to-mod workflow, but may be explicitly excluded from a foundation PR.
+Run this audit first. Complete the correctness portion of [01](../done/texture-alpha-semantics.md) before merge. Use [02](../done/texture-flicker-diagnostics.md) to classify flicker: a binding/depth regression blocks merge; broader quality improvements can be deferred. [03](texture-manifest-merge.md) is recommended before promising a complete export-to-mod workflow, but may be explicitly excluded from a foundation PR.
 
 ## Suggested execution order
 

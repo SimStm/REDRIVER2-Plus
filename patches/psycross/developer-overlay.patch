@@ -1080,10 +1080,57 @@ index d073549..258faf1 100644
 \ No newline at end of file
 +}
 diff --git a/src/render/PsyX_render.cpp b/src/render/PsyX_render.cpp
-index 9324471..351c755 100644
+index 9324471..5704a2b 100644
 --- a/src/render/PsyX_render.cpp
 +++ b/src/render/PsyX_render.cpp
-@@ -493,6 +493,7 @@ typedef struct
+@@ -348,6 +348,29 @@ int GR_InitialiseGLContext(char* windowName, int fullscreen)
+ }
+ #endif
+ 
++#ifndef GL_TEXTURE_MAX_ANISOTROPY_EXT
++#define GL_TEXTURE_MAX_ANISOTROPY_EXT 0x84FE
++#endif
++#ifndef GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT
++#define GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT 0x84FF
++#endif
++
++// Optional GL_EXT_texture_filter_anisotropic. The glad loader does not expose
++// its token, so it is queried through SDL; the core glTexParameterf() call is
++// used, which drivers accept for the extension enum. A value <= 1 leaves it off.
++static GLfloat g_maxAnisotropy = 0.0f;
++
++// Anisotropy sharpens mipmapped overrides viewed at grazing angles (roads,
++// ground) without changing the PSX nearest-filtered path.
++static void GR_ApplyOverrideAnisotropy()
++{
++	if (g_maxAnisotropy <= 1.0f)
++		return;
++
++	const GLfloat level = g_maxAnisotropy > 4.0f ? 4.0f : g_maxAnisotropy;
++	glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY_EXT, level);
++}
++
+ int GR_InitialiseGLExt()
+ {
+ #ifdef USE_GLAD
+@@ -367,6 +390,16 @@ int GR_InitialiseGLExt()
+ 	const char* glslVersionStr = (const char*)glGetString(GL_SHADING_LANGUAGE_VERSION);
+ 	eprintf("*GLSL version: %s\n", glslVersionStr);
+ 
++	if (SDL_GL_ExtensionSupported("GL_EXT_texture_filter_anisotropic"))
++	{
++		glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT, &g_maxAnisotropy);
++		eprintf("*Anisotropic filtering: up to %.0fx\n", g_maxAnisotropy);
++	}
++	else
++	{
++		eprintf("*Anisotropic filtering: not supported by this driver\n");
++	}
++
+ 	return 1;
+ }
+ 
+@@ -493,6 +526,7 @@ typedef struct
  	GLint projection3DLoc;
  	GLint bilinearFilterLoc;
  	GLint texelSizeLoc;
@@ -1091,7 +1138,7 @@ index 9324471..351c755 100644
  	GLint texLoc;
  	GLint lutLoc;
  #endif
-@@ -508,6 +509,7 @@ PSXGPU_Shader g_gpu_shader_32_rgba;
+@@ -508,6 +542,7 @@ PSXGPU_Shader g_gpu_shader_32_rgba;
  GLint u_projectionLoc;
  GLint u_projection3DLoc;
  GLint u_texelSizeLoc;
@@ -1099,7 +1146,7 @@ index 9324471..351c755 100644
  
  #define GPU_SAMPLE_TEXTURE_4BIT_FUNC\
      "   // returns 16 bit colour\n"\
-@@ -634,9 +636,12 @@ const char* gpu_shader_16 = GPU_FRAGMENT_SAMPLE_SHADER(16);
+@@ -634,9 +669,12 @@ const char* gpu_shader_16 = GPU_FRAGMENT_SAMPLE_SHADER(16);
  const char* gpu_shader_32_rgba = 
  	"	uniform sampler2D s_texture;\n"\
  	"	uniform vec2 texelSize;\n"\
@@ -1112,7 +1159,7 @@ index 9324471..351c755 100644
  	"		fragColor = dither(color * v_color);\n"\
  	"	}\n";
  
-@@ -916,6 +921,25 @@ TextureID GR_CreateRGBATexture(int width, int height, u_char* data /*= nullptr*/
+@@ -916,6 +954,26 @@ TextureID GR_CreateRGBATexture(int width, int height, u_char* data /*= nullptr*/
  	return newTexture;
  }
  
@@ -1130,6 +1177,7 @@ index 9324471..351c755 100644
 +
 +	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, data);
 +	glGenerateMipmap(GL_TEXTURE_2D);
++	GR_ApplyOverrideAnisotropy();
 +	glBindTexture(GL_TEXTURE_2D, 0);
 +
 +	return newTexture;
@@ -1138,7 +1186,7 @@ index 9324471..351c755 100644
  void GR_CompilePSXShader(PSXGPU_Shader* sh, const char* source)
  {
  	sh->shader = GR_Shader_Compile(source, true);
-@@ -924,6 +948,7 @@ void GR_CompilePSXShader(PSXGPU_Shader* sh, const char* source)
+@@ -924,6 +982,7 @@ void GR_CompilePSXShader(PSXGPU_Shader* sh, const char* source)
  	sh->bilinearFilterLoc = glGetUniformLocation(sh->shader, "bilinearFilter");
  	sh->projectionLoc = glGetUniformLocation(sh->shader, "Projection");
  	sh->texelSizeLoc = glGetUniformLocation(sh->shader, "texelSize");
@@ -1146,7 +1194,7 @@ index 9324471..351c755 100644
  	sh->texLoc = glGetUniformLocation(sh->shader, "s_texture");
  	sh->lutLoc = glGetUniformLocation(sh->shader, "s_rgLut");
  #if USE_PGXP
-@@ -1249,6 +1274,7 @@ void GR_SetTexture(TextureID texture, TexFormat texFormat)
+@@ -1249,6 +1308,7 @@ void GR_SetTexture(TextureID texture, TexFormat texFormat)
  		texLoc = g_gpu_shader_4.texLoc;
  		lutLoc = g_gpu_shader_4.lutLoc;
  		u_texelSizeLoc = -1;
@@ -1154,7 +1202,7 @@ index 9324471..351c755 100644
  		break;
  	case TF_8_BIT:
  		GR_SetShader(g_gpu_shader_8.shader);
-@@ -1258,6 +1284,7 @@ void GR_SetTexture(TextureID texture, TexFormat texFormat)
+@@ -1258,6 +1318,7 @@ void GR_SetTexture(TextureID texture, TexFormat texFormat)
  		texLoc = g_gpu_shader_8.texLoc;
  		lutLoc = g_gpu_shader_8.lutLoc;
  		u_texelSizeLoc = -1;
@@ -1162,7 +1210,7 @@ index 9324471..351c755 100644
  		break;
  	case TF_16_BIT:
  		GR_SetShader(g_gpu_shader_16.shader);
-@@ -1267,6 +1294,7 @@ void GR_SetTexture(TextureID texture, TexFormat texFormat)
+@@ -1267,6 +1328,7 @@ void GR_SetTexture(TextureID texture, TexFormat texFormat)
  		texLoc = g_gpu_shader_16.texLoc;
  		lutLoc = g_gpu_shader_16.lutLoc;
  		u_texelSizeLoc = -1;
@@ -1170,7 +1218,7 @@ index 9324471..351c755 100644
  		break;
  	case TF_32_BIT_RGBA:
  		GR_SetShader(g_gpu_shader_32_rgba.shader);
-@@ -1276,6 +1304,7 @@ void GR_SetTexture(TextureID texture, TexFormat texFormat)
+@@ -1276,6 +1338,7 @@ void GR_SetTexture(TextureID texture, TexFormat texFormat)
  		texLoc = g_gpu_shader_32_rgba.texLoc;
  		lutLoc = -1;
  		u_texelSizeLoc = g_gpu_shader_32_rgba.texelSizeLoc;
@@ -1178,7 +1226,7 @@ index 9324471..351c755 100644
  		break;
  	}
  
-@@ -1316,6 +1345,14 @@ void GR_SetOverrideTextureSize(int width, int height)
+@@ -1316,6 +1379,14 @@ void GR_SetOverrideTextureSize(int width, int height)
  	glUniform2fv(u_texelSizeLoc, 1, vec);
  }
  

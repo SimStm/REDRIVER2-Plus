@@ -1,12 +1,25 @@
 ---
 type: Roadmap
 title: Texture flicker diagnosis and sampling stability
-status: planned
+status: implemented
+completed: 2026-09-15
 execution_order: 2
 tags: [roadmap, textures, performance]
 ---
 
 # Texture flicker diagnosis and sampling stability
+
+Completed on 2026-09-15 on the `codex/modular-mod-system` branch. Product
+behaviour is documented in
+[`knowledge/product/texture-flicker-diagnostics.md`](../../product/texture-flicker-diagnostics.md).
+
+Delivered: the `GRASS01C` shimmer was classified as minification aliasing of a
+large opaque override; fully opaque overrides now generate mipmaps with mipmap
+minification, and mipmapped overrides use anisotropic filtering (capped at
+`4x`) when `GL_EXT_texture_filter_anisotropic` is available. Transparent
+overrides keep plain filtering so the 0.5 cutout keeps full alpha coverage;
+alpha-coverage-preserving cutout mipmaps were deliberately not added because
+they would thin or punch holes in foliage.
 
 ## Progress
 
@@ -14,10 +27,11 @@ Milestones 1-4 are covered by the 2026-09-15 audit record at
 [`knowledge/changes/2026-09-15/mod-system-pr-readiness/`](../../changes/2026-09-15/mod-system-pr-readiness/index.md).
 `GRASS01C` was measured as fully opaque, so the shimmer was classified as
 minification aliasing rather than a binding/depth regression. Fully opaque
-overrides now generate mipmaps with mipmap minification; transparent overrides
-keep plain filtering to avoid alpha bleed. A reproducible capture route now
-exists through `scripts/run_debug_start.ps1 -Capture`. Anisotropy and
-alpha-coverage-preserving mipmaps remain open.
+overrides generate mipmaps with mipmap minification; anisotropic filtering up
+to `4x` is applied when the driver supports it (verified at `16x` available on
+the test GPU, logged at startup). Transparent overrides keep plain filtering to
+preserve alpha coverage exactly. A reproducible capture route exists through
+`scripts/run_debug_start.ps1 -Capture`.
 
 ## Problem
 

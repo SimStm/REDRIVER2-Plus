@@ -101,6 +101,10 @@ The debug and correctness work continued after the initial audit:
   semitransparent texels survive export and re-import.
 - Fully opaque overrides use mipmaps (`GR_CreateRGBATextureMipmapped`);
   transparent overrides keep plain filtering to avoid alpha bleed.
+- Mipmapped overrides use anisotropic filtering capped at `4x` when the driver
+  exposes `GL_EXT_texture_filter_anisotropic` (loaded through SDL; `16x`
+  reported on the test GPU and logged at startup). Roadmap order 02 is
+  completed.
 - Export tests now cover STP alpha, wildcard entries, duplicate legacy pairs,
   malformed documents and repeated writes (31 checks).
 - `git diff --check` is clean, and `Release_dev`/`x64` and `Debug`/`x64` build.

@@ -66,6 +66,9 @@ where release policy permits it.
   upscales such as `GRASS01C`. Overrides that contain transparency keep plain
   filtering so mip averaging cannot bleed the transparent colour into cutout
   edges.
+- Mipmapped overrides now use anisotropic filtering (capped at 4x) when the
+  driver exposes `GL_EXT_texture_filter_anisotropic`, reducing grazing-angle
+  shimmer on roads and ground. The PSX nearest-filtered path is unchanged.
 - Exported textures encode the PSX STP semi-transparency flag as half alpha
   (`128`) instead of opaque, so semitransparent texels survive the
   export/re-import round trip and blend on semitransparent primitives.
