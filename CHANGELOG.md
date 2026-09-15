@@ -10,6 +10,8 @@ where release policy permits it.
 
 ### Added
 
+- A source-backed discussion of a procedural driving playground, declarative
+  scene options, collision requirements, and Take a Ride integration.
 - An evolving knowledge discussion catalog, with automatic topic maintenance
   guidance and an illustrated renderer-modernization exploration kept separate
   from adopted roadmap work and implemented features.
@@ -61,6 +63,11 @@ where release policy permits it.
   mission, vehicle, and road-state telemetry.
 - Durable agent guidance, OKF knowledge catalog, and build-file regeneration
   rule for contributor and AI-agent workflows.
+- `BUILDING.md`, a dedicated build and run guide, with per-platform
+  prerequisites and dependency installation, Windows/Linux/WSL steps, the
+  deterministic debug-start workflow, the standalone export tests, screenshots
+  in `docs/images/`, and troubleshooting. The README now links to it instead of
+  inlining the build steps.
 
 ### Changed
 
@@ -121,6 +128,9 @@ where release policy permits it.
 - `scripts/apply_psycross_patches.ps1` no longer hangs under Windows PowerShell
   5.1. With `$ErrorActionPreference='Stop'`, redirecting the stderr of a failing
   `git apply` to `$null` deadlocked; the combined output is captured instead.
+- `windows_dev_prepare.ps1` skips dependencies that are already present,
+  applies the PsyCross patch, and opens the solution at the path Premake
+  actually generates (`src_rebuild/build/REDRIVER2.sln`).
 - `linux_dev_prepare.sh` applies the PsyCross patch and changes into the
   directory Premake actually generates (`src_rebuild/build`), so a clean Linux
   checkout configures and builds. The Linux target (`release_dev_x64`,

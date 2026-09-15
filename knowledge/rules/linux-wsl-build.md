@@ -35,6 +35,8 @@ with Premake, and build in `src_rebuild/build`.
   directory. WSLg provides `DISPLAY=:0` and reports a D3D12/Mesa core context;
   set `SDL_AUDIODRIVER=dummy` when audio should not initialize.
 
-See [Keep PsyCross changes as patches](psycross-patches.md) for the patch
-lifecycle and [Regenerate build files after source additions](generated-build-files.md)
+The user-facing version of these steps, with prerequisites and screenshots, is
+in [`BUILDING.md`](../../BUILDING.md). See
+[Keep PsyCross changes as patches](psycross-patches.md) for the patch lifecycle
+and [Regenerate build files after source additions](generated-build-files.md)
 for when to re-run Premake.
