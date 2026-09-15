@@ -661,7 +661,9 @@ bool LoadPngRgba(const char* path, unsigned char** pixels, int* width, int* heig
 	wchar_t widePath[MAX_PATH];
 	if (!MakeWidePath(path, widePath, MAX_PATH)) return false;
 	const HRESULT initialiseResult = CoInitializeEx(NULL, COINIT_MULTITHREADED);
-	const bool shouldUninitialise = SUCCEEDED(initialiseResult);
+	// Only S_OK transfers ownership; S_FALSE means COM was already initialised
+	// on this thread and must not be unbalanced here.
+	const bool shouldUninitialise = (initialiseResult == S_OK);
 	IWICImagingFactory* factory = NULL;
 	IWICBitmapDecoder* decoder = NULL;
 	IWICBitmapFrameDecode* frame = NULL;
@@ -696,7 +698,9 @@ bool SavePngRgba(const char* path, const unsigned char* pixels, int width, int h
 	if (!MakeWidePath(path, widePath, MAX_PATH))
 		return false;
 	const HRESULT initialiseResult = CoInitializeEx(NULL, COINIT_MULTITHREADED);
-	const bool shouldUninitialise = SUCCEEDED(initialiseResult);
+	// Only S_OK transfers ownership; S_FALSE means COM was already initialised
+	// on this thread and must not be unbalanced here.
+	const bool shouldUninitialise = (initialiseResult == S_OK);
 	IWICImagingFactory* factory = NULL;
 	IWICStream* stream = NULL;
 	IWICBitmapEncoder* encoder = NULL;
@@ -1296,8 +1300,16 @@ bool HdTextureOverrides_ExportTexture(unsigned short tpage, unsigned short clut,
 	char outputPath[448];
 	if (!JoinPath(modDirectory, sizeof(modDirectory), g_modsDirectory, modId, NULL) ||
 		!JoinPath(assetsDirectory, sizeof(assetsDirectory), modDirectory, "assets", NULL) ||
-		!JoinPath(inspectorDirectory, sizeof(inspectorDirectory), assetsDirectory, "inspector", NULL) ||
-		snprintf(outputPath, sizeof(outputPath), "%s/%s_p%d_i%d.png", inspectorDirectory, safeName, texturePage, textureIndex) < 0)
+		!JoinPath(inspectorDirectory, sizeof(inspectorDirectory), assetsDirectory, "inspector", NULL))
+	{
+		free(vram); free(rgba);
+		snprintf(status, statusCapacity, "The export path is too long");
+		return false;
+	}
+	// snprintf returns the length it would have written, so a value at or above
+	// the buffer size means the path was truncated.
+	const int outputLength = snprintf(outputPath, sizeof(outputPath), "%s/%s_p%d_i%d.png", inspectorDirectory, safeName, texturePage, textureIndex);
+	if (outputLength <= 0 || outputLength >= (int)sizeof(outputPath))
 	{
 		free(vram); free(rgba);
 		snprintf(status, statusCapacity, "The export path is too long");
@@ -1376,6 +1388,14 @@ bool HdTextureOverrides_ExportTexture(unsigned short tpage, unsigned short clut,
 		if (published)
 			snprintf(status, statusCapacity, "Exported PNG and appended %s to mod %s; reload mod manifests to apply it", textureName, modId);
 		return published;
+	}
+
+	// The file may exist but be unreadable (for example, larger than the read
+	// cap). Never replace an existing manifest with a fresh one.
+	if (GetFileAttributesA(manifestPath) != INVALID_FILE_ATTRIBUTES)
+	{
+		snprintf(status, statusCapacity, "PNG exported, but the existing manifest.json could not be read; it was not modified.");
+		return false;
 	}
 
 	char manifestText[2048];

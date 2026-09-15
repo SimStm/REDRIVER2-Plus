@@ -183,12 +183,12 @@ bool DeveloperDebugStart_BuildCommandLine(char* buffer, int capacity)
 		char replayPath[320];
 		snprintf(replayPath, sizeof(replayPath), "%sREPLAYS/ATTRACT.%d", gDataFolder, state.mission);
 		NormalizeSeparators(replayPath);
-		snprintf(buffer, capacity, "%s -nointro -replay \"%s\"", g_programName, replayPath);
+		snprintf(buffer, capacity, "\"%s\" -nointro -replay \"%s\"", g_programName, replayPath);
 		return true;
 	}
 
 	int written = snprintf(buffer, capacity,
-		"%s -nointro -mission %d -gametype %d -level %d",
+		"\"%s\" -nointro -mission %d -gametype %d -level %d",
 		g_programName, state.mission, state.gameType, state.level);
 	bool ok = written > 0 && written < capacity;
 
@@ -349,7 +349,9 @@ int DeveloperDebugStart_ShouldSkipIntro(void)
 	if (!ReadSnapshot(&state) || !state.enabled)
 		return 0;
 
-	return state.mission > 0;
+	// A replay snapshot is not applied (see TryApply); do not skip the intro
+	// for it either.
+	return state.mission > 0 && state.mission < 400;
 #else
 	return 0;
 #endif
@@ -362,6 +364,11 @@ int DeveloperDebugStart_TryApply(void)
 	if (!ReadSnapshot(&state) || !state.enabled)
 		return 0;
 	if (state.mission <= 0 || !IsFiniteInt(state.startX) || !IsFiniteInt(state.startZ))
+		return 0;
+
+	// Attract/user replays are loaded by file, not as a mission. Reproduce them
+	// with the generated -replay command instead of loading mission >= 400.
+	if (state.mission >= 400)
 		return 0;
 
 	gCurrentMissionNumber = state.mission;

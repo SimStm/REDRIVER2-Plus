@@ -546,6 +546,7 @@ int main(int argc, char** argv)
 	int vsync = 0;
 	int enableFreecamera = 0;
 	int textureOverrides = 1;
+	int textureOverridesSpecified = 0;
 	int captureAfterSeconds = 0;
 
 	DeveloperDebugStart_SetProgramName(argv[0]);
@@ -578,7 +579,7 @@ int main(int argc, char** argv)
 		ini_sget(config, "render", "pgxpTextureMapping", "%d", &g_cfg_pgxpTextureCorrection);
 		ini_sget(config, "render", "pgxpZbuffer", "%d", &g_cfg_pgxpZBuffer);
 		ini_sget(config, "render", "bilinearFiltering", "%d", &g_cfg_bilinearFiltering);
-		ini_sget(config, "render", "textureOverrides", "%d", &textureOverrides);
+		textureOverridesSpecified = ini_sget(config, "render", "textureOverrides", "%d", &textureOverrides);
 
 		// configure host game
 		ini_sget(config, "game", "drawDistance", "%d", &gDrawDistance);
@@ -667,9 +668,11 @@ int main(int argc, char** argv)
 	SwitchMappings(1);
 	DeveloperGraphicsPanel_Initialise();
 
-	// config.ini is applied after the panel so an explicit ini can force
-	// texture overrides off for reproducible captures.
-	HdTextureOverrides_SetEnabled(textureOverrides);
+	// An explicit config.ini key is applied after the panel so it can force
+	// texture overrides off for reproducible captures. When the key is absent,
+	// keep what the panel loaded from developer_graphics.ini.
+	if (textureOverridesSpecified)
+		HdTextureOverrides_SetEnabled(textureOverrides);
 	DeveloperDebugStart_ConfigureCapture(captureAfterSeconds);
 
 	redriver2_main(argc, argv);

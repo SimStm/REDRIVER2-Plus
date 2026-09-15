@@ -27,6 +27,10 @@ the frontend, and prefer the most deterministic entry point available.
   disabled when not testing; it is applied only when `enabled=1` and no
   `-mission`/`-replay` argument is present. An enabled snapshot also skips the
   intro movie, so no separate `-nointro` is needed.
+- A snapshot captured during a replay is not applied at startup: replay files
+  are loaded by name, not as a mission, so the panel emits a `-replay` command
+  for that case. `DeveloperDebugStart_ShouldSkipIntro` and
+  `DeveloperDebugStart_TryApply` both ignore snapshots with `mission >= 400`.
 
 For automated captures, do not inject F12: window focus is unreliable in
 headless or scripted sessions. Set `[game] captureAfterSeconds=<seconds>` so the

@@ -1635,10 +1635,12 @@ void DrawGame(void)
 	}
 
 #ifndef PSX
+	// Tick before the buffer swap: a timed screenshot must read the frame that
+	// was just rendered, not the undefined back buffer after the swap.
+	DeveloperDebugStart_Tick();
+
 	if (!FadingScreen)
 		PsyX_EndScene();
-
-	DeveloperDebugStart_Tick();
 #endif
 
 	FrameCnt++;
@@ -2135,7 +2137,8 @@ int redriver2_main(int argc, char** argv)
 
 		gInFrontend = 0;
 		AttractMode = 0;
-		GameType = GAME_TAKEADRIVE;
+		// GameType, GameLevel and gCurrentMissionNumber were set by
+		// DeveloperDebugStart_TryApply from the saved snapshot.
 
 		SetState(STATE_GAMELAUNCH);
 	}

@@ -117,6 +117,16 @@ where release policy permits it.
 
 ### Fixed
 
+- Debug-start snapshots now honour the saved `gameType` instead of forcing
+  `GAME_TAKEADRIVE`, and a snapshot captured during a replay is not applied at
+  startup (reproduce it with the generated `-replay` command).
+- An absent `[render] textureOverrides` key no longer forces HD texture
+  overrides on, so the developer panel toggle persists across launches.
+- Timed screenshots are taken before the buffer swap, so `captureAfterSeconds`
+  records the frame that was just rendered instead of the undefined back buffer.
+- Inspector export detects a truncated output path and refuses to replace an
+  existing but unreadable `manifest.json`; WIC initialisation no longer
+  unbalances a pre-existing COM apartment.
 - Fixed zero-byte PNG exports caused by rejecting the WIC encoder's BGRA
   pixel-format negotiation after opening the destination file. RGBA pixels
   are now explicitly converted to BGRA, retaining alpha and colour channels.

@@ -269,6 +269,9 @@ heading, players and chase; copies the matching command line; and saves it to
 startup, skipping the frontend and intro, unless `-mission` or `-replay` was
 given.
 
+A session captured while a replay is playing is not applied at startup: the
+panel emits a `-replay` command for that case, so run that command instead.
+
 [`scripts/run_debug_start.ps1`](scripts/run_debug_start.ps1) (Windows) launches
 from explicit arguments, the saved snapshot, or a replay, and can capture the
 same scene with overrides on and off:
