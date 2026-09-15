@@ -73,10 +73,11 @@ bool WriteSnapshot(const DeveloperDebugStartState& state)
 		"car=%d\n"
 		"startX=%d\n"
 		"startZ=%d\n"
+		"startDir=%d\n"
 		"players=%d\n"
 		"chase=%d\n",
 		state.enabled ? 1 : 0, state.mission, state.level, state.gameType, state.car,
-		state.startX, state.startZ, state.players, state.chase);
+		state.startX, state.startZ, state.startDir, state.players, state.chase);
 
 	bool ok = written > 0 && fflush(file) == 0;
 	const int closeResult = fclose(file);
@@ -116,6 +117,7 @@ bool ReadSnapshot(DeveloperDebugStartState* state)
 		else if (!strcmp(key, "car")) { state->car = value; any = true; }
 		else if (!strcmp(key, "startX")) { state->startX = value; any = true; }
 		else if (!strcmp(key, "startZ")) { state->startZ = value; any = true; }
+		else if (!strcmp(key, "startDir")) { state->startDir = value; any = true; }
 		else if (!strcmp(key, "players")) { state->players = value; any = true; }
 		else if (!strcmp(key, "chase")) { state->chase = value; any = true; }
 	}
@@ -149,12 +151,14 @@ bool DeveloperDebugStart_CaptureState(DeveloperDebugStartState* state)
 		VECTOR* position = (VECTOR*)car_data[playerCar].hd.where.t;
 		state->startX = position->vx;
 		state->startZ = position->vz;
+		state->startDir = car_data[playerCar].hd.direction & 0xFFF;
 	}
 	else
 	{
 		state->car = wantedCar[0];
 		state->startX = MainPlayer.pos[0];
 		state->startZ = MainPlayer.pos[2];
+		state->startDir = MainPlayer.dir & 0xFFF;
 	}
 
 	if (state->mission <= 0 || !IsFiniteInt(state->startX) || !IsFiniteInt(state->startZ))
@@ -197,7 +201,8 @@ bool DeveloperDebugStart_BuildCommandLine(char* buffer, int capacity)
 
 	if (ok && IsFiniteInt(state.startX) && IsFiniteInt(state.startZ))
 	{
-		const int appended = snprintf(buffer + written, capacity - written, " -startpos %d %d", state.startX, state.startZ);
+		const int appended = snprintf(buffer + written, capacity - written, " -startpos %d %d -startdir %d",
+			state.startX, state.startZ, state.startDir & 0xFFF);
 		ok = appended > 0 && written + appended < capacity;
 		written += appended;
 	}
@@ -298,10 +303,10 @@ void DeveloperDebugStart_GetStatus(char* buffer, int capacity)
 		return;
 	}
 
-	snprintf(buffer, capacity, "%s: %s - mission %d, car %d at (%d, %d), %d player(s)%s.",
+	snprintf(buffer, capacity, "%s: %s - mission %d, car %d at (%d, %d) dir %d, %d player(s)%s.",
 		kSnapshotFilename, state.enabled ? "enabled" : "disabled",
-		state.mission, state.car, state.startX, state.startZ, state.players,
-		state.chase ? ", chase" : "");
+		state.mission, state.car, state.startX, state.startZ, state.startDir & 0xFFF,
+		state.players, state.chase ? ", chase" : "");
 }
 
 const char* DeveloperDebugStart_GetFilePath(void)
@@ -358,6 +363,7 @@ int DeveloperDebugStart_TryApply(void)
 
 	gStartPos.x = state.startX;
 	gStartPos.z = state.startZ;
+	gStartDir = state.startDir & 0xFFF;
 
 	return 1;
 #else

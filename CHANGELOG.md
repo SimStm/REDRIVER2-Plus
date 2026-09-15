@@ -44,9 +44,12 @@ where release policy permits it.
   explicit session and can capture the same scene with texture overrides on and
   off. Scripted captures use the new `[game] captureAfterSeconds` setting and
   `[render] textureOverrides` instead of injecting keyboard input.
-- Added `-gametype <n>` and `-level <n>` debug arguments so a direct start can
-  restore the game mode and city; `GAME_TAKEADRIVE` derives the mission from the
-  level, so `-mission` alone was not sufficient.
+- Added `-gametype <n>`, `-level <n>`, and `-startdir <angle>` debug arguments
+  so a direct start can restore the game mode, city, and vehicle heading;
+  `GAME_TAKEADRIVE` derives the mission from the level, so `-mission` alone was
+  not sufficient, and the position override previously discarded the heading.
+- The generated project debugger working directory is now the executable
+  folder, so `F5` finds `config.ini`, `mods/`, and `developer_debug_start.ini`.
 - Documented deterministic launch arguments: `-mission`, `-gametype`, `-level`,
   `-playercar`, `-startpos`, `-players`, `-chase`, `-replay`, `-nointro`, and
   `-nofmv`.

@@ -75,6 +75,7 @@ int levelstartpos[8][4] = {
 };
 
 XZPAIR gStartPos = { 0 };
+int gStartDir = -1;
 
 enum LevLumpType
 {
@@ -1712,6 +1713,7 @@ void PrintCommandLineArguments()
 #ifdef DEBUG_OPTIONS
 		"  -exportxasubtitles: Exports strings from XA WAV files to SBN\n"
 		"  -startpos <x> <z>: Set player start position\n"
+		"  -startdir <angle> : Set player start rotation (0..4095)\n"
 		"  -players <count> : Set player count (1 or 2)\n"
 		"  -playercar <number>, -player2car <number> : set player wanted car\n"
 		"  -chase <number> : using specified chase number for mission\n"
@@ -1950,6 +1952,17 @@ int redriver2_main(int argc, char** argv)
 			gStartPos.z = atoi(argv[i + 2]);
 
 			i += 2;
+		}
+		else if (!strcmp(argv[i], "-startdir"))
+		{
+			if (argc - i < 2)
+			{
+				printError("-startdir missing number argument!");
+				return -1;
+			}
+
+			gStartDir = atoi(argv[i + 1]) & 0xFFF;
+			i++;
 		}
 		else if (!strcmp(argv[i], "-playercar"))
 		{

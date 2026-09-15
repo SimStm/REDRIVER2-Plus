@@ -20,6 +20,7 @@ struct DeveloperDebugStartState
 	int car;
 	int startX;
 	int startZ;
+	int startDir;
 	int players;
 	int chase;
 };

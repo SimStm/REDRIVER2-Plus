@@ -13,6 +13,7 @@ param(
     [int]$Car = -1,
     [int]$X = [int]::MinValue,
     [int]$Z = [int]::MinValue,
+    [int]$StartDir = [int]::MinValue,
     [int]$Players = 1,
     [int]$Chase = 0,
     [string]$Replay = "",
@@ -93,7 +94,11 @@ function New-StartArguments
     if ($GameType -ge 0) { $arguments += @('-gametype', "$GameType") }
     if ($Level -ge 0) { $arguments += @('-level', "$Level") }
     if ($Car -ge 0) { $arguments += @('-playercar', "$Car") }
-    if ($X -ne [int]::MinValue -and $Z -ne [int]::MinValue) { $arguments += @('-startpos', "$X", "$Z") }
+    if ($X -ne [int]::MinValue -and $Z -ne [int]::MinValue)
+    {
+        $arguments += @('-startpos', "$X", "$Z")
+        if ($StartDir -ne [int]::MinValue) { $arguments += @('-startdir', "$StartDir") }
+    }
     if ($Players -gt 0) { $arguments += @('-players', "$Players") }
     if ($Chase -ne 0) { $arguments += @('-chase', "$Chase") }
     return $arguments
@@ -114,6 +119,7 @@ if ($FromSnapshot)
         $Car = [int]$snapshot['car']
         $X = [int]$snapshot['startX']
         $Z = [int]$snapshot['startZ']
+        if ($snapshot.ContainsKey('startDir')) { $StartDir = [int]$snapshot['startDir'] }
         $Players = [int]$snapshot['players']
         $Chase = [int]$snapshot['chase']
     }
@@ -189,6 +195,7 @@ foreach ($enabled in @(1, 0))
     if (-not (Test-Path -LiteralPath $screenshot))
     {
         if (-not $process.HasExited) { $process.Kill() }
+        Remove-Item -LiteralPath $captureConfig -Force -ErrorAction SilentlyContinue
         throw "No SCREENSHOT.BMP after $DelaySeconds seconds with textureOverrides=$enabled. The session may not have reached gameplay."
     }
 

@@ -14,11 +14,12 @@ the frontend, and prefer the most deterministic entry point available.
 - `-replay <file.d2rp>` (any build) plays a recorded attract or user replay and
   is the most deterministic option: the car, camera, and frame sequence repeat
   across runs. Attract replays live in `data/DRIVER2/REPLAYS/ATTRACT.*`.
-- `-mission`, `-gametype`, `-level`, `-playercar`, `-startpos`, `-players`, and
-  `-chase` exist only in `Debug`/`Release_dev` builds, which define
-  `DEBUG_OPTIONS`. Always include `-gametype` and `-level`: `GAME_TAKEADRIVE`
-  recomputes `gCurrentMissionNumber` from `GameLevel`, so `-mission` alone does
-  not select the map.
+- `-mission`, `-gametype`, `-level`, `-playercar`, `-startpos`, `-startdir`,
+  `-players`, and `-chase` exist only in `Debug`/`Release_dev` builds, which
+  define `DEBUG_OPTIONS`. Always include `-gametype` and `-level`:
+  `GAME_TAKEADRIVE` recomputes `gCurrentMissionNumber` from `GameLevel`, so
+  `-mission` alone does not select the map. Include `-startdir` (12-bit angle)
+  so the vehicle heading matches the saved state.
 - Any command-line argument already skips the intro; `-nointro`/`-nofmv` state
   it explicitly.
 - The Developer Graphics Panel's **Game Debug** tab generates the matching

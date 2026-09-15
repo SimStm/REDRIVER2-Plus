@@ -90,8 +90,8 @@ The upstream project also targets Linux, WebAssembly, and Android. For the curre
 1. Open `src_rebuild/build/REDRIVER2.sln`.
 2. Make `REDRIVER2` the startup project.
 3. Choose `Release_dev | x64`.
-4. In the project's Debugging properties, set **Working Directory** to the repository's `src_rebuild` directory, or set `RED2_DIR` to your prepared game-data path.
-5. Press `F5` to start under the debugger.
+4. The generated project sets the debugger **Working Directory** to the executable folder (`src_rebuild/bin/<configuration>`), where `config.ini`, `mods/`, and `developer_debug_start.ini` live. Set `RED2_DIR` only when your game data lives elsewhere.
+5. Press `F5` to start under the debugger. If `developer_debug_start.ini` is enabled, the game starts directly at the saved session.
 
 For a non-debug launch, run `src_rebuild/bin/Release_dev/REDRIVER2_dev.exe` from a context where its data path resolves, or provide `RED2_DIR` explicitly.
 
@@ -108,11 +108,12 @@ For a non-debug launch, run `src_rebuild/bin/Release_dev/REDRIVER2_dev.exe` from
 `Debug` and `Release_dev` are built with `DEBUG_OPTIONS`, so they accept direct-start arguments and skip both the frontend and the intro:
 
 ```text
-REDRIVER2_dev.exe -nointro -mission <N> -gametype <G> -level <L> -playercar <C> -startpos <x> <z> -players <P> [-chase <H>]
+REDRIVER2_dev.exe -nointro -mission <N> -gametype <G> -level <L> -playercar <C> -startpos <x> <z> -startdir <A> -players <P> [-chase <H>]
 REDRIVER2_dev.exe -nointro -replay "DRIVER2/REPLAYS/ATTRACT.400"
 ```
 
-- `-mission`, `-gametype`, `-level`, `-playercar`, `-startpos`, `-players`, and `-chase` start a specific session. They exist only in `Debug`/`Release_dev`.
+- `-mission`, `-gametype`, `-level`, `-playercar`, `-startpos`, `-startdir`, `-players`, and `-chase` start a specific session. They exist only in `Debug`/`Release_dev`.
+- `-startdir` is the player heading as a 12-bit PlayStation angle (`0..4095`). It is captured with the position, so the vehicle faces the same way.
 - `-gametype` and `-level` are required for a faithful reproduction: `GAME_TAKEADRIVE` recomputes the mission number from `GameLevel`, so `-mission` alone does not select the map.
 - `-replay <file.d2rp>` starts a recorded replay deterministically and also works in a plain `Release` build. The attract replays in `data/DRIVER2/REPLAYS/` are reproducible scenes; `-replay` is the best choice when comparing the same frame with a setting on and off. Scripted campaign ("Undercover") missions reload through the mission ladder and are not exactly restored by the direct-start arguments.
 
