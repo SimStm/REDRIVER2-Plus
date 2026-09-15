@@ -109,6 +109,9 @@ where release policy permits it.
 - Screenshots saved by `PsyX_TakeScreenshot` (F12 or `captureAfterSeconds`) are
   no longer vertically mirrored. `glReadPixels` rows are flipped before
   `SDL_SaveBMP`, matching the displayed orientation.
+- The PsyCross `developer-overlay.patch` now checks out with LF line endings
+  (`.gitattributes`), so a fresh Windows clone with `core.autocrlf=true`
+  applies it instead of failing on the corrupted binary payload.
 
 ## [8.0] - 2026-07-02
 

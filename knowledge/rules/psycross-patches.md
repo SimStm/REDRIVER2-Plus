@@ -16,3 +16,9 @@ Keep the parent gitlink at the documented upstream base commit. An unpublished
 submodule commit makes a parent pull request impossible to clone or build.
 Update the patch, script documentation, and the expected base revision together
 when rebasing the integration onto a different PsyCross revision.
+
+Keep patch files at LF (`.gitattributes` sets `patches/**/*.patch text eol=lf`).
+A `git apply` patch contains a base64 binary payload; a Windows checkout with
+`core.autocrlf=true` rewrites its line endings and `git apply` then fails with
+`git diff header lacks filename information`. Always validate the patch in a
+fresh clone, not only in the already-modified working tree.
