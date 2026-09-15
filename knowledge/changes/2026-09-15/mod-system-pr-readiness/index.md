@@ -89,10 +89,31 @@ transparent colour into cutout edges. Runtime captures of the `GRASS01C`
 scene with overrides on and off confirm the scene renders without black cutout
 regions.
 
+## Follow-up work (same day, later commits)
+
+The debug and correctness work continued after the initial audit:
+
+- Reproducible developer start snapshots (`DeveloperDebugStart.*`,
+  `developer_debug_start.ini`) with a panel section, startup application,
+  `-gametype`, `-level` and `-startdir` arguments, an intro skip, and
+  `scripts/run_debug_start.ps1` for deterministic on/off capture.
+- Exported originals now encode the PSX `STP` flag as half alpha, so
+  semitransparent texels survive export and re-import.
+- Fully opaque overrides use mipmaps (`GR_CreateRGBATextureMipmapped`);
+  transparent overrides keep plain filtering to avoid alpha bleed.
+- Export tests now cover STP alpha, wildcard entries, duplicate legacy pairs,
+  malformed documents and repeated writes (31 checks).
+- `git diff --check` is clean, `Release_dev`/`x64` and `Debug`/`x64` build, and
+  the regenerated PsyCross patch still applies cleanly and idempotently to a
+  fresh worktree at the pinned commit.
+
 ## Limitations and pending checks
 
-- Linux compilation was not run (no toolchain in this environment); record as
-  unavailable coverage rather than passed.
+- Linux compilation was not run: the WSL distribution has no SDL2/OpenAL/GL
+  development headers and `sudo` requires a password, so dependencies cannot be
+  installed. The Linux-specific paths (`_WIN32`-guarded file replacement,
+  `<SDL.h>` for `SDL_GetTicks`, desktop-only guards) were reviewed but not
+  compiled; record as unavailable coverage rather than passed.
 - The Premake regeneration and build were not repeated in a disposable parent
   checkout; only the patch was validated against a fresh PsyCross worktree.
 - A side-by-side override on/off capture of the same frame was not completed in

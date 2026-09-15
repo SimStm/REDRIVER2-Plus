@@ -13,11 +13,13 @@ tags: [roadmap, release, validation]
 Milestones 1, 2, 3 (correctness portion), 5 (Windows) and 6 are covered by the
 2026-09-15 audit record at
 [`knowledge/changes/2026-09-15/mod-system-pr-readiness/`](../../changes/2026-09-15/mod-system-pr-readiness/index.md).
-The override cutout, append-only manifest merge, regenerated PsyCross patch, and
-Windows build/tests are complete. Milestone 4 is only partially evidenced (the
-patch was validated against a fresh PsyCross worktree, not a disposable parent
-checkout), and Linux coverage remains unavailable. The record stays `planned`
-until those checks and the scoped PR review are finished.
+The override cutout, PSX `STP` export, append-only manifest merge, regenerated
+PsyCross patch, reproducible debug-start tooling, and Windows builds/tests are
+complete. Milestone 4 is only partially evidenced (the patch was validated
+against a fresh PsyCross worktree, not a disposable parent checkout), and Linux
+coverage remains unavailable because the WSL distribution lacks the development
+headers and cannot install them. The record stays `planned` until those checks
+and the scoped PR review are finished.
 
 ## Problem
 
