@@ -1,12 +1,24 @@
 ---
 type: Roadmap
 title: Texture alpha and PSX blending correctness
-status: planned
+status: implemented
+completed: 2026-09-15
 execution_order: 1
 tags: [roadmap, textures, rendering]
 ---
 
 # Texture alpha and PSX blending correctness
+
+Completed on 2026-09-15 on the `codex/modular-mod-system` branch. Product
+behaviour is documented in
+[`knowledge/product/texture-alpha-semantics.md`](../../product/texture-alpha-semantics.md).
+
+Delivered: the override cutout discard (`color.a < 0.5`), PSX `STP` export as
+alpha `128` with `0` for the transparent colour, and documented blend-mode
+semantics for `BM_AVERAGE` versus the additive/subtractive modes. Verified in
+the Chicago debug-start scene (`GRASS01C` alpha `128` opaque, alpha `100`
+discarded) and by the export tests. The optional sub-0.5 soft-alpha enhancement
+was deliberately left out as a non-goal.
 
 ## Problem
 

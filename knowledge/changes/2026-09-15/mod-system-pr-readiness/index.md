@@ -106,6 +106,15 @@ The debug and correctness work continued after the initial audit:
 - `git diff --check` is clean, `Release_dev`/`x64` and `Debug`/`x64` build, and
   the regenerated PsyCross patch still applies cleanly and idempotently to a
   fresh worktree at the pinned commit.
+- Runtime alpha verification in the Chicago debug-start scene by overriding
+  `GRASS01C` (page 1, index 5) with a flat red PNG: alpha `128` renders an
+  opaque ground, alpha `100` is discarded and the ground becomes a hole. This
+  confirms the 0.5 cutout. Blend modes come from the primitive's tpage, so an
+  override inherits `BM_AVERAGE` (proportional alpha) or the
+  additive/subtractive modes (alpha ignored). Product behaviour and limits are
+  documented in
+  [`knowledge/product/texture-alpha-semantics.md`](../../product/texture-alpha-semantics.md);
+  roadmap order 01 is completed.
 
 ## Limitations and pending checks
 

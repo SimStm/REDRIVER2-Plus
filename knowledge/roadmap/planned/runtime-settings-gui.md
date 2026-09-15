@@ -26,7 +26,7 @@ Do not treat all settings as immediate flags, overwrite config.ini wholesale, ch
 
 ## Dependencies and risks
 
-Order 10. Coordinate camera behavior with [07](inspector-camera-preview.md), legacy content semantics with [08](modding-toolchain-integration.md), and renderer correctness with [01](texture-alpha-semantics.md). Independent settings can ship as separate milestones.
+Order 10. Coordinate camera behavior with [07](inspector-camera-preview.md), legacy content semantics with [08](modding-toolchain-integration.md), and renderer correctness with [01](../done/texture-alpha-semantics.md). Independent settings can ship as separate milestones.
 
 ## Suggested execution order
 

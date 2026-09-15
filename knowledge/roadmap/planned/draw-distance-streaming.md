@@ -26,7 +26,7 @@ Do not increase global limits blindly, disable bounds checks, change AI or colli
 
 ## Dependencies and risks
 
-Order 11 after rendering stability in [01](texture-alpha-semantics.md) and [02](texture-flicker-diagnostics.md). Use settings infrastructure from [10](runtime-settings-gui.md) where applicable; universal editor support is not a hard prerequisite.
+Order 11 after rendering stability in [01](../done/texture-alpha-semantics.md) and [02](texture-flicker-diagnostics.md). Use settings infrastructure from [10](runtime-settings-gui.md) where applicable; universal editor support is not a hard prerequisite.
 
 ## Suggested execution order
 

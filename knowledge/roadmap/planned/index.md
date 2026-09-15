@@ -21,18 +21,25 @@ acceptance criteria and validation plan. Dependencies inside the record take
 precedence over the simple reading order.
 
 1. **00 — [Mod-system branch PR readiness](mod-system-pr-readiness.md)**
-2. **01 — [Texture alpha and PSX blending correctness](texture-alpha-semantics.md)**
-3. **02 — [Texture flicker diagnosis and sampling stability](texture-flicker-diagnostics.md)**
-4. **03 — [Append-only texture registration and safe manifest merging](texture-manifest-merge.md)**
-5. **04 — [Source-aware asset catalog and material identity](asset-catalog-identity.md)**
-6. **05 — [Batch texture export with model references](object-texture-batch-export.md)**
-7. **06 — [Whole-object selection across renderer categories](inspector-selection-coverage.md)**
-8. **07 — [Inspector navigation and independent previews](inspector-camera-preview.md)**
-9. **08 — [OpenDriver2Tools interoperability and legacy overrides](modding-toolchain-integration.md)**
-10. **09 — [Model export and validated re-import](model-export-import-roundtrip.md)**
-11. **10 — [Runtime settings GUI and safe persistence](runtime-settings-gui.md)**
-12. **11 — [Draw distance, LOD and streaming budgets](draw-distance-streaming.md)**
-13. **12 — [Measured graphics improvements and quality profiles](graphics-quality-profiles.md)**
+2. **02 — [Texture flicker diagnosis and sampling stability](texture-flicker-diagnostics.md)**
+3. **03 — [Append-only texture registration and safe manifest merging](texture-manifest-merge.md)**
+4. **04 — [Source-aware asset catalog and material identity](asset-catalog-identity.md)**
+5. **05 — [Batch texture export with model references](object-texture-batch-export.md)**
+6. **06 — [Whole-object selection across renderer categories](inspector-selection-coverage.md)**
+7. **07 — [Inspector navigation and independent previews](inspector-camera-preview.md)**
+8. **08 — [OpenDriver2Tools interoperability and legacy overrides](modding-toolchain-integration.md)**
+9. **09 — [Model export and validated re-import](model-export-import-roundtrip.md)**
+10. **10 — [Runtime settings GUI and safe persistence](runtime-settings-gui.md)**
+11. **11 — [Draw distance, LOD and streaming budgets](draw-distance-streaming.md)**
+12. **12 — [Measured graphics improvements and quality profiles](graphics-quality-profiles.md)**
+
+## Completed
+
+- **01 — [Texture alpha and PSX blending correctness](../done/texture-alpha-semantics.md)**:
+  implemented 2026-09-15; see
+  [`knowledge/product/texture-alpha-semantics.md`](../../product/texture-alpha-semantics.md).
+  The order labels of the remaining entries are unchanged, so the sequence has
+  an intentional gap at 01.
 
 ## Current-branch merge boundary
 

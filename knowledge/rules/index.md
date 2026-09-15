@@ -11,6 +11,10 @@ tags: [okf, rules]
   recover texture names and page/index selectors from original or upscaled exports.
 - [Validate inspector exports before publication](inspector-export-validation.md):
   repeated exports replace completed files, while failed writes preserve them.
+- [Design override PNG alpha for the 0.5 cutout and the effect blend mode](texture-alpha-semantics.md):
+  fragments below 0.5 alpha are cut out on every primitive, `BM_AVERAGE`
+  honours texel alpha proportionally, and the additive/subtractive modes
+  ignore it.
 - [Append texture registrations without rewriting manifest data](manifest-append-merge.md):
   add missing `(texture, texturePage, textureIndex)` entries atomically while
   preserving unknown fields and existing mappings.

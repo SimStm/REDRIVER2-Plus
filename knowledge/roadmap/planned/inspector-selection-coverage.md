@@ -26,7 +26,7 @@ Do not claim universal selection until each category is verified. Do not equate 
 
 ## Dependencies and risks
 
-Order 06 after [04](asset-catalog-identity.md); share alpha policy from [01](texture-alpha-semantics.md). Enables camera focus and complete component export in later stages.
+Order 06 after [04](asset-catalog-identity.md); share alpha policy from [01](../done/texture-alpha-semantics.md). Enables camera focus and complete component export in later stages.
 
 ## Suggested execution order
 

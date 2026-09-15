@@ -26,7 +26,7 @@ This record does not authorize arbitrary PBR conversion, ray tracing, new art, m
 
 ## Dependencies and risks
 
-Order 12 after the relevant correctness and measurement work in [01](texture-alpha-semantics.md), [02](texture-flicker-diagnostics.md), [10](runtime-settings-gui.md) and [11](draw-distance-streaming.md). Smaller independent improvements need only their actual prerequisites.
+Order 12 after the relevant correctness and measurement work in [01](../done/texture-alpha-semantics.md), [02](texture-flicker-diagnostics.md), [10](runtime-settings-gui.md) and [11](draw-distance-streaming.md). Smaller independent improvements need only their actual prerequisites.
 
 ## Suggested execution order
 
