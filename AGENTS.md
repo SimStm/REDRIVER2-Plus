@@ -9,6 +9,14 @@ them when planning work, but do not treat them as implementation evidence:
 `planned/` documents intent only, while `done/` is a completion record that must
 be corroborated by its matching `knowledge/product/` document and the source.
 
+Substantive architecture and design discussions live in
+[`knowledge/discussions/`](knowledge/discussions/index.md). Before continuing
+an existing topic, read its record; after a material discussion, update the
+same subject with evidence, recommendations, open questions, and a dated
+history entry. Follow [`discussion-records.md`](knowledge/rules/discussion-records.md).
+Exploration belongs there until the user adopts a concrete roadmap scope;
+a discussion does not authorize implementation or establish shipped behaviour.
+
 ## Project purpose
 
 REDRIVER2 is a clean-room C/C++ reimplementation of the original PlayStation
