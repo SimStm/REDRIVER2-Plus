@@ -7,6 +7,9 @@ tags: [okf, rules]
 
 # Rules
 
+- [Maintain evolving discussion records](discussion-records.md): update the
+  same topic as decisions evolve, separating exploration from roadmap adoption
+  and implemented behaviour.
 - [Reconstruct texture manifests from inspector filenames](texture-manifest-from-filenames.md):
   recover texture names and page/index selectors from original or upscaled exports.
 - [Validate inspector exports before publication](inspector-export-validation.md):
@@ -18,6 +21,9 @@ tags: [okf, rules]
 - [Append texture registrations without rewriting manifest data](manifest-append-merge.md):
   add missing `(texture, texturePage, textureIndex)` entries atomically while
   preserving unknown fields and existing mappings.
+- [Build and run the Linux target (including via WSL)](linux-wsl-build.md):
+  install the system SDL2/OpenAL/GL/libjpeg packages, apply the PsyCross patch,
+  generate with Premake, and build in `src_rebuild/build`.
 - [Regenerate build files after source additions](generated-build-files.md):
   generated IDE projects do not discover newly added source files on their own.
 - [Keep PsyCross changes as patches](psycross-patches.md): project-specific

@@ -56,6 +56,9 @@ carried as a maintained patch instead of a private submodule fork.
 - Windows `Release_dev|x64` and `Debug|x64` build.
 - Fresh disposable clone: submodule init, patch apply (idempotent,
   byte-identical submodule tree), Premake generation, `Release_dev|x64` build.
+- Linux `release_dev_x64` and `debug_x64` build from a clean clone via
+  `linux_dev_prepare.sh`; the Linux binary starts under WSLg (D3D12/Mesa 3.3
+  core, anisotropic filtering detected) and loads a level.
 - Export regression tests pass (31 checks).
 - In-game: override on/off captures, alpha cutout (`128` kept, `100`
   discarded), STP blend semantics, and direct start with
@@ -63,9 +66,9 @@ carried as a maintained patch instead of a private submodule fork.
 
 ### Known limitations and unsupported platforms
 
-- Linux, Android and Emscripten compilation were not validated; the WSL
-  distribution lacks the development headers. The ImGui panel builds only on
-  Windows and Linux.
+- Linux builds and starts under WSLg but was not exercised beyond startup and
+  level load. Android and Emscripten compilation were not validated. The ImGui
+  panel builds only on Windows and Linux.
 - Inspector selection is a diagnostic draw-stream approximation, not a
   depth-tested editor selection; OBJ export is geometry-only and has no
   re-import.

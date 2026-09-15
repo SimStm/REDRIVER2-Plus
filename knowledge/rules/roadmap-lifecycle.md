@@ -7,6 +7,11 @@ tags: [okf, roadmap, documentation]
 
 # Maintain roadmap records
 
+Exploratory options and recommended sequences belong in
+[`discussions/`](../discussions/index.md) until a concrete feature scope is
+adopted for the roadmap. A request to discuss a possible direction is not
+roadmap adoption or implementation authorization.
+
 **When** a feature is planned, **then** create one
 `knowledge/roadmap/planned/<slug>.md` record before treating that work as part
 of the project roadmap.

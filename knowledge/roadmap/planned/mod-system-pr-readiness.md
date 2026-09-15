@@ -25,10 +25,18 @@ the patch was corrupted by CRLF on Windows checkouts (now `.gitattributes`
 LF-only) and the applier hung under Windows PowerShell 5.1 (now captures
 `git apply` output instead of redirecting stderr to `$null`).
 
-Linux coverage remains unavailable because the WSL distribution lacks the
-development headers and cannot install them. Milestone 7 (scoped diff review
-and PR description) is the remaining item before the record can move to
-`done/`.
+Linux coverage is now validated. Dependencies were installed through
+`wsl -u root` (`build-essential libsdl2-dev libopenal-dev libgl1-mesa-dev
+libjpeg-dev pkg-config`), and a clean clone configured with the fixed
+`linux_dev_prepare.sh` and built `release_dev_x64` and `debug_x64` with
+`MAKE_EXIT=0`. The Linux `REDRIVER2_dev` also starts under WSLg (D3D12/Mesa
+3.3 core, GLSL 3.30, anisotropic filtering detected at `16x`) and loads a
+level. `linux_dev_prepare.sh` was fixed to apply the PsyCross patch and enter
+the real Premake output directory.
+
+Milestone 7 (scoped diff review and PR description) is the remaining item
+before the record can move to `done/`; the draft PR body exists but no PR has
+been opened.
 
 ## Problem
 

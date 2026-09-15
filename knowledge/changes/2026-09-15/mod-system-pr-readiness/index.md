@@ -120,6 +120,10 @@ The debug and correctness work continued after the initial audit:
   applier hung under Windows PowerShell 5.1 because a failing `git apply` with
   stderr redirected to `$null` deadlocks while `$ErrorActionPreference` is
   `Stop`.
+- Linux validation and tooling: `linux_dev_prepare.sh` now applies the PsyCross
+  patch with an absolute path and enters `src_rebuild/build`, the directory
+  Premake actually generates. A clean clone then built `release_dev_x64` and
+  `debug_x64` and the Linux binary started under WSLg.
 - Runtime alpha verification in the Chicago debug-start scene by overriding
   `GRASS01C` (page 1, index 5) with a flat red PNG: alpha `128` renders an
   opaque ground, alpha `100` is discarded and the ground becomes a hole. This
@@ -132,11 +136,13 @@ The debug and correctness work continued after the initial audit:
 
 ## Limitations and pending checks
 
-- Linux compilation was not run: the WSL distribution has no SDL2/OpenAL/GL
-  development headers and `sudo` requires a password, so dependencies cannot be
-  installed. The Linux-specific paths (`_WIN32`-guarded file replacement,
-  `<SDL.h>` for `SDL_GetTicks`, desktop-only guards) were reviewed but not
-  compiled; record as unavailable coverage rather than passed.
+- Linux: dependencies were installed through `wsl -u root`
+  (`build-essential libsdl2-dev libopenal-dev libgl1-mesa-dev libjpeg-dev
+  pkg-config`). A clean clone built `release_dev_x64` and `debug_x64` with
+  `MAKE_EXIT=0`, and the Linux `REDRIVER2_dev` starts under WSLg (D3D12/Mesa
+  3.3 core, GLSL 3.30, anisotropic filtering detected at `16x`) and loads a
+  level. Interactive gameplay and panel behaviour under Linux were not
+  exercised beyond startup and level load.
 - The F11 panel's own buttons were compile-verified only: automated input does
   not reach the SDL window, so panel interaction was validated manually. Device
   screenshot capture by window title works.

@@ -10,6 +10,9 @@ where release policy permits it.
 
 ### Added
 
+- An evolving knowledge discussion catalog, with automatic topic maintenance
+  guidance and an illustrated renderer-modernization exploration kept separate
+  from adopted roadmap work and implemented features.
 - Thirteen ordered roadmap records for mod-system PR readiness, texture
   correctness, manifest merging, asset identity, batch exports, inspector
   coverage, camera/previews, tool interoperability, model round trips,
@@ -118,6 +121,11 @@ where release policy permits it.
 - `scripts/apply_psycross_patches.ps1` no longer hangs under Windows PowerShell
   5.1. With `$ErrorActionPreference='Stop'`, redirecting the stderr of a failing
   `git apply` to `$null` deadlocked; the combined output is captured instead.
+- `linux_dev_prepare.sh` applies the PsyCross patch and changes into the
+  directory Premake actually generates (`src_rebuild/build`), so a clean Linux
+  checkout configures and builds. The Linux target (`release_dev_x64`,
+  `debug_x64`) was verified to compile and to start and load a level with the
+  WSLg D3D12/Mesa core context.
 
 ## [8.0] - 2026-07-02
 

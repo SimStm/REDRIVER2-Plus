@@ -79,9 +79,36 @@ src_rebuild/bin/Release_dev/REDRIVER2_dev.exe
 
 > The PsyCross patch script is safe to run again. It validates the expected upstream submodule revision and does nothing when the patch has already been applied.
 
-### Linux and other platforms
+### Linux
 
-The upstream project also targets Linux, WebAssembly, and Android. For the current platform-specific prerequisites and generation commands, follow the upstream [contributor guide](https://github.com/OpenDriver2/REDRIVER2/wiki/Contributing-to-project). The Plus-specific PsyCross patch must still be applied after initializing submodules.
+Install the build dependencies (Ubuntu/Debian):
+
+```bash
+sudo apt-get install -y build-essential libsdl2-dev libopenal-dev \
+    libgl1-mesa-dev libjpeg-dev pkg-config
+```
+
+Initialize the submodule, then fetch Premake, apply the PsyCross patch, and generate the Linux makefiles:
+
+```bash
+git submodule update --init --recursive
+./linux_dev_prepare.sh
+```
+
+Build a configuration in `src_rebuild/build`:
+
+```bash
+cd src_rebuild/build
+make -j"$(nproc)" config=release_dev_x64
+```
+
+The executable is produced at `src_rebuild/bin/Release_dev/REDRIVER2_dev` (`REDRIVER2_dbg` for `debug_x64`). The game expects a `DRIVER2/` data folder in its working directory, so run it from `src_rebuild/bin/Release_dev` with the game data linked or copied there. Under WSLg the OpenGL context is created through WSLg's D3D12/`Mesa` driver and the game runs windowed.
+
+> `linux_dev_prepare.sh` is idempotent: it reuses an existing `premake5`, skips an already-applied patch, and regenerates the makefiles.
+
+### Other platforms
+
+The upstream project also targets WebAssembly and Android. For the current platform-specific prerequisites and generation commands, follow the upstream [contributor guide](https://github.com/OpenDriver2/REDRIVER2/wiki/Contributing-to-project).
 
 ## Running and debugging
 
