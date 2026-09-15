@@ -8,6 +8,10 @@
 
 #include "ASM/rndrasm.h"
 
+#ifndef PSX
+#include "PsyX/PsyX_public.h"
+#endif
+
 #ifdef DYNAMIC_LIGHTING
 void Tile1x1Lit(MODEL* model)
 {
@@ -268,6 +272,11 @@ void DrawTILES(PACKED_CELL_OBJECT** tiles, int tile_amount)
 		yang = ppco->value & 0x3f;
 		model_number = (ppco->value >> 6) | (ppco->pos.vy & 1) << 10;
 
+#ifndef PSX
+		const int sourceModelNumber = model_number;
+		const void* primitiveBegin = plotContext.primptr;
+#endif
+
 		if (previous_matrix == yang)
 		{
 			Z = Apply_InvCameraMatrixSetTrans((VECTOR_NOPAD *)plotContext.scribble);
@@ -299,6 +308,23 @@ void DrawTILES(PACKED_CELL_OBJECT** tiles, int tile_amount)
 			Tile1x1(pModel);
 #endif // DYNAMIC_LIGHTING
 		}
+
+#ifndef PSX
+		char inspectorLabel[PSYX_INSPECTOR_LABEL_LENGTH];
+		PsyXInspectorObject inspectorObject = {};
+		snprintf(inspectorObject.key, sizeof(inspectorObject.key), "tile:%d:%d:%d:%d:%d:%d",
+			GameLevel, sourceModelNumber, ppco->pos.vx, ppco->pos.vy, ppco->pos.vz, yang);
+		const char* inspectorName = GetModelNameByIndex(sourceModelNumber);
+		snprintf(inspectorObject.modelName, sizeof(inspectorObject.modelName), "%s", inspectorName ? inspectorName : "Unnamed model");
+		inspectorObject.modelIndex = sourceModelNumber;
+		inspectorObject.vertexCount = pModel->num_vertices;
+		inspectorObject.polygonCount = pModel->num_polys;
+		inspectorObject.position[0] = ppco->pos.vx;
+		inspectorObject.position[1] = (ppco->pos.vy << 16) >> 17;
+		inspectorObject.position[2] = ppco->pos.vz;
+		snprintf(inspectorLabel, sizeof(inspectorLabel), "City tile | %s | model %d", inspectorObject.modelName, sourceModelNumber);
+		PsyX_Inspector_RegisterObjectRange(primitiveBegin, plotContext.primptr, inspectorLabel, &inspectorObject);
+#endif
 	}
 	current->primptr = plotContext.primptr;
 }

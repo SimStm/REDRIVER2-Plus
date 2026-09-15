@@ -32,5 +32,9 @@ extern int ProcessCarModelLump(char *lump_ptr, int lump_size); // 0x00064E6C
 extern MODEL* FindModelPtrWithName(char *name); // 0x0005D40C
 
 extern int FindModelIdxWithName(char *name); // 0x0005D4C4
+extern const char* GetModelNameByIndex(int modelIndex);
+#ifndef PSX
+extern void Models_SetInspectorNameBuffer(char* buffer, int size);
+#endif
 
 #endif

@@ -352,7 +352,11 @@ void ProcessLumps(char* lump_ptr, int lump_size)
 		else if (lump_type == LUMP_MODELNAMES)
 		{
 			printInfo("LUMP_MODELNAMES: size: %d\n", seg_size);
+#ifndef PSX
+			Models_SetInspectorNameBuffer((char*)ptr, seg_size);
+#else
 			modelname_buffer = (char*)ptr;
+#endif
 		}
 		else if (lump_type == 0xff)
 		{

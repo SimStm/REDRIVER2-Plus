@@ -4,6 +4,11 @@
 
 Canonical project knowledge lives in [`knowledge/`](knowledge/index.md). Read `knowledge/index.md` and `knowledge/rules/` before changing lint, tokens, or booking naming. When you learn a repeating constraint, add a rule under `knowledge/rules/` (see `knowledge/rules/self-learning.md`).
 
+Roadmap records live in [`knowledge/roadmap/`](knowledge/roadmap/index.md). Read
+them when planning work, but do not treat them as implementation evidence:
+`planned/` documents intent only, while `done/` is a completion record that must
+be corroborated by its matching `knowledge/product/` document and the source.
+
 ## Project purpose
 
 REDRIVER2 is a clean-room C/C++ reimplementation of the original PlayStation
@@ -140,3 +145,16 @@ point math, timing, or rendering can affect compatibility.
 - Move entries from `Unreleased` to a dated, immutable release section only
   when that version is actually released. Do not fabricate release dates,
   versions, or historical changes.
+
+## Roadmap records
+
+- Create one `knowledge/roadmap/planned/<slug>.md` record for each newly
+  planned feature, using the lifecycle and required fields documented in
+  `knowledge/roadmap/index.md`.
+- Roadmap records are planning metadata, not a source of truth for currently
+  implemented behaviour. Do not report a `planned/` entry as a shipped feature
+  during repository analysis.
+- When implementing a planned feature, move its record to
+  `knowledge/roadmap/done/`, update its status to implemented, and add or
+  update the matching `knowledge/product/<slug>.md` document in the same
+  change. A record must not enter `done/` without that product document.

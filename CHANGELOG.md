@@ -10,6 +10,32 @@ where release policy permits it.
 
 ### Added
 
+- Thirteen ordered roadmap records for mod-system PR readiness, texture
+  correctness, manifest merging, asset identity, batch exports, inspector
+  coverage, camera/previews, tool interoperability, model round trips,
+  runtime settings, draw distance, and measured graphics improvements.
+- A knowledge roadmap lifecycle for planned and completed features, with
+  required product documentation for completed roadmap records.
+- Object-level building inspection, LOD-independent world-object keys, bounded
+  model-name lookup, and a list of registered textures on the selected object
+  with individual PNG export actions.
+- Standalone Windows export regression tests covering channel fidelity,
+  repeated writes, source validation, and preservation after failed writes.
+- Added configurable diagnostic selection highlighting, draw-source labels,
+  live car-slot positions, loaded override previews, selection-detail TXT
+  export/clipboard copying, and explicit export paths
+  and disabled-action explanations in the 3D inspector.
+- Added discoverable JSON texture mods under `mods/<id>/manifest.json`, with a
+  deterministic `mods/enabled.json` load order and a `3D Debug` inspector for
+  their declared texture resources.
+- Added click-based PSX primitive inspection, including texture page, CLUT,
+  UV, level texture identity, active override, and provenance for car bodies
+  and city tiles; selected textures export as PNG and selected cars as OBJ.
+
+- A Windows desktop HD-texture vertical slice: external RGBA PNG replacements
+  can be mapped by `TEXINF` name with original TIM/VRAM and CLUT fallback
+  preserved, plus manifest documentation and Developer Graphics Panel
+  diagnostics.
 - Dear ImGui developer panel, opened with F11, with live graphics controls and
   an explained game-debug tab for renderer, streaming, traffic, police,
   mission, vehicle, and road-state telemetry.
@@ -18,12 +44,31 @@ where release policy permits it.
 
 ### Changed
 
+- Documented how to reconstruct explicit texture manifest entries from
+  inspector-export filenames, including renamed upscaled variants.
+- Developer-panel text wraps within the available window width. Texture
+  exports use the full registered texture region, retain up to 4096 known
+  textures independently of the mod-entry limit.
+- Inspector PNG, TXT and car OBJ exports can be repeated at the same path.
+  Completed nonempty temporary files replace the previous export; PNG output
+  is decoded and dimension-checked before publication.
+- Kept the previous `mods/hd_textures/manifest.ini` mapping as a compatibility
+  fallback when no JSON mod manifests are present.
+- Texture manifests and PNG overrides can now be reloaded for texture pages
+  already present in the current level without changing original game assets.
+
 - Rewrote the project README with fork scope, legal-data guidance, setup,
   build, run, debug, technology, and agent-workflow documentation.
 - The F11 developer-panel hotkey now activates on key press and supports both
   SDL F11 identifiers.
 - Project-owned PsyCross changes are distributed as an idempotent patch applied
   after submodule initialisation, avoiding a fork solely for this integration.
+
+### Fixed
+
+- Fixed zero-byte PNG exports caused by rejecting the WIC encoder's BGRA
+  pixel-format negotiation after opening the destination file. RGBA pixels
+  are now explicitly converted to BGRA, retaining alpha and colour channels.
 
 ## [8.0] - 2026-07-02
 

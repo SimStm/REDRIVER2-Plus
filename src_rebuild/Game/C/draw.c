@@ -15,6 +15,9 @@
 #include "debris.h"
 #include "ASM/rndrasm.h"
 #include "event.h"
+#ifndef PSX
+#include "PsyX/PsyX_public.h"
+#endif
 
 MATRIX aspect =
 {
@@ -992,10 +995,31 @@ int DrawAllBuildings(CELL_OBJECT** objects, int num_buildings)
 
 		plotContext.ot = ot + zbias * 4;
 
+#ifndef PSX
+		const void* inspectorBegin = plotContext.primptr;
+#endif
+
 		if(Z <= DRAW_LOD_DIST_HIGH)
 			PlotBuildingModelSubdivNxN(model, cop->yang, &plotContext, 1);
 		else
 			PlotBuildingModel(model, cop->yang, &plotContext);
+
+#ifndef PSX
+		PsyXInspectorObject inspectorObject = {};
+		snprintf(inspectorObject.key, sizeof(inspectorObject.key), "building:%d:%d:%d:%d:%d:%d",
+			GameLevel, cop->type, cop->pos.vx, cop->pos.vy, cop->pos.vz, cop->yang);
+		const char* inspectorName = GetModelNameByIndex(cop->type);
+		snprintf(inspectorObject.modelName, sizeof(inspectorObject.modelName), "%s", inspectorName ? inspectorName : "Unnamed model");
+		inspectorObject.modelIndex = cop->type;
+		inspectorObject.vertexCount = model->num_vertices;
+		inspectorObject.polygonCount = model->num_polys;
+		inspectorObject.position[0] = cop->pos.vx;
+		inspectorObject.position[1] = cop->pos.vy;
+		inspectorObject.position[2] = cop->pos.vz;
+		char inspectorLabel[PSYX_INSPECTOR_LABEL_LENGTH];
+		snprintf(inspectorLabel, sizeof(inspectorLabel), "Building | %s | model %d", inspectorObject.modelName, cop->type);
+		PsyX_Inspector_RegisterObjectRange(inspectorBegin, plotContext.primptr, inspectorLabel, &inspectorObject);
+#endif
 
 		drawlimit = (int)(current->primptr - current->primtab);
 
