@@ -20,3 +20,6 @@ completed, as described in the [roadmap catalog](../index.md).
 - **02 — [Texture flicker diagnosis and sampling stability](texture-flicker-diagnostics.md)**:
   implemented 2026-09-15; product document
   [`knowledge/product/texture-flicker-diagnostics.md`](../../product/texture-flicker-diagnostics.md).
+- **03 — [Append-only texture registration and safe manifest merging](texture-manifest-merge.md)**:
+  implemented 2026-09-15; product document
+  [`knowledge/product/texture-manifest-merge.md`](../../product/texture-manifest-merge.md).

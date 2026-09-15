@@ -8,35 +8,40 @@ tags: [roadmap, release, validation]
 
 # Mod-system branch PR readiness
 
-## Progress
+## Milestone checklist
 
-Milestones 1, 2, 3 (correctness portion), 4, 5 (Windows) and 6 are covered by
-the 2026-09-15 audit record at
+Base `b2d88574` (`master`); branch `codex/modular-mod-system`. The narrative
+evidence is in the audit record at
 [`knowledge/changes/2026-09-15/mod-system-pr-readiness/`](../../changes/2026-09-15/mod-system-pr-readiness/index.md).
-The override cutout, PSX `STP` export, append-only manifest merge, regenerated
-PsyCross patch, reproducible debug-start tooling, and Windows builds/tests are
-complete.
 
-Milestone 4 is now verified in a disposable checkout: a fresh local clone at
-the branch head, `git submodule update --init`, and
-`scripts/apply_psycross_patches.ps1` reproduce the pinned PsyCross tree and
-build `Release_dev|x64`. That run exposed and fixed two reproducibility defects:
-the patch was corrupted by CRLF on Windows checkouts (now `.gitattributes`
-LF-only) and the applier hung under Windows PowerShell 5.1 (now captures
-`git apply` output instead of redirecting stderr to `$null`).
-
-Linux coverage is now validated. Dependencies were installed through
-`wsl -u root` (`build-essential libsdl2-dev libopenal-dev libgl1-mesa-dev
-libjpeg-dev pkg-config`), and a clean clone configured with the fixed
-`linux_dev_prepare.sh` and built `release_dev_x64` and `debug_x64` with
-`MAKE_EXIT=0`. The Linux `REDRIVER2_dev` also starts under WSLg (D3D12/Mesa
-3.3 core, GLSL 3.30, anisotropic filtering detected at `16x`) and loads a
-level. `linux_dev_prepare.sh` was fixed to apply the PsyCross patch and enter
-the real Premake output directory.
-
-Milestone 7 (scoped diff review and PR description) is the remaining item
-before the record can move to `done/`; the draft PR body exists but no PR has
-been opened.
+- [x] **1. Scope inventory / include-exclude list.** Audit record produced;
+  unrelated game data and dependency archives stay out of the branch.
+  `711935f8` ignores new `data/DRIVER2`/`data/_DRIVER2` files instead of
+  committing local assets.
+- [x] **2. Loader and exporter review.** Malformed JSON, duplicate ids, path
+  traversal, limits, partial writes and repeated exports are covered by the
+  export tests and the append-only merge; invalid configuration cannot
+  silently enable unintended mods.
+- [x] **3. Transparency and flicker classification.** Override cutout and PSX
+  `STP` export (`29ba80d0`, `4aff8e56`); `GRASS01C` classified as minification
+  aliasing and fixed with opaque-override mipmaps (`423cc8a7`) plus anisotropic
+  filtering (`8058c807`).
+- [x] **4. Disposable-checkout build.** Fresh clone, submodule init, patch
+  apply, Premake and `Release_dev|x64` build succeeded. Fixed the CRLF patch
+  corruption (`e9ebce62`) and the PowerShell 5.1 applier hang (`d3560908`).
+- [x] **5. Tests and platforms.** 31 export checks pass; Windows `Release_dev`
+  and `Debug` build; Linux `release_dev_x64`/`debug_x64` build and start under
+  WSLg (`ff87f0b9`); manual reload, repeated export, precedence, alpha and
+  level-change scenarios checked.
+- [x] **6. Documentation reconciliation.** README, `BUILDING.md`
+  (`c1ae5736`), `mods/README.md`, product documents and the Unreleased
+  changelog match observed capabilities; inspector selection is marked
+  diagnostic and OBJ export as limited.
+- [ ] **7. Scoped diff review and PR.** PR body drafted in
+  [`pr-description.md`](../../changes/2026-09-15/mod-system-pr-readiness/pr-description.md).
+  Pending: open the PR, review the scoped diff in a clean sub-agent, and merge.
+  On merge, add `knowledge/product/mod-system-pr-readiness.md` and move this
+  record to `done/`.
 
 ## Problem
 
@@ -56,7 +61,7 @@ Do not implement general model import, new graphics effects or every inspector c
 
 ## Dependencies and risks
 
-Run this audit first. Complete the correctness portion of [01](../done/texture-alpha-semantics.md) before merge. Use [02](../done/texture-flicker-diagnostics.md) to classify flicker: a binding/depth regression blocks merge; broader quality improvements can be deferred. [03](texture-manifest-merge.md) is recommended before promising a complete export-to-mod workflow, but may be explicitly excluded from a foundation PR.
+Run this audit first. Complete the correctness portion of [01](../done/texture-alpha-semantics.md) before merge. Use [02](../done/texture-flicker-diagnostics.md) to classify flicker: a binding/depth regression blocks merge; broader quality improvements can be deferred. [03](../done/texture-manifest-merge.md) is recommended before promising a complete export-to-mod workflow, but may be explicitly excluded from a foundation PR.
 
 ## Suggested execution order
 

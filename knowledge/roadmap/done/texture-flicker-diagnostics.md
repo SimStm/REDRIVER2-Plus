@@ -21,6 +21,10 @@ overrides keep plain filtering so the 0.5 cutout keeps full alpha coverage;
 alpha-coverage-preserving cutout mipmaps were deliberately not added because
 they would thin or punch holes in foliage.
 
+- `423cc8a7` — mipmaps (`glGenerateMipmap`) for fully opaque overrides.
+- `8058c807` — anisotropic filtering up to `4x` for mipmapped overrides, with
+  the PsyCross patch regenerated and roadmap order 02 completed.
+
 ## Progress
 
 Milestones 1-4 are covered by the 2026-09-15 audit record at

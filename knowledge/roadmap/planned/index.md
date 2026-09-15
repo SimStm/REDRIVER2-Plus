@@ -21,8 +21,7 @@ acceptance criteria and validation plan. Dependencies inside the record take
 precedence over the simple reading order.
 
 1. **00 — [Mod-system branch PR readiness](mod-system-pr-readiness.md)**
-2. **03 — [Append-only texture registration and safe manifest merging](texture-manifest-merge.md)**
-4. **04 — [Source-aware asset catalog and material identity](asset-catalog-identity.md)**
+2. **04 — [Source-aware asset catalog and material identity](asset-catalog-identity.md)**
 5. **05 — [Batch texture export with model references](object-texture-batch-export.md)**
 6. **06 — [Whole-object selection across renderer categories](inspector-selection-coverage.md)**
 7. **07 — [Inspector navigation and independent previews](inspector-camera-preview.md)**
@@ -58,9 +57,12 @@ discussions inside both records for the reasoning and adopted decision.
 - **02 — [Texture flicker diagnosis and sampling stability](../done/texture-flicker-diagnostics.md)**:
   implemented 2026-09-15; see
   [`knowledge/product/texture-flicker-diagnostics.md`](../../product/texture-flicker-diagnostics.md).
+- **03 — [Append-only texture registration and safe manifest merging](../done/texture-manifest-merge.md)**:
+  implemented 2026-09-15; see
+  [`knowledge/product/texture-manifest-merge.md`](../../product/texture-manifest-merge.md).
 
 The order labels of the remaining entries are unchanged, so the sequence has
-intentional gaps at 01 and 02.
+intentional gaps at 01, 02 and 03.
 
 ## Current-branch merge boundary
 
@@ -81,7 +83,7 @@ changes after inspecting tracked and untracked files.
 
 Example request:
 
-> Read knowledge/roadmap/planned/texture-manifest-merge.md and the applicable
+> Read knowledge/roadmap/planned/object-texture-batch-export.md and the applicable
 > project instructions. Implement only milestones 1–2, preserving unrelated
 > local changes. Report tests, remaining risks and the next milestone. Do not
 > mark the whole feature implemented unless all acceptance criteria are met.

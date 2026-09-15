@@ -26,7 +26,7 @@ Do not label a partial capture as complete. Do not make `modelReference` part of
 
 ## Dependencies and risks
 
-Order 05. [03](texture-manifest-merge.md) is required for safe registration. A bounded visible-list milestone can precede [04](asset-catalog-identity.md); complete source export depends on that catalog.
+Order 05. [03](../done/texture-manifest-merge.md) is required for safe registration. A bounded visible-list milestone can precede [04](asset-catalog-identity.md); complete source export depends on that catalog.
 
 ## Suggested execution order
 

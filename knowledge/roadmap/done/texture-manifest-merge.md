@@ -1,12 +1,24 @@
 ---
 type: Roadmap
 title: Append-only texture registration and safe manifest merging
-status: planned
+status: implemented
+completed: 2026-09-15
 execution_order: 3
 tags: [roadmap, mods, exports]
 ---
 
 # Append-only texture registration and safe manifest merging
+
+Completed on 2026-09-15 on the `codex/modular-mod-system` branch. Product
+behaviour is documented in
+[`knowledge/product/texture-manifest-merge.md`](../../product/texture-manifest-merge.md).
+
+Delivered in commits `29ba80d0` (append-only merge with atomic publish and
+intervening-edit detection) and `4aff8e56` (wildcard and duplicate-legacy
+regression tests). The export tests now cover repeated exports, unknown fields,
+wildcards, duplicate legacy pairs, malformed documents and repeated writes.
+Escaped names and a denied destination write remain untested edges and are
+recorded as follow-ups in the product document.
 
 ## Problem
 

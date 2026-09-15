@@ -20,6 +20,11 @@ the Chicago debug-start scene (`GRASS01C` alpha `128` opaque, alpha `100`
 discarded) and by the export tests. The optional sub-0.5 soft-alpha enhancement
 was deliberately left out as a non-goal.
 
+- `29ba80d0` — override alpha cutout limited to active region overrides.
+- `4aff8e56` — PSX `STP` exported as half alpha, intro skip, STP regression
+  test.
+- `9e72044a` — product document, rule and completed roadmap record.
+
 ## Problem
 
 The RGBA override shader samples alpha but does not discard transparent fragments. Opaque PSX primitives disable blending, so transparent texels can render black and occlude geometry. Exported PNG alpha also does not encode all original PSX semitransparency semantics.

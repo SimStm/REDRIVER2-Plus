@@ -26,7 +26,7 @@ Do not infer archive filenames from display labels or claim all models use CCARS
 
 ## Dependencies and risks
 
-Order 04. Incorporate schema decisions from [03](texture-manifest-merge.md). Provides the shared contract for [05](object-texture-batch-export.md), [06](inspector-selection-coverage.md) and [09](model-export-import-roundtrip.md).
+Order 04. Incorporate schema decisions from [03](../done/texture-manifest-merge.md). Provides the shared contract for [05](object-texture-batch-export.md), [06](inspector-selection-coverage.md) and [09](model-export-import-roundtrip.md).
 
 ## Suggested execution order
 
