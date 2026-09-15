@@ -149,8 +149,12 @@ The debug and correctness work continued after the initial audit:
 - Smooth alpha below the 0.5 cutout and `BM_ADD`/`BM_SUBTRACT` alpha fading are
   not implemented by design; they are documented as limitations rather than
   regressions.
-- Milestone 7 (scoped diff review and PR description): the scoped diff contains
-  only source, tests, patch and documentation (the four dependency ZIPs stay
-  untracked and out). The draft PR body is in
-  [`pr-description.md`](pr-description.md); no PR has been opened and no review
-  has been requested yet.
+- Milestone 7 (scoped diff review and PR): the scoped diff contains only
+  source, tests, patch and documentation (the four dependency ZIPs stay
+  untracked and out). PR
+  [#2](https://github.com/SimStm/REDRIVER2-Plus/pull/2) was opened from
+  [`pr-description.md`](pr-description.md) and reviewed by a clean sub-agent.
+  The review found four real defects (debug-start `gameType`, override
+  persistence, screenshot timing after the buffer swap, and export
+  truncation/manifest/COM handling), fixed in `9e9fcd77`, after which the PR
+  was merged as `5f1da8a2`.

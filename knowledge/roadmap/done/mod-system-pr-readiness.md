@@ -1,12 +1,19 @@
 ---
 type: Roadmap
 title: Mod-system branch PR readiness
-status: planned
+status: implemented
+completed: 2026-09-15
 execution_order: 0
 tags: [roadmap, release, validation]
 ---
 
 # Mod-system branch PR readiness
+
+Completed on 2026-09-15. The foundation was reviewed by a clean sub-agent,
+whose findings were fixed in `9e9fcd77`, and merged to `master` as PR
+[#2](https://github.com/SimStm/REDRIVER2-Plus/pull/2) (merge commit
+`5f1da8a2`). Product behaviour is documented in
+[`knowledge/product/mod-system-pr-readiness.md`](../../product/mod-system-pr-readiness.md).
 
 ## Milestone checklist
 
@@ -37,11 +44,14 @@ evidence is in the audit record at
   (`c1ae5736`), `mods/README.md`, product documents and the Unreleased
   changelog match observed capabilities; inspector selection is marked
   diagnostic and OBJ export as limited.
-- [ ] **7. Scoped diff review and PR.** PR body drafted in
-  [`pr-description.md`](../../changes/2026-09-15/mod-system-pr-readiness/pr-description.md).
-  Pending: open the PR, review the scoped diff in a clean sub-agent, and merge.
-  On merge, add `knowledge/product/mod-system-pr-readiness.md` and move this
-  record to `done/`.
+- [x] **7. Scoped diff review and PR.** PR
+  [#2](https://github.com/SimStm/REDRIVER2-Plus/pull/2) opened from the drafted
+  [`pr-description.md`](../../changes/2026-09-15/mod-system-pr-readiness/pr-description.md),
+  reviewed by a clean sub-agent, and merged (`5f1da8a2`). The review findings
+  (debug-start `gameType`, override persistence, screenshot timing, export
+  truncation/manifest/COM handling) were fixed in `9e9fcd77` before merging.
+  `knowledge/product/mod-system-pr-readiness.md` was added and this record
+  moved to `done/`.
 
 ## Problem
 

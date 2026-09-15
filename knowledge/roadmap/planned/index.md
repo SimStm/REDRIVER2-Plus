@@ -20,16 +20,15 @@ Every record contains its own milestone sequence, prerequisites, non-goals,
 acceptance criteria and validation plan. Dependencies inside the record take
 precedence over the simple reading order.
 
-1. **00 — [Mod-system branch PR readiness](mod-system-pr-readiness.md)**
-2. **04 — [Source-aware asset catalog and material identity](asset-catalog-identity.md)**
-5. **05 — [Batch texture export with model references](object-texture-batch-export.md)**
-6. **06 — [Whole-object selection across renderer categories](inspector-selection-coverage.md)**
-7. **07 — [Inspector navigation and independent previews](inspector-camera-preview.md)**
-8. **08 — [OpenDriver2Tools interoperability and legacy overrides](modding-toolchain-integration.md)**
-9. **09 — [Model export and validated re-import](model-export-import-roundtrip.md)**
-10. **10 — [Runtime settings GUI and safe persistence](runtime-settings-gui.md)**
-11. **11 — [Draw distance, LOD and streaming budgets](draw-distance-streaming.md)**
-12. **12 — [Measured graphics improvements and quality profiles](graphics-quality-profiles.md)**
+1. **04 — [Source-aware asset catalog and material identity](asset-catalog-identity.md)**
+2. **05 — [Batch texture export with model references](object-texture-batch-export.md)**
+3. **06 — [Whole-object selection across renderer categories](inspector-selection-coverage.md)**
+4. **07 — [Inspector navigation and independent previews](inspector-camera-preview.md)**
+5. **08 — [OpenDriver2Tools interoperability and legacy overrides](modding-toolchain-integration.md)**
+6. **09 — [Model export and validated re-import](model-export-import-roundtrip.md)**
+7. **10 — [Runtime settings GUI and safe persistence](runtime-settings-gui.md)**
+8. **11 — [Draw distance, LOD and streaming budgets](draw-distance-streaming.md)**
+9. **12 — [Measured graphics improvements and quality profiles](graphics-quality-profiles.md)**
 
 ## Playground and renderer modernization track
 
@@ -51,6 +50,9 @@ discussions inside both records for the reasoning and adopted decision.
 
 ## Completed
 
+- **00 — [Mod-system branch PR readiness](../done/mod-system-pr-readiness.md)**:
+  implemented 2026-09-15; see
+  [`knowledge/product/mod-system-pr-readiness.md`](../../product/mod-system-pr-readiness.md).
 - **01 — [Texture alpha and PSX blending correctness](../done/texture-alpha-semantics.md)**:
   implemented 2026-09-15; see
   [`knowledge/product/texture-alpha-semantics.md`](../../product/texture-alpha-semantics.md).
