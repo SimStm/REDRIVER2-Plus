@@ -16,9 +16,9 @@ atomically.
   before the `textures` array's closing `]`; do not re-serialize the JSON,
   because hand-edited or third-party fields that the loader ignores must
   survive the edit.
-- Never overwrite an existing entry's `file`. Re-exporting an already
-  registered texture replaces only its PNG and reports that the registration
-  was already present.
+- Never redirect an existing entry's `file`. A re-export writes the PNG to that
+  mapped path, merges new `modelReferences` into the same entry (stored order
+  preserved, duplicates skipped), and never appends a second registration.
 - Treat the manifest `file` path, model name, and any upscale/processing
   suffix as non-identity. Only `(texture, texturePage, textureIndex)` decides a
   duplicate.

@@ -51,7 +51,7 @@ bool g_captureGameInput = true;
 bool g_inspectorPickMode = false;
 char g_persistenceStatus[96] = "Session settings only";
 char g_inspectorExportModId[48] = "inspector-export";
-char g_inspectorExportStatus[192] = "Select a texture to export it into a new or existing mod directory.";
+char g_inspectorExportStatus[512] = "Select a texture to export it into a new or existing mod directory.";
 
 void UpdateInputCapture()
 {
@@ -85,6 +85,192 @@ const char* AssetSourceLabel(AssetCatalogSource source)
 		case ASSET_CATALOG_SOURCE_VERIFIED: return "verified";
 		case ASSET_CATALOG_SOURCE_DECLARED: return "declared";
 		default: return "unknown";
+	}
+}
+
+// Builds the readable filename suffix and the informational model references
+// for one identified texture from verified catalog metadata. The suffix falls
+// back to the model slot, and a missing catalog model record is stated
+// explicitly instead of inventing a name. Neither value changes the override
+// key: identity stays the (name, texturePage, textureIndex) triple.
+void FillBatchTextureItem(HdTextureOverrideBatchItem* item, int selectedModelIndex,
+	const char* textureName, int texturePage, int textureIndex,
+	unsigned short tpage, unsigned short clut,
+	unsigned short u, unsigned short v, unsigned short width, unsigned short height)
+{
+	memset(item, 0, sizeof(*item));
+	item->tpage = tpage;
+	item->clut = clut;
+	item->u = u;
+	item->v = v;
+	item->width = width;
+	item->height = height;
+	snprintf(item->textureName, sizeof(item->textureName), "%s", textureName ? textureName : "");
+	item->texturePage = texturePage;
+	item->textureIndex = textureIndex;
+
+	if (selectedModelIndex >= 0)
+	{
+		char modelName[ASSET_CATALOG_NAME_CAPACITY] = {};
+		const int modelRecord = AssetCatalog_FindModel(selectedModelIndex);
+		if (modelRecord >= 0)
+			AssetCatalog_GetModel(modelRecord, NULL, modelName, sizeof(modelName), NULL, NULL, NULL);
+		if (!HdTextureOverrides_MakeSafeNameToken(modelName, item->filenameSuffix, sizeof(item->filenameSuffix)))
+			snprintf(item->filenameSuffix, sizeof(item->filenameSuffix), "slot%d", selectedModelIndex);
+	}
+
+	const int textureRecord = AssetCatalog_FindTexture(item->textureName, texturePage, textureIndex);
+	if (textureRecord < 0)
+		return;
+
+	int modelRecords[HD_TEXTURE_MODEL_REFERENCES_MAX];
+	const int modelCount = AssetCatalog_EnumerateTextureModels(textureRecord, modelRecords,
+		HD_TEXTURE_MODEL_REFERENCES_MAX);
+	for (int i = 0; i < modelCount && item->modelReferenceCount < HD_TEXTURE_MODEL_REFERENCES_MAX; ++i)
+	{
+		int slot = -1;
+		if (!AssetCatalog_GetModel(modelRecords[i], &slot, NULL, 0, NULL, NULL, NULL) || slot < 0)
+			continue;
+
+		char* reference = item->modelReferences[item->modelReferenceCount];
+		if (!AssetCatalog_MakeModelId(slot, reference, HD_TEXTURE_MODEL_REFERENCE_CAPACITY))
+			snprintf(reference, HD_TEXTURE_MODEL_REFERENCE_CAPACITY, "unknown:model-slot:%d", slot);
+		item->modelReferenceCount++;
+	}
+}
+
+// Cooperative export state. The item array and job are static so a batch can
+// keep running across frames while the panel shows progress and a cancel
+// control. Files are published one at a time; cancelling keeps what was written.
+HdTextureOverrideBatchItem g_batchItems[HD_TEXTURE_BATCH_MAX_ITEMS];
+HdTextureOverrideBatchJob g_batchJob;
+bool g_batchJobVisible = false;
+char g_batchScope[192] = {};
+
+void StartBatchJob(const char* modId, int itemCount, const char* scope)
+{
+	memset(&g_batchJob, 0, sizeof(g_batchJob));
+	snprintf(g_batchScope, sizeof(g_batchScope), "%s", scope ? scope : "");
+	g_batchJobVisible = true;
+	HdTextureOverrides_BeginBatchJob(&g_batchJob, modId, g_batchItems, itemCount);
+}
+
+// Fills g_batchItems with every catalog material of the selected source model
+// (including hidden faces) and its high-detail LOD sibling. Textures whose VRAM
+// region is not registered are counted and named instead of being dropped,
+// because the catalog does not model palette variants or cross-model children.
+int BuildSourceModelBatchItems(int modelIndex, char* scope, int scopeCapacity)
+{
+	if (scopeCapacity > 0) scope[0] = '\0';
+	if (modelIndex < 0)
+	{
+		snprintf(scope, scopeCapacity, "Source-model export needs a labelled object; this draw source has no model slot.");
+		return 0;
+	}
+
+	const int modelRecord = AssetCatalog_FindModel(modelIndex);
+	if (modelRecord < 0)
+	{
+		snprintf(scope, scopeCapacity, "Model slot %d is not in the catalog (streamed, unlabelled, or a car pack); source-model export is unavailable.", modelIndex);
+		return 0;
+	}
+
+	int modelRecords[2];
+	const int modelRecordCount = AssetCatalog_CollectExportModels(modelRecord, modelRecords, 2);
+
+	int itemCount = 0;
+	int missingRegions = 0;
+	char missingNames[160] = {};
+
+	for (int m = 0; m < modelRecordCount; ++m)
+	{
+		int textureRecords[HD_TEXTURE_BATCH_MAX_ITEMS];
+		const int textureCount = AssetCatalog_EnumerateModelTextures(modelRecords[m], textureRecords, HD_TEXTURE_BATCH_MAX_ITEMS);
+		for (int t = 0; t < textureCount; ++t)
+		{
+			char textureName[ASSET_CATALOG_NAME_CAPACITY] = {};
+			int page = -1, index = -1;
+			AssetCatalog_GetTexture(textureRecords[t], textureName, sizeof(textureName), &page, &index, NULL, NULL);
+
+			unsigned short tpage = 0, clut = 0, u = 0, v = 0, width = 0, height = 0;
+			if (!HdTextureOverrides_GetKnownTextureRegion(page, index, &tpage, &clut, &u, &v, &width, &height, NULL, 0))
+			{
+				++missingRegions;
+				if (missingNames[0] == '\0')
+					snprintf(missingNames, sizeof(missingNames), "%s (page %d/index %d)", textureName, page, index);
+				continue;
+			}
+			if (itemCount >= HD_TEXTURE_BATCH_MAX_ITEMS)
+				break;
+
+			FillBatchTextureItem(&g_batchItems[itemCount], modelIndex, textureName, page, index, tpage, clut, u, v, width, height);
+			++itemCount;
+		}
+	}
+
+	snprintf(scope, scopeCapacity,
+		"Source model %d: %d model(s) incl. high-detail LOD, %d material(s) incl. hidden faces. Missing VRAM region: %d%s%s. Palette variants and cross-model child parts are not enumerated.",
+		modelIndex, modelRecordCount, itemCount, missingRegions,
+		missingNames[0] != '\0' ? ", e.g. " : "", missingNames);
+	return itemCount;
+}
+
+void DrawBatchJobUi()
+{
+	if (!g_batchJobVisible)
+		return;
+
+	if (HdTextureOverrides_BatchJobActive(&g_batchJob))
+		HdTextureOverrides_StepBatchJob(&g_batchJob, 2);
+
+	const bool active = HdTextureOverrides_BatchJobActive(&g_batchJob);
+	const int total = g_batchJob.itemCount < HD_TEXTURE_BATCH_MAX_ITEMS ? g_batchJob.itemCount : HD_TEXTURE_BATCH_MAX_ITEMS;
+	const int done = g_batchJob.exported + g_batchJob.duplicates + g_batchJob.failed;
+	const float fraction = total > 0 ? (float)done / (float)total : 0.0f;
+
+	ImGui::SeparatorText("Texture export batch");
+	if (g_batchScope[0]) ImGui::TextWrapped("%s", g_batchScope);
+
+	char overlay[48];
+	snprintf(overlay, sizeof(overlay), "%d/%d", done, total);
+	ImGui::ProgressBar(fraction, ImVec2(-1.0f, 0.0f), overlay);
+
+	char status[320];
+	HdTextureOverrides_GetBatchJobStatus(&g_batchJob, status, sizeof(status));
+	ImGui::TextWrapped("%s", status);
+
+	if (active)
+	{
+		if (ImGui::Button("Cancel batch")) HdTextureOverrides_CancelBatchJob(&g_batchJob);
+	}
+	else
+	{
+		if (g_batchJob.failed > 0 && ImGui::Button("Retry failed")) HdTextureOverrides_RetryFailedBatchJob(&g_batchJob);
+		if (g_batchJob.failed > 0) ImGui::SameLine();
+		if (ImGui::Button("Dismiss")) g_batchJobVisible = false;
+	}
+
+	if (ImGui::CollapsingHeader("Per-resource results", ImGuiTreeNodeFlags_DefaultOpen))
+	{
+		ImGui::BeginChild("TextureBatchResults", ImVec2(0.0f, 150.0f), true);
+		for (int i = 0; i < total; ++i)
+		{
+			const char* outcome;
+			switch (g_batchJob.outcomes[i])
+			{
+				case HD_TEXTURE_BATCH_OUTCOME_DUPLICATE: outcome = "duplicate omitted"; break;
+				case HD_TEXTURE_BATCH_OUTCOME_EXPORTED: outcome = "exported"; break;
+				case HD_TEXTURE_BATCH_OUTCOME_FAILED: outcome = "failed"; break;
+				default: outcome = active ? "pending" : "not processed"; break;
+			}
+			ImGui::Text("%s | page %d / index %d | %s", g_batchJob.items[i].textureName,
+				g_batchJob.items[i].texturePage, g_batchJob.items[i].textureIndex, outcome);
+			if (g_batchJob.messages[i][0] != '\0')
+				ImGui::TextDisabled("    %s", g_batchJob.messages[i]);
+		}
+		if (total == 0)
+			ImGui::TextDisabled("No resources in this batch.");
+		ImGui::EndChild();
 	}
 }
 
@@ -448,6 +634,7 @@ void DrawThreeDDebugTab()
 	ImGui::TextWrapped("%s", g_inspectorExportStatus);
 	ImGui::TextDisabled("Each successful export replaces that file. Failed writes preserve the previous export. PNG exports original VRAM pixels; edit the PNG, declare it in manifest.json, enable the mod and reload above. OBJ is geometry-only; model re-import is not implemented.");
 	ImGui::TextDisabled("Names are runtime texture names and model slots, not inferred archive filenames. Picking/highlighting is a diagnostic draw-stream approximation, not a depth-tested editor selection.");
+	ImGui::TextDisabled("The identified-texture batch adds a readable model suffix and a modelReferences list. These are metadata; the override key stays the (name, page, index) triple and a shared texture is exported once.");
 
 	PsyXInspectorTriangle triangle;
 	int triangleCount = 0;
@@ -504,6 +691,49 @@ void DrawThreeDDebugTab()
 		}
 		ImGui::Text("%d registered texture/palette bindings (limit 128)", textureCount);
 		ImGui::TextDisabled("Uses submitted geometry, not all materials in the source archive. Unregistered regions are omitted.");
+		ImGui::BeginDisabled(!exportSupported || textureCount == 0 || HdTextureOverrides_BatchJobActive(&g_batchJob));
+		if (ImGui::Button("Export all identified textures (batch)"))
+		{
+			int batchCount = 0;
+			for (int i = 0; i < textureCount && batchCount < HD_TEXTURE_BATCH_MAX_ITEMS; ++i)
+			{
+				const ObjectTexture& item = textures[i];
+				FillBatchTextureItem(&g_batchItems[batchCount], selection.object.modelIndex,
+					item.info.textureName, item.info.texturePage, item.info.textureIndex,
+					item.page, item.clut, item.info.u, item.info.v, item.info.width, item.info.height);
+				++batchCount;
+			}
+			StartBatchJob(g_inspectorExportModId, batchCount, "Identified visible textures (submitted geometry).");
+			snprintf(g_inspectorExportStatus, sizeof(g_inspectorExportStatus), "Batch started; progress and per-resource results are below.");
+		}
+		ImGui::EndDisabled();
+		ImGui::SameLine();
+		HelpMarker("Exports every identified texture once, deduplicated by the (name, page, index) identity. Model references and the filename suffix come from the asset catalog; they are metadata only and never change the override key.");
+		if (!exportSupported) ImGui::TextDisabled("Batch export currently requires Windows.");
+		else if (textureCount == 0) ImGui::TextDisabled("No identified textures to export for this selection.");
+
+		const bool sourceModelAvailable = selection.object.modelIndex >= 0 &&
+			AssetCatalog_FindModel(selection.object.modelIndex) >= 0;
+		ImGui::BeginDisabled(!exportSupported || !sourceModelAvailable || HdTextureOverrides_BatchJobActive(&g_batchJob));
+		if (ImGui::Button("Export all source-model textures (catalog)"))
+		{
+			char scope[192] = {};
+			const int batchCount = BuildSourceModelBatchItems(selection.object.modelIndex, scope, sizeof(scope));
+			if (batchCount > 0)
+			{
+				StartBatchJob(g_inspectorExportModId, batchCount, scope);
+				snprintf(g_inspectorExportStatus, sizeof(g_inspectorExportStatus), "Source-model batch started; progress and per-resource results are below.");
+			}
+			else
+			{
+				snprintf(g_inspectorExportStatus, sizeof(g_inspectorExportStatus), "%s", scope);
+			}
+		}
+		ImGui::EndDisabled();
+		ImGui::SameLine();
+		HelpMarker("Catalog scope, not the submitted geometry: every material linked to the selected source model (including hidden faces) and its high-detail LOD sibling. Palette variants and cross-model child parts are not enumerated, and a material with no registered VRAM region is reported as a missing adapter.");
+		if (!sourceModelAvailable)
+			ImGui::TextDisabled("Source-model export needs a labelled building or tile in the catalog; cars are a separate pack.");
 		for (int i = 0; i < textureCount; ++i)
 		{
 			const ObjectTexture& item = textures[i];
@@ -512,12 +742,21 @@ void DrawThreeDDebugTab()
 				item.info.textureIndex, item.info.width, item.info.height, item.clut);
 			ImGui::BeginDisabled(!exportSupported);
 			if (ImGui::Button("Export this texture"))
-				HdTextureOverrides_ExportTexture(item.page, item.clut, item.info.u, item.info.v, item.info.width, item.info.height,
-					item.info.textureName, item.info.texturePage, item.info.textureIndex, g_inspectorExportModId, g_inspectorExportStatus, sizeof(g_inspectorExportStatus));
+			{
+				HdTextureOverrideBatchItem single = {};
+				FillBatchTextureItem(&single, selection.object.modelIndex, item.info.textureName,
+					item.info.texturePage, item.info.textureIndex, item.page, item.clut,
+					item.info.u, item.info.v, item.info.width, item.info.height);
+				HdTextureOverrideBatchResult one = {};
+				HdTextureOverrides_ExportTextureBatch(g_inspectorExportModId, &single, 1, &one);
+				snprintf(g_inspectorExportStatus, sizeof(g_inspectorExportStatus), "%s", one.status);
+			}
 			ImGui::EndDisabled();
 			ImGui::PopID();
 		}
 	}
+
+	DrawBatchJobUi();
 
 }
 

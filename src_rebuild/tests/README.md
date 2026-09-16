@@ -3,7 +3,7 @@
 `InspectorExportTests.cpp` tests the production WIC encoder, original-texture
 export path (including PSX transparent and STP semi-transparent coverage),
 report writer, shared atomic text writer, and append-only manifest merging
-(unknown fields, wildcards, duplicate legacy pairs, malformed documents)
+(unknown fields, wildcards, duplicate legacy pairs, malformed documents), the batch exporter's identity deduplication, model-reference metadata, sanitized filename suffixes, per-resource failure reporting, a re-export that keeps the manifest's mapped file and merges references into one entry, the known-texture region adapter used to export hidden materials, and the cooperative batch job's stepping, cancellation, duplicate planning and retry
 without game assets or an OpenGL context. The renderer is stubbed with
 synthetic VRAM. It does not test mesh picking, the game car serializer, or
 visual highlighting.
@@ -24,7 +24,8 @@ Exit code zero means all checks passed. Artifacts are retained for inspection.
 `AssetCatalogTests.cpp` tests the source-aware asset catalog (roadmap item 04)
 in isolation: generation and context lifetime, model/slot revision handles,
 texture manifest-triple deduplication, many-to-many model/texture relationships,
-explicit provenance, palette relationships, and graceful bounds handling. It
+explicit provenance, palette relationships, the source-export LOD policy
+(`AssetCatalog_CollectExportModels`), and graceful bounds handling. It
 needs no game data or graphics context. Because the catalog is a `.c` file that
 the project compiles as C++, pass `/TP` when building it by hand:
 

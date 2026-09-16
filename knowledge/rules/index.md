@@ -21,6 +21,9 @@ tags: [okf, rules]
 - [Append texture registrations without rewriting manifest data](manifest-append-merge.md):
   add missing `(texture, texturePage, textureIndex)` entries atomically while
   preserving unknown fields and existing mappings.
+- [Keep model references as metadata outside the texture override key](model-reference-metadata.md):
+  batch-export by identity, list shared models without duplicating the image,
+  and preserve a mapped `file` on re-export.
 - [Build and run the Linux target (including via WSL)](linux-wsl-build.md):
   install the system SDL2/OpenAL/GL/libjpeg packages, apply the PsyCross patch,
   generate with Premake, and build in `src_rebuild/build`.

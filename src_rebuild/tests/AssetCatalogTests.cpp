@@ -75,6 +75,15 @@ static void TestModelIdentityAndInstances()
 	CHECK(AssetCatalog_MakeModelId(10, modelId, sizeof(modelId)));
 	CHECK(TextIs(modelId, "model:2:1:10"));
 
+	// A source export covers the selected model and its high-detail LOD
+	// sibling; the reverse (lower-detail) link is not stored.
+	int exportModels[4];
+	CHECK(AssetCatalog_CollectExportModels(road, exportModels, 4) == 2);
+	CHECK(exportModels[0] == road && exportModels[1] == carLod);
+	CHECK(AssetCatalog_CollectExportModels(carLod, exportModels, 4) == 1 && exportModels[0] == carLod);
+	CHECK(AssetCatalog_CollectExportModels(road, exportModels, 1) == 2 && exportModels[0] == road);
+	CHECK(AssetCatalog_CollectExportModels(-1, exportModels, 4) == 0);
+
 	// Two handles to one shared model both resolve; the resource is shared.
 	AssetCatalogHandle first = AssetCatalog_GetModelHandle(road);
 	AssetCatalogHandle second = AssetCatalog_GetModelHandle(road);
@@ -115,6 +124,16 @@ static void TestTextureDedupAndMaterials()
 	CHECK(AssetCatalog_AddModelTexture(roadA, asphalt));
 
 	CHECK(AssetCatalog_CountTextureModels(shared) == 2);
+
+	// Enumerating the models that share a texture keeps every reference, so a
+	// batch export can list them without duplicating the texture record.
+	int sharedModels[4];
+	CHECK(AssetCatalog_EnumerateTextureModels(shared, sharedModels, 4) == 2);
+	CHECK(AssetCatalog_EnumerateTextureModels(shared, NULL, 0) == 2);
+	AssetCatalog_EnumerateTextureModels(shared, sharedModels, 1);
+	CHECK(sharedModels[0] == roadA);
+	CHECK(AssetCatalog_EnumerateTextureModels(asphalt, sharedModels, 4) == 1 && sharedModels[0] == roadA);
+	CHECK(AssetCatalog_EnumerateTextureModels(-1, sharedModels, 4) == 0);
 
 	int textures[8];
 	CHECK(AssetCatalog_EnumerateModelTextures(roadA, textures, 8) == 2);

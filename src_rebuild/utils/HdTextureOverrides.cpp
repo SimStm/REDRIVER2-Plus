@@ -852,22 +852,48 @@ bool FindTexturesArraySpan(const char* text, int byteCount, const char** spanBeg
 	}
 }
 
-bool ManifestTexturesContain(const char* spanBegin, const char* spanEnd,
-	const char* textureName, int texturePage, int textureIndex)
+// Byte ranges of the one manifest entry that matches a texture identity. The
+// merge stays textual so unknown fields are preserved; ranges are used to
+// replace or insert metadata without re-serializing the document.
+struct ManifestEntryLocation
 {
+	const char* begin;
+	const char* end;
+	const char* fileQuote;
+	const char* referencesBegin;
+	const char* referencesEnd;
+	bool hasFile;
+	bool hasReferences;
+};
+
+bool LocateTextureEntry(const char* spanBegin, const char* spanEnd,
+	const char* textureName, int texturePage, int textureIndex, ManifestEntryLocation* location)
+{
+	if (!spanBegin || !spanEnd || !location)
+		return false;
+
+	memset(location, 0, sizeof(*location));
 	JsonReader reader = { spanBegin, spanEnd };
 	SkipWhitespace(&reader);
 	if (reader.cursor >= reader.end || *reader.cursor == ']') return false;
+
 	while (true)
 	{
+		const char* entryBegin = reader.cursor;
 		if (!Consume(&reader, '{')) return false;
 		char candidateName[48] = {};
 		int candidatePage = -1;
 		int candidateIndex = -1;
+		const char* fileQuote = NULL;
+		const char* referencesBegin = NULL;
+		const char* referencesEnd = NULL;
+
 		while (true)
 		{
 			char key[64];
 			if (!ParseString(&reader, key, sizeof(key)) || !Consume(&reader, ':')) return false;
+			SkipWhitespace(&reader);
+			const char* valueBegin = reader.cursor;
 			if (strcmp(key, "texture") == 0 || strcmp(key, "name") == 0)
 			{
 				if (!ParseString(&reader, candidateName, sizeof(candidateName))) return false;
@@ -880,25 +906,176 @@ bool ManifestTexturesContain(const char* spanBegin, const char* spanEnd,
 			{
 				if (!ParseInteger(&reader, &candidateIndex)) return false;
 			}
+			else if (strcmp(key, "file") == 0)
+			{
+				if (reader.cursor >= reader.end || *reader.cursor != '"') return false;
+				fileQuote = reader.cursor;
+				if (!SkipString(&reader)) return false;
+			}
+			else if (strcmp(key, "modelReferences") == 0)
+			{
+				if (!SkipValue(&reader, 0)) return false;
+				referencesBegin = valueBegin;
+				referencesEnd = reader.cursor;
+			}
 			else if (!SkipValue(&reader, 0)) return false;
+
 			if (Consume(&reader, '}')) break;
 			if (!Consume(&reader, ',')) return false;
 		}
+
+		const char* entryEnd = reader.cursor;
 		if (candidateName[0] != '\0' && strcmp(candidateName, textureName) == 0 &&
 			candidatePage == texturePage && candidateIndex == textureIndex)
+		{
+			location->begin = entryBegin;
+			location->end = entryEnd;
+			location->fileQuote = fileQuote;
+			location->hasFile = fileQuote != NULL;
+			location->referencesBegin = referencesBegin;
+			location->referencesEnd = referencesEnd;
+			location->hasReferences = referencesBegin != NULL && referencesEnd != NULL;
 			return true;
+		}
+
 		if (Consume(&reader, ']')) return false;
 		if (!Consume(&reader, ',')) return false;
 	}
 }
 
-std::string BuildManifestEntry(const std::string& escapedTextureName, int texturePage, int textureIndex, const char* safeName)
+// Parses an existing modelReferences array. Returns -1 when the value is not a
+// well-formed array of strings, so the caller can leave the entry untouched.
+int ParseModelReferencesValue(const char* valueBegin, const char* valueEnd,
+	char references[][HD_TEXTURE_MODEL_REFERENCE_CAPACITY], int capacity)
 {
-	char entry[640];
-	snprintf(entry, sizeof(entry),
-		"{ \"texture\": \"%s\", \"texturePage\": %d, \"textureIndex\": %d, \"file\": \"assets/inspector/%s_p%d_i%d.png\" }",
-		escapedTextureName.c_str(), texturePage, textureIndex, safeName, texturePage, textureIndex);
-	return std::string(entry);
+	JsonReader reader = { valueBegin, valueEnd };
+	if (!Consume(&reader, '[')) return -1;
+	if (Consume(&reader, ']')) return 0;
+
+	int count = 0;
+	while (true)
+	{
+		char scratch[HD_TEXTURE_MODEL_REFERENCE_CAPACITY];
+		char* target = count < capacity ? references[count] : scratch;
+		if (!ParseString(&reader, target, HD_TEXTURE_MODEL_REFERENCE_CAPACITY)) return -1;
+		count++;
+		if (Consume(&reader, ']')) return count;
+		if (!Consume(&reader, ',')) return -1;
+	}
+}
+
+// Union of the stored and incoming references, preserving stored order and
+// skipping duplicates. changed is set only when a new reference was added.
+int MergeReferenceLists(const char stored[][HD_TEXTURE_MODEL_REFERENCE_CAPACITY], int storedCount,
+	const char* const* incoming, int incomingCount,
+	char merged[][HD_TEXTURE_MODEL_REFERENCE_CAPACITY], int capacity, bool* changed)
+{
+	if (changed) *changed = false;
+	int count = 0;
+
+	for (int i = 0; i < storedCount && count < capacity; ++i)
+		CopyText(merged[count++], HD_TEXTURE_MODEL_REFERENCE_CAPACITY, stored[i]);
+
+	for (int i = 0; i < incomingCount && count < capacity; ++i)
+	{
+		if (!incoming[i] || incoming[i][0] == '\0')
+			continue;
+
+		bool present = false;
+		for (int j = 0; j < count; ++j)
+		{
+			if (strcmp(merged[j], incoming[i]) == 0)
+			{
+				present = true;
+				break;
+			}
+		}
+		if (present)
+			continue;
+
+		CopyText(merged[count++], HD_TEXTURE_MODEL_REFERENCE_CAPACITY, incoming[i]);
+		if (changed) *changed = true;
+	}
+
+	return count;
+}
+
+std::string BuildJsonString(const char* text)
+{
+	std::string escaped;
+	for (const unsigned char* c = (const unsigned char*)(text ? text : ""); *c; ++c)
+	{
+		if (*c == '"' || *c == '\\') escaped += '\\';
+		if (*c < 32)
+		{
+			char code[7];
+			snprintf(code, sizeof(code), "\\u%04x", (unsigned int)*c);
+			escaped += code;
+		}
+		else escaped += (char)*c;
+	}
+	return escaped;
+}
+
+std::string BuildModelReferencesJson(const char* const* modelReferences, int count)
+{
+	std::string json = "[";
+	for (int i = 0; i < count; ++i)
+	{
+		if (i > 0) json += ", ";
+		json += "\"";
+		json += BuildJsonString(modelReferences ? modelReferences[i] : NULL);
+		json += "\"";
+	}
+	json += "]";
+	return json;
+}
+
+// Rewrites only the modelReferences value of one located entry, inserting the
+// field when the entry predates it. The rest of the document is copied as-is.
+std::string ReplaceReferencesInManifest(const char* text, int byteCount,
+	const ManifestEntryLocation& located, const std::string& referencesJson)
+{
+	if (located.hasReferences)
+	{
+		std::string result(text, (size_t)(located.referencesBegin - text));
+		result += referencesJson;
+		result.append(located.referencesEnd, (size_t)byteCount - (size_t)(located.referencesEnd - text));
+		return result;
+	}
+
+	bool emptyObject = true;
+	for (const char* scan = located.begin + 1; scan < located.end - 1; ++scan)
+	{
+		if (*scan != ' ' && *scan != '\t' && *scan != '\r' && *scan != '\n')
+		{
+			emptyObject = false;
+			break;
+		}
+	}
+
+	std::string result(text, (size_t)(located.end - 1 - text));
+	if (!emptyObject) result += ", ";
+	result += "\"modelReferences\": ";
+	result += referencesJson;
+	result.append(located.end - 1, (size_t)byteCount - (size_t)(located.end - 1 - text));
+	return result;
+}
+
+std::string BuildManifestEntry(const std::string& escapedTextureName, int texturePage, int textureIndex,
+	const char* fileName, const std::string& modelReferencesJson)
+{
+	char numbers[96];
+	snprintf(numbers, sizeof(numbers), "\", \"texturePage\": %d, \"textureIndex\": %d, \"file\": \"assets/inspector/",
+		texturePage, textureIndex);
+	std::string entry = "{ \"texture\": \"";
+	entry += escapedTextureName;
+	entry += numbers;
+	entry += fileName;
+	entry += "\", \"modelReferences\": ";
+	entry += modelReferencesJson;
+	entry += " }";
+	return entry;
 }
 
 std::string MergeManifestEntry(const char* text, int byteCount, const char* spanBegin, const char* spanEnd, const std::string& entry)
@@ -920,6 +1097,25 @@ std::string MergeManifestEntry(const char* text, int byteCount, const char* span
 	result.append(text + suffixOffset, (size_t)byteCount - suffixOffset);
 	return result;
 }
+
+#ifdef _WIN32
+// Creates every intermediate directory of an export destination, so a
+// preserved manifest file path (not only the default assets/inspector one)
+// can be replaced.
+void CreateDirectoriesForFile(const char* path)
+{
+	char buffer[448];
+	snprintf(buffer, sizeof(buffer), "%s", path);
+	for (char* scan = buffer + 1; *scan; ++scan)
+	{
+		if (*scan != '/' && *scan != '\\')
+			continue;
+		*scan = '\0';
+		CreateDirectoryA(buffer, NULL);
+		*scan = '/';
+	}
+}
+#endif
 
 #ifdef _WIN32
 bool PublishManifestFile(const char* path, const char* originalText, int originalBytes,
@@ -1199,9 +1395,10 @@ bool HdTextureOverrides_ExportInspectorReport(const char* modId, const char* rep
 #endif
 }
 
-bool HdTextureOverrides_ExportTexture(unsigned short tpage, unsigned short clut,
+static bool ExportTextureCore(unsigned short tpage, unsigned short clut,
 	unsigned short u, unsigned short v, unsigned short width, unsigned short height,
 	const char* textureName, int texturePage, int textureIndex, const char* modId,
+	const char* filenameSuffix, const char* const* modelReferences, int modelReferenceCount,
 	char* status, int statusCapacity)
 {
 	if (!status || statusCapacity <= 0)
@@ -1294,10 +1491,24 @@ bool HdTextureOverrides_ExportTexture(unsigned short tpage, unsigned short clut,
 		safeName[i] = (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') ||
 			(character >= '0' && character <= '9') || character == '_' || character == '-' ? character : '_';
 	}
+	// A readable suffix keeps the image discoverable per model. It is sanitized
+	// again here so a caller cannot inject a path separator or an extension.
+	char safeSuffix[48] = {};
+	const bool hasSuffix = filenameSuffix && filenameSuffix[0] &&
+		HdTextureOverrides_MakeSafeNameToken(filenameSuffix, safeSuffix, sizeof(safeSuffix));
+	char fileName[128] = {};
+	const int fileNameLength = hasSuffix
+		? snprintf(fileName, sizeof(fileName), "%s_p%d_i%d_%s.png", safeName, texturePage, textureIndex, safeSuffix)
+		: snprintf(fileName, sizeof(fileName), "%s_p%d_i%d.png", safeName, texturePage, textureIndex);
+	if (fileNameLength <= 0 || fileNameLength >= (int)sizeof(fileName))
+	{
+		free(vram); free(rgba);
+		snprintf(status, statusCapacity, "The export file name is too long");
+		return false;
+	}
 	char modDirectory[256];
 	char assetsDirectory[320];
 	char inspectorDirectory[384];
-	char outputPath[448];
 	if (!JoinPath(modDirectory, sizeof(modDirectory), g_modsDirectory, modId, NULL) ||
 		!JoinPath(assetsDirectory, sizeof(assetsDirectory), modDirectory, "assets", NULL) ||
 		!JoinPath(inspectorDirectory, sizeof(inspectorDirectory), assetsDirectory, "inspector", NULL))
@@ -1306,23 +1517,43 @@ bool HdTextureOverrides_ExportTexture(unsigned short tpage, unsigned short clut,
 		snprintf(status, statusCapacity, "The export path is too long");
 		return false;
 	}
-	// snprintf returns the length it would have written, so a value at or above
-	// the buffer size means the path was truncated.
-	const int outputLength = snprintf(outputPath, sizeof(outputPath), "%s/%s_p%d_i%d.png", inspectorDirectory, safeName, texturePage, textureIndex);
-	if (outputLength <= 0 || outputLength >= (int)sizeof(outputPath))
+
+	char manifestPath[320];
+	JoinPath(manifestPath, sizeof(manifestPath), modDirectory, "manifest.json", NULL);
+
+	// Read an existing registration before writing: a re-export keeps its
+	// mapped file instead of publishing a second, differently named PNG.
+	int existingBytes = 0;
+	char* existingText = ReadTextFile(manifestPath, &existingBytes);
+	const char* spanBegin = NULL;
+	const char* spanEnd = NULL;
+	ManifestEntryLocation located = {};
+	bool entryFound = false;
+	if (existingText && FindTexturesArraySpan(existingText, existingBytes, &spanBegin, &spanEnd))
+		entryFound = LocateTextureEntry(spanBegin, spanEnd, textureName, texturePage, textureIndex, &located);
+
+	char outputPath[448] = {};
+	if (entryFound && located.hasFile)
 	{
-		free(vram); free(rgba);
+		char mappedFile[192] = {};
+		JsonReader fileReader = { located.fileQuote, located.end };
+		char mappedPath[320] = {};
+		if (ParseString(&fileReader, mappedFile, sizeof(mappedFile)) && IsSafeRelativeAssetPath(mappedFile) &&
+			JoinPath(mappedPath, sizeof(mappedPath), modDirectory, mappedFile, NULL))
+			snprintf(outputPath, sizeof(outputPath), "%s", mappedPath);
+	}
+	if (outputPath[0] == '\0' && !JoinPath(outputPath, sizeof(outputPath), inspectorDirectory, fileName, NULL))
+	{
+		free(vram); free(rgba); free(existingText);
 		snprintf(status, statusCapacity, "The export path is too long");
 		return false;
 	}
-	CreateDirectoryA(g_modsDirectory, NULL);
-	CreateDirectoryA(modDirectory, NULL);
-	CreateDirectoryA(assetsDirectory, NULL);
-	CreateDirectoryA(inspectorDirectory, NULL);
+
+	CreateDirectoriesForFile(outputPath);
 	char temporary[MAX_PATH];
 	if (!InspectorExport_Temporary(outputPath, temporary, status, statusCapacity))
 	{
-		free(vram); free(rgba); return false;
+		free(vram); free(rgba); free(existingText); return false;
 	}
 	const bool wroteImage = SavePngRgba(temporary, rgba, width, height);
 	free(vram);
@@ -1330,6 +1561,7 @@ bool HdTextureOverrides_ExportTexture(unsigned short tpage, unsigned short clut,
 	if (!wroteImage)
 	{
 		DeleteFileA(temporary);
+		free(existingText);
 		snprintf(status, statusCapacity, "%s Previous export preserved.", g_status);
 		return false;
 	}
@@ -1342,45 +1574,63 @@ bool HdTextureOverrides_ExportTexture(unsigned short tpage, unsigned short clut,
 	if (!validPng)
 	{
 		DeleteFileA(temporary);
+		free(existingText);
 		snprintf(status, statusCapacity, "PNG verification failed; previous export preserved.");
 		return false;
 	}
-	if (!InspectorExport_Commit(temporary, outputPath, status, statusCapacity)) return false;
-
-	char manifestPath[320];
-	JoinPath(manifestPath, sizeof(manifestPath), modDirectory, "manifest.json", NULL);
-
-	std::string escapedTextureName;
-	for (const unsigned char* c = (const unsigned char*)textureName; *c; ++c)
+	if (!InspectorExport_Commit(temporary, outputPath, status, statusCapacity))
 	{
-		if (*c == '"' || *c == '\\') escapedTextureName += '\\';
-		if (*c < 32)
-		{
-			char escaped[7];
-			snprintf(escaped, sizeof(escaped), "\\u%04x", (unsigned int)*c);
-			escapedTextureName += escaped;
-		}
-		else escapedTextureName += (char)*c;
+		free(existingText);
+		return false;
 	}
-	const std::string entry = BuildManifestEntry(escapedTextureName, texturePage, textureIndex, safeName);
 
-	int existingBytes = 0;
-	char* existingText = ReadTextFile(manifestPath, &existingBytes);
+	const std::string referencesJson = BuildModelReferencesJson(modelReferences, modelReferenceCount);
+
+	if (entryFound)
+	{
+		// Reuse the existing entry: merge references textually and keep the
+		// mapped file. A second registration is never appended.
+		char stored[16][HD_TEXTURE_MODEL_REFERENCE_CAPACITY] = {};
+		char merged[16][HD_TEXTURE_MODEL_REFERENCE_CAPACITY] = {};
+		int storedCount = 0;
+		if (located.hasReferences)
+			storedCount = ParseModelReferencesValue(located.referencesBegin, located.referencesEnd, stored, 16);
+
+		bool changed = false;
+		if (storedCount >= 0)
+		{
+			const int mergedCount = MergeReferenceLists(stored, storedCount, modelReferences,
+				modelReferenceCount, merged, 16, &changed);
+			if (changed)
+			{
+				const char* mergedPointers[16];
+				for (int i = 0; i < mergedCount && i < 16; ++i) mergedPointers[i] = merged[i];
+				const std::string mergedText = ReplaceReferencesInManifest(existingText, existingBytes, located,
+					BuildModelReferencesJson(mergedPointers, mergedCount));
+				const bool published = PublishManifestFile(manifestPath, existingText, existingBytes, mergedText, status, statusCapacity);
+				free(existingText);
+				if (published)
+					snprintf(status, statusCapacity, "Exported and replaced %s; merged model references in mod %s", textureName, modId);
+				return published;
+			}
+		}
+
+		free(existingText);
+		snprintf(status, statusCapacity, "Exported and replaced %s; it was already registered in mod %s", textureName, modId);
+		return true;
+	}
+
+	// No existing entry: append one that points at the freshly written file.
+	const std::string escapedTextureName = BuildJsonString(textureName);
+	const std::string entry = BuildManifestEntry(escapedTextureName, texturePage, textureIndex, fileName, referencesJson);
+
 	if (existingText)
 	{
-		const char* spanBegin = NULL;
-		const char* spanEnd = NULL;
-		if (!FindTexturesArraySpan(existingText, existingBytes, &spanBegin, &spanEnd))
+		if (!spanBegin || !spanEnd)
 		{
 			free(existingText);
 			snprintf(status, statusCapacity, "PNG exported, but the existing manifest.json has no readable textures array; it was not modified.");
 			return false;
-		}
-		if (ManifestTexturesContain(spanBegin, spanEnd, textureName, texturePage, textureIndex))
-		{
-			free(existingText);
-			snprintf(status, statusCapacity, "Exported and replaced %s; it was already registered in mod %s", textureName, modId);
-			return true;
 		}
 		const std::string merged = MergeManifestEntry(existingText, existingBytes, spanBegin, spanEnd, entry);
 		const bool published = PublishManifestFile(manifestPath, existingText, existingBytes, merged, status, statusCapacity);
@@ -1398,7 +1648,7 @@ bool HdTextureOverrides_ExportTexture(unsigned short tpage, unsigned short clut,
 		return false;
 	}
 
-	char manifestText[2048];
+	char manifestText[4096];
 	const int manifestBytes = snprintf(manifestText, sizeof(manifestText),
 		"{\n  \"schemaVersion\": 1,\n  \"id\": \"%s\",\n  \"name\": \"%s Inspector Export\",\n"
 		"  \"description\": \"Texture exported locally by the 3D inspector.\",\n  \"textures\": [\n"
@@ -1413,4 +1663,266 @@ bool HdTextureOverrides_ExportTexture(unsigned short tpage, unsigned short clut,
 	snprintf(status, statusCapacity, wroteManifest ? "Exported PNG and created mod manifest; reload manifests to apply it" : "Exported PNG, but manifest.json could not be completed");
 	return wroteManifest;
 #endif
+}
+
+bool HdTextureOverrides_ExportTexture(unsigned short tpage, unsigned short clut,
+	unsigned short u, unsigned short v, unsigned short width, unsigned short height,
+	const char* textureName, int texturePage, int textureIndex, const char* modId,
+	char* status, int statusCapacity)
+{
+	return ExportTextureCore(tpage, clut, u, v, width, height, textureName, texturePage,
+		textureIndex, modId, NULL, NULL, 0, status, statusCapacity);
+}
+
+bool HdTextureOverrides_MakeSafeNameToken(const char* text, char* out, int capacity)
+{
+	if (!out || capacity <= 0)
+		return false;
+
+	out[0] = '\0';
+	if (!text)
+		return false;
+
+	int written = 0;
+	int alphanumeric = 0;
+	for (int i = 0; text[i] && written < capacity - 1; ++i)
+	{
+		const unsigned char character = (unsigned char)text[i];
+		const bool isAlphaNumeric = (character >= 'a' && character <= 'z') ||
+			(character >= 'A' && character <= 'Z') || (character >= '0' && character <= '9');
+		if (isAlphaNumeric)
+			alphanumeric++;
+		out[written++] = isAlphaNumeric || character == '_' || character == '-' ? (char)character : '_';
+	}
+	out[written] = '\0';
+
+	if (alphanumeric == 0)
+	{
+		out[0] = '\0';
+		return false;
+	}
+	return true;
+}
+
+bool HdTextureOverrides_BeginBatchJob(HdTextureOverrideBatchJob* job, const char* modId,
+	const HdTextureOverrideBatchItem* items, int itemCount)
+{
+	if (!job)
+		return false;
+
+	memset(job, 0, sizeof(*job));
+	job->items = items;
+	job->itemCount = itemCount > 0 ? itemCount : 0;
+	CopyText(job->modId, sizeof(job->modId), modId ? modId : "");
+
+	if (!IsSafeModId(modId) || !items || itemCount <= 0)
+		return false;
+
+	const int count = itemCount < HD_TEXTURE_BATCH_MAX_ITEMS ? itemCount : HD_TEXTURE_BATCH_MAX_ITEMS;
+
+	// Identity is the exact manifest triple, so a texture shared by several
+	// models is exported once even when it is listed more than once. Invalid and
+	// duplicate items are resolved here and never queued.
+	for (int i = 0; i < count; ++i)
+	{
+		const HdTextureOverrideBatchItem& item = items[i];
+
+		if (item.textureName[0] == '\0' || item.texturePage < 0 || item.textureIndex < 0)
+		{
+			job->outcomes[i] = HD_TEXTURE_BATCH_OUTCOME_FAILED;
+			CopyText(job->messages[i], HD_TEXTURE_BATCH_MESSAGE_CAPACITY, "invalid texture identity");
+			job->failed++;
+			continue;
+		}
+
+		bool duplicate = false;
+		for (int j = 0; j < job->uniqueCount; ++j)
+		{
+			const HdTextureOverrideBatchItem& first = items[job->uniqueIndices[j]];
+			if (first.texturePage == item.texturePage && first.textureIndex == item.textureIndex &&
+				strcmp(first.textureName, item.textureName) == 0)
+			{
+				duplicate = true;
+				break;
+			}
+		}
+
+		if (duplicate)
+		{
+			job->outcomes[i] = HD_TEXTURE_BATCH_OUTCOME_DUPLICATE;
+			CopyText(job->messages[i], HD_TEXTURE_BATCH_MESSAGE_CAPACITY, "duplicate identity omitted");
+			job->duplicates++;
+		}
+		else
+		{
+			job->outcomes[i] = HD_TEXTURE_BATCH_OUTCOME_PENDING;
+			job->uniqueIndices[job->uniqueCount++] = i;
+		}
+	}
+
+	return true;
+}
+
+bool HdTextureOverrides_BatchJobActive(const HdTextureOverrideBatchJob* job)
+{
+	return job && !job->cancelled && job->nextIndex < job->uniqueCount;
+}
+
+int HdTextureOverrides_StepBatchJob(HdTextureOverrideBatchJob* job, int maxSteps)
+{
+	if (!job || job->cancelled)
+		return 0;
+	if (maxSteps < 1)
+		maxSteps = 1;
+
+	int processed = 0;
+	while (job->nextIndex < job->uniqueCount && processed < maxSteps)
+	{
+		const int itemIndex = job->uniqueIndices[job->nextIndex++];
+		const HdTextureOverrideBatchItem& item = job->items[itemIndex];
+
+		// The item stores references as a 2D array; build a pointer table so the
+		// core serializer reads each row instead of treating them as pointers.
+		const char* references[HD_TEXTURE_MODEL_REFERENCES_MAX];
+		const int referenceCount = item.modelReferenceCount < HD_TEXTURE_MODEL_REFERENCES_MAX
+			? item.modelReferenceCount : HD_TEXTURE_MODEL_REFERENCES_MAX;
+		for (int k = 0; k < referenceCount; ++k)
+			references[k] = item.modelReferences[k];
+
+		char itemStatus[HD_TEXTURE_BATCH_MESSAGE_CAPACITY] = {};
+		const bool exported = ExportTextureCore(item.tpage, item.clut, item.u, item.v,
+			item.width, item.height, item.textureName, item.texturePage, item.textureIndex,
+			job->modId, item.filenameSuffix, references, referenceCount,
+			itemStatus, sizeof(itemStatus));
+		if (exported)
+		{
+			job->outcomes[itemIndex] = HD_TEXTURE_BATCH_OUTCOME_EXPORTED;
+			job->exported++;
+		}
+		else
+		{
+			job->outcomes[itemIndex] = HD_TEXTURE_BATCH_OUTCOME_FAILED;
+			job->failed++;
+		}
+		CopyText(job->messages[itemIndex], HD_TEXTURE_BATCH_MESSAGE_CAPACITY, itemStatus);
+		++processed;
+	}
+
+	return job->nextIndex < job->uniqueCount ? 1 : 0;
+}
+
+void HdTextureOverrides_CancelBatchJob(HdTextureOverrideBatchJob* job)
+{
+	if (job)
+		job->cancelled = 1;
+}
+
+void HdTextureOverrides_RetryFailedBatchJob(HdTextureOverrideBatchJob* job)
+{
+	if (!job)
+		return;
+
+	job->cancelled = 0;
+	job->nextIndex = 0;
+	job->uniqueCount = 0;
+	job->failed = 0;
+
+	const int count = job->itemCount < HD_TEXTURE_BATCH_MAX_ITEMS ? job->itemCount : HD_TEXTURE_BATCH_MAX_ITEMS;
+	for (int i = 0; i < count; ++i)
+	{
+		if (job->outcomes[i] != HD_TEXTURE_BATCH_OUTCOME_FAILED)
+			continue;
+		job->outcomes[i] = HD_TEXTURE_BATCH_OUTCOME_PENDING;
+		job->messages[i][0] = '\0';
+		job->uniqueIndices[job->uniqueCount++] = i;
+	}
+}
+
+void HdTextureOverrides_GetBatchJobStatus(const HdTextureOverrideBatchJob* job, char* status, int capacity)
+{
+	if (!status || capacity <= 0)
+		return;
+	status[0] = '\0';
+	if (!job)
+		return;
+
+	const int overLimit = job->itemCount > HD_TEXTURE_BATCH_MAX_ITEMS
+		? job->itemCount - HD_TEXTURE_BATCH_MAX_ITEMS : 0;
+	const int pending = job->uniqueCount - job->nextIndex;
+
+	int written = snprintf(status, capacity,
+		"%d texture(s): %d exported, %d duplicate(s) omitted, %d failed, %d pending, %d over the batch limit.",
+		job->itemCount, job->exported, job->duplicates, job->failed, pending, overLimit);
+
+	if (job->cancelled && written > 0 && written < capacity)
+		written += snprintf(status + written, (size_t)(capacity - written), " Cancelled; published files remain.");
+
+	char lastFailure[HD_TEXTURE_BATCH_MESSAGE_CAPACITY + 64] = {};
+	const int count = job->itemCount < HD_TEXTURE_BATCH_MAX_ITEMS ? job->itemCount : HD_TEXTURE_BATCH_MAX_ITEMS;
+	for (int i = 0; i < count; ++i)
+	{
+		if (job->outcomes[i] == HD_TEXTURE_BATCH_OUTCOME_FAILED && job->messages[i][0] != '\0')
+		{
+			snprintf(lastFailure, sizeof(lastFailure), "%s: %s", job->items[i].textureName, job->messages[i]);
+			break;
+		}
+	}
+	if (lastFailure[0] != '\0' && written > 0 && written < capacity)
+		snprintf(status + written, (size_t)(capacity - written), " Last failure %s", lastFailure);
+}
+
+bool HdTextureOverrides_ExportTextureBatch(const char* modId,
+	const HdTextureOverrideBatchItem* items, int itemCount,
+	HdTextureOverrideBatchResult* result)
+{
+	if (!result)
+		return false;
+
+	memset(result, 0, sizeof(*result));
+	result->requested = itemCount > 0 ? itemCount : 0;
+
+	if (!IsSafeModId(modId) || !items || itemCount <= 0)
+	{
+		snprintf(result->status, sizeof(result->status),
+			IsSafeModId(modId) ? "No identified textures to export." : "Choose a valid mod id before batch export.");
+		return false;
+	}
+
+	HdTextureOverrideBatchJob job;
+	if (!HdTextureOverrides_BeginBatchJob(&job, modId, items, itemCount))
+	{
+		snprintf(result->status, sizeof(result->status), "Batch export could not start.");
+		return false;
+	}
+
+	HdTextureOverrides_StepBatchJob(&job, HD_TEXTURE_BATCH_MAX_ITEMS + 1);
+	result->exported = job.exported;
+	result->duplicates = job.duplicates;
+	result->failed = job.failed;
+	HdTextureOverrides_GetBatchJobStatus(&job, result->status, sizeof(result->status));
+	return true;
+}
+
+bool HdTextureOverrides_GetKnownTextureRegion(int texturePage, int textureIndex,
+	unsigned short* tpage, unsigned short* clut, unsigned short* u, unsigned short* v,
+	unsigned short* width, unsigned short* height, char* textureName, int nameCapacity)
+{
+	for (int i = 0; i < g_knownTextureCount; ++i)
+	{
+		const KnownTexture* known = &g_knownTextures[i];
+		if (known->texturePage != texturePage || known->textureIndex != textureIndex)
+			continue;
+
+		if (tpage) *tpage = known->tpage;
+		if (clut) *clut = known->clut;
+		if (u) *u = known->u;
+		if (v) *v = known->v;
+		if (width) *width = known->width;
+		if (height) *height = known->height;
+		if (textureName && nameCapacity > 0)
+			CopyText(textureName, (size_t)nameCapacity, known->textureName);
+		return true;
+	}
+
+	return false;
 }

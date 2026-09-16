@@ -392,6 +392,34 @@ int AssetCatalog_EnumerateModelTextures(int modelRecord, int* outTextureRecords,
 	return count;
 }
 
+int AssetCatalog_CollectExportModels(int modelRecord, int* outModelRecords, int capacity)
+{
+	if (!ValidModelRecord(modelRecord))
+		return 0;
+
+	int count = 0;
+
+	if (outModelRecords && count < capacity)
+		outModelRecords[count] = modelRecord;
+	count++;
+
+	// The loader only links a low-detail model to its high-detail sibling, so
+	// the reverse (lower-detail) relationship is not available to include.
+	const int highDetailModelIndex = s_models[modelRecord].highDetailModelIndex;
+	if (highDetailModelIndex >= 0)
+	{
+		const int sibling = AssetCatalog_FindModel(highDetailModelIndex);
+		if (sibling >= 0 && sibling != modelRecord)
+		{
+			if (outModelRecords && count < capacity)
+				outModelRecords[count] = sibling;
+			count++;
+		}
+	}
+
+	return count;
+}
+
 int AssetCatalog_CountTextureModels(int textureRecord)
 {
 	if (!ValidTextureRecord(textureRecord))
@@ -403,6 +431,27 @@ int AssetCatalog_CountTextureModels(int textureRecord)
 	{
 		if (s_materialRefs[i].textureRecord == textureRecord)
 			count++;
+	}
+
+	return count;
+}
+
+int AssetCatalog_EnumerateTextureModels(int textureRecord, int* outModelRecords, int capacity)
+{
+	if (!ValidTextureRecord(textureRecord))
+		return 0;
+
+	int count = 0;
+
+	for (int i = 0; i < s_materialRefCount; i++)
+	{
+		if (s_materialRefs[i].textureRecord != textureRecord)
+			continue;
+
+		if (outModelRecords && count < capacity)
+			outModelRecords[count] = s_materialRefs[i].modelRecord;
+
+		count++;
 	}
 
 	return count;

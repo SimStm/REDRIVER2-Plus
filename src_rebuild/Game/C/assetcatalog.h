@@ -111,8 +111,18 @@ bool AssetCatalog_AddModelTexture(int modelRecord, int textureRecord);
    returns the count, so hidden/extra materials can be enumerated. */
 int AssetCatalog_EnumerateModelTextures(int modelRecord, int* outTextureRecords, int capacity);
 
+/* Fills out[0..capacity) with the model records a source export should cover:
+   the model itself plus its high-detail LOD sibling when the loader linked one.
+   Returns the true count, which may exceed capacity. Lower-detail siblings are
+   not linked in the catalog and are therefore never included. */
+int AssetCatalog_CollectExportModels(int modelRecord, int* outModelRecords, int capacity);
+
 /* Number of models that reference a texture record. */
 int AssetCatalog_CountTextureModels(int textureRecord);
+
+/* Fills out[0..capacity) with the distinct model records that reference a
+   texture record and returns the true count, which may exceed capacity. */
+int AssetCatalog_EnumerateTextureModels(int textureRecord, int* outModelRecords, int capacity);
 
 /* --- cars and palettes ---------------------------------------------------- */
 
