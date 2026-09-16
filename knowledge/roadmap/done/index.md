@@ -26,3 +26,9 @@ completed, as described in the [roadmap catalog](../index.md).
 - **03 — [Append-only texture registration and safe manifest merging](texture-manifest-merge.md)**:
   implemented 2026-09-15; product document
   [`knowledge/product/texture-manifest-merge.md`](../../product/texture-manifest-merge.md).
+- **04 — [Source-aware asset catalog and material identity](asset-catalog-identity.md)**:
+  implemented 2026-09-15; product document
+  [`knowledge/product/asset-catalog-identity.md`](../../product/asset-catalog-identity.md).
+- **13 — [Playable testing playground](playable-testing-playground.md)**:
+  implemented 2026-09-15; product document
+  [`knowledge/product/playable-testing-playground.md`](../../product/playable-testing-playground.md).

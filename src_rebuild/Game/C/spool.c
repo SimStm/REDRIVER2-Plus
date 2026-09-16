@@ -23,6 +23,8 @@
 #include "civ_ai.h"
 #include "camera.h"
 #include "dr2roads.h"
+#include "playground.h"
+#include "assetcatalog_game.h"
 
 #define SPOOL_REGION	0
 #define SPOOL_TPAGE		1
@@ -696,6 +698,11 @@ void init_spooled_models(void)
 #if MODEL_RELOCATE_POINTERS
 		model->poly_block += (int)model;
 #endif
+
+		// The streamed slot now holds this model; register it so the catalog
+		// reflects the live resource and bumps the revision of a reused slot.
+		AssetCatalogGame_RegisterModel(model_number);
+
 		addr += size + 4;
 	}
 
@@ -1398,6 +1405,11 @@ void GotRegion(void)
 	u_int target_barrel_reg;
 	SPL_REGIONINFO* spool;
 
+	// The playground owns cell data and road-map regions; never let a stale
+	// donor region completion overwrite the generated world.
+	if (Playground_IsActive())
+		return;
+
 	spool = &spool_regioninfo[spool_regionpos];
 
 	unpack_cellpointers(spool->region_to_unpack, spool->target_barrel_region, spool->cell_addr);
@@ -1642,6 +1654,9 @@ int RoadMapRegions[4];
 // [D] [T]
 void UnpackRegion(int region_to_unpack, int target_barrel_region)
 {
+	if (Playground_IsActive())
+		return;
+
 	if (loading_region[target_barrel_region] != -1)
 	{
 		return;
@@ -2137,6 +2152,10 @@ void CheckSpecialSpool(void)
 	int ret;
 	int iVar2;
 	CAR_DATA *lcp;
+
+	// No donor special-car streaming while the playground is resident.
+	if (Playground_IsActive())
+		return;
 
 	if (startSpecSpool != -1 && startSpecSpool+400 < CameraCnt) 
 	{

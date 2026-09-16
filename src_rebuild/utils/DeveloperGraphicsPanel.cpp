@@ -14,6 +14,7 @@
 #include "imgui_impl_sdl2.h"
 
 #include "driver2.h"
+#include "C/assetcatalog.h"
 #include "C/camera.h"
 #include "C/cars.h"
 #include "C/convert.h"
@@ -75,6 +76,16 @@ void DebugValue(const char* label, int value, const char* description)
 	ImGui::Text("%s: %d", label, value);
 	ImGui::SameLine();
 	HelpMarker(description);
+}
+
+const char* AssetSourceLabel(AssetCatalogSource source)
+{
+	switch (source)
+	{
+		case ASSET_CATALOG_SOURCE_VERIFIED: return "verified";
+		case ASSET_CATALOG_SOURCE_DECLARED: return "declared";
+		default: return "unknown";
+	}
 }
 
 void DrawGameDebugTab()
@@ -247,16 +258,37 @@ void DrawThreeDDebugTab()
 	static bool showHighlight = true;
 	static bool showLabel = true;
 	static float highlightColour[4] = { 0.1f, 0.85f, 1.0f, 0.25f };
-	HdTextureOverrideDiagnostics diagnostics = {};
-	HdTextureOverrides_GetDiagnostics(&diagnostics);
-	ImGui::TextUnformatted("Texture and mod inspector");
+
+	ImGui::TextUnformatted("Render inspector");
 	ImGui::SameLine();
-	HelpMarker("Click picking resolves the visible PSX primitive, its page, CLUT, UV region, and any renderer provenance. Car bodies and city tiles currently provide named provenance; uninstrumented render paths still expose their GPU texture details.");
-	ImGui::Text("Mods: %d discovered | %d enabled | %d texture entries", diagnostics.discoveredMods,
-		diagnostics.activeMods, diagnostics.manifestEntries);
-	ImGui::Text("Loaded RGBA images: %d | active renderer mappings: %d", diagnostics.loadedImages,
-		diagnostics.registeredOverrides);
-	ImGui::TextWrapped("%s", diagnostics.status);
+	HelpMarker("Click picking resolves the visible PSX primitive, its page, CLUT, UV region, and render provenance. Texture mod manifests, active mods and the declared override list live in the Mods tab.");
+
+	if (ImGui::CollapsingHeader("Asset catalog", ImGuiTreeNodeFlags_DefaultOpen))
+	{
+		AssetCatalogContext context = {};
+		int modelCount = 0, textureCount = 0, carCount = 0, materialRefs = 0;
+		int modelCap = 0, textureCap = 0, carCap = 0, materialCap = 0;
+		AssetCatalog_GetStats(&modelCount, &textureCount, &carCount, &materialRefs);
+		AssetCatalog_GetCapacities(&modelCap, &textureCap, &carCap, &materialCap);
+
+		if (AssetCatalog_GetContext(&context))
+		{
+			ImGui::Text("Context: level %d, variant %d, %s", context.level, context.variant,
+				context.multiplayer ? "multiplayer" : "single player");
+			ImGui::Text("Generation: %u", AssetCatalog_GetGeneration());
+		}
+		else
+		{
+			ImGui::TextDisabled("Catalog inactive (no level loaded).");
+		}
+
+		ImGui::Text("Models %d/%d | textures %d/%d | cars %d/%d", modelCount, modelCap,
+			textureCount, textureCap, carCount, carCap);
+		ImGui::Text("Material links %d/%d", materialRefs, materialCap);
+		ImGui::Text("Static footprint: %d bytes", AssetCatalog_GetCapacityBytes());
+		ImGui::SameLine();
+		HelpMarker("Fixed size, populated during level load and region streaming. The catalog performs no per-frame allocation, so its cost does not scale with the frame.");
+	}
 
 	ImGui::Separator();
 	ImGui::Checkbox("Pick visible primitive", &g_inspectorPickMode);
@@ -325,6 +357,49 @@ void DrawThreeDDebugTab()
 	{
 		ImGui::TextDisabled("No primitive selected. Enable picking and click a visible element outside this panel.");
 	}
+
+	if (hasSelection && selection.object.key[0] && !hasCar)
+	{
+		const int modelRecord = AssetCatalog_FindModel(selection.object.modelIndex);
+		if (modelRecord >= 0)
+		{
+			char catalogId[ASSET_CATALOG_ID_CAPACITY] = {};
+			char catalogName[ASSET_CATALOG_NAME_CAPACITY] = {};
+			int lodParent = -1, highDetail = -1;
+			AssetCatalogSource source = ASSET_CATALOG_SOURCE_UNKNOWN;
+			AssetCatalog_MakeModelId(selection.object.modelIndex, catalogId, sizeof(catalogId));
+			AssetCatalog_GetModel(modelRecord, NULL, catalogName, sizeof(catalogName), &source, &lodParent, &highDetail);
+
+			ImGui::SeparatorText("Catalog record");
+			ImGui::Text("Stable id: %s", catalogId);
+			ImGui::Text("Source: %s | name: %s", AssetSourceLabel(source), catalogName[0] ? catalogName : "(unnamed)");
+			ImGui::Text("LOD: high-detail %d | parent %d (-1 = none)", highDetail, lodParent);
+
+			int materials[192];
+			const int materialCount = AssetCatalog_EnumerateModelTextures(modelRecord, materials, 192);
+			if (ImGui::CollapsingHeader("Source materials (catalog, includes hidden faces)", ImGuiTreeNodeFlags_DefaultOpen))
+			{
+				ImGui::Text("%d material link(s)", materialCount);
+				for (int i = 0; i < materialCount && i < 192; ++i)
+				{
+					char textureName[ASSET_CATALOG_NAME_CAPACITY] = {};
+					int page = -1, index = -1, set = -1;
+					AssetCatalogSource textureSource = ASSET_CATALOG_SOURCE_UNKNOWN;
+					AssetCatalog_GetTexture(materials[i], textureName, sizeof(textureName), &page, &index, &set, &textureSource);
+					ImGui::BulletText("%s | page %d / index %d (%s) [set %d]", textureName, page, index,
+						AssetSourceLabel(textureSource), set);
+				}
+				if (materialCount == 0)
+					ImGui::TextDisabled("No materials linked for this model in the catalog.");
+			}
+		}
+		else
+		{
+			ImGui::TextDisabled("Model slot %d is not in the catalog (freed/streamed slot or unlabelled draw source).",
+				selection.object.modelIndex);
+		}
+	}
+
 	ImGui::SeparatorText("Export");
 	ImGui::InputText("Export mod id", g_inspectorExportModId, sizeof(g_inspectorExportModId));
 	char modsDirectory[512];
@@ -444,6 +519,46 @@ void DrawThreeDDebugTab()
 		}
 	}
 
+}
+
+void DrawModsTab()
+{
+	HdTextureOverrideDiagnostics diagnostics = {};
+	HdTextureOverrides_GetDiagnostics(&diagnostics);
+
+	ImGui::TextUnformatted("Texture mods");
+	ImGui::SameLine();
+	HelpMarker("Active texture mods replace registered level textures. Later enabled mods win when two declare the same texture; a disabled override is inert, so the original VRAM data is always available.");
+
+	if (diagnostics.supported)
+	{
+		bool enabled = diagnostics.enabled != 0;
+		if (ImGui::Checkbox("Enable HD texture overrides", &enabled))
+			HdTextureOverrides_SetEnabled(enabled);
+		ImGui::SameLine();
+		HelpMarker("Takes effect on the next primitive without reloading the level. Manifest or PNG edits require a reload or a level reload.");
+	}
+	else
+	{
+		ImGui::TextDisabled("HD texture PNG loading is not available on this platform.");
+	}
+
+	ImGui::Text("Mods: %d discovered | %d enabled | %d texture entries", diagnostics.discoveredMods,
+		diagnostics.activeMods, diagnostics.manifestEntries);
+	ImGui::Text("Loaded RGBA images: %d | active renderer mappings: %d", diagnostics.loadedImages,
+		diagnostics.registeredOverrides);
+	ImGui::TextWrapped("%s", diagnostics.status);
+
+	char modsDirectory[512];
+	HdTextureOverrides_GetModsDirectory(modsDirectory, sizeof(modsDirectory));
+	ImGui::TextWrapped("Mods root: %s", modsDirectory);
+	ImGui::TextDisabled("Each mod is a folder with a manifest.json under this root.");
+
+	if (ImGui::Button("Reload mod manifests and images"))
+		HdTextureOverrides_Reload();
+	ImGui::SameLine();
+	HelpMarker("Reloads JSON manifests and PNG files, then re-registers texture regions already loaded by the current level. It never reloads or edits original game data.");
+
 	if (ImGui::CollapsingHeader("Enabled mod order", ImGuiTreeNodeFlags_DefaultOpen))
 	{
 		ImGui::TextDisabled("Later enabled mods have higher texture-override priority.");
@@ -462,7 +577,7 @@ void DrawThreeDDebugTab()
 	if (ImGui::CollapsingHeader("Declared texture overrides", ImGuiTreeNodeFlags_DefaultOpen))
 	{
 		ImGui::TextDisabled("Entries are resolved by texture name and can be narrowed with texturePage and textureIndex in manifest.json.");
-		ImGui::BeginChild("ModTextureEntries", ImVec2(0.0f, 190.0f), true);
+		ImGui::BeginChild("ModTextureEntries", ImVec2(0.0f, 220.0f), true);
 		for (int i = 0; i < HdTextureOverrides_GetEntryCount(); ++i)
 		{
 			HdTextureOverrideEntryInfo entry = {};
@@ -590,24 +705,7 @@ void RenderOverlay()
 				ImGui::Text("Draw splits: %d", renderStats.drawSplitCount);
 
 				ImGui::Separator();
-				HdTextureOverrideDiagnostics hdTextures = {};
-				HdTextureOverrides_GetDiagnostics(&hdTextures);
-				if (hdTextures.supported)
-				{
-					bool enabled = hdTextures.enabled != 0;
-					if (ImGui::Checkbox("Enable HD texture overrides", &enabled))
-						HdTextureOverrides_SetEnabled(enabled);
-					ImGui::SameLine();
-					HelpMarker("This switch takes effect on the next primitive without reloading the level. It only changes the renderer binding: original TIM and VRAM uploads continue and are used immediately when disabled. Changes to the manifest or PNG files require a level reload or restart.");
-				}
-				else
-				{
-					ImGui::TextUnformatted("HD texture PNG loading is not available on this platform.");
-				}
-				ImGui::Text("Mods: %d discovered | %d enabled | %d texture entries", hdTextures.discoveredMods, hdTextures.activeMods, hdTextures.manifestEntries);
-				ImGui::Text("RGBA images: %d | registered mappings: %d", hdTextures.loadedImages, hdTextures.registeredOverrides);
-				ImGui::TextWrapped("%s", hdTextures.status);
-
+				ImGui::TextDisabled("Texture overrides and active mods are on the Mods tab.");
 				ImGui::Separator();
 				if (ImGui::Button("Save developer settings"))
 					snprintf(g_persistenceStatus, sizeof(g_persistenceStatus), "%s", DeveloperGraphicsSettings_SaveRuntime() ? "Saved developer_graphics.ini" : "Save failed; settings remain in session");
@@ -630,6 +728,12 @@ void RenderOverlay()
 			if (ImGui::BeginTabItem("3D Debug"))
 			{
 				DrawThreeDDebugTab();
+				ImGui::EndTabItem();
+			}
+
+			if (ImGui::BeginTabItem("Mods"))
+			{
+				DrawModsTab();
 				ImGui::EndTabItem();
 			}
 

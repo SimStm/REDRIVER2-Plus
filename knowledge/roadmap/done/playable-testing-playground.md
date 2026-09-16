@@ -1,13 +1,19 @@
 ---
 type: Roadmap
 title: Playable testing playground for renderer development
-status: planned
+status: implemented
 execution_order: 13
 created: 2026-09-15
+completed: 2026-09-15
 tags: [roadmap, playground, levels, testing, rendering]
 ---
 
 # Playable testing playground for renderer development
+
+Implemented 2026-09-15. Operational behaviour is documented in
+[`knowledge/product/playable-testing-playground.md`](../../product/playable-testing-playground.md);
+the implementation technique and its constraints are captured in
+[`knowledge/rules/world-scene-generation.md`](../../rules/world-scene-generation.md).
 
 ## Problem
 
@@ -116,10 +122,10 @@ identity, reset/camera controls, reproducible captures, measured baseline and
 safe return to original levels. This lets the modern mesh test verify mutual
 occlusion against legacy-rendered objects.
 
-P5 may follow alongside renderer work after the handoff. JSON authoring,
-asset mixing and a general editor are not prerequisites. Keep this roadmap
-`planned` after P4: the complete feature also requires P5 and final acceptance.
-Record partial milestone evidence here when it actually exists.
+P5 could follow alongside renderer work after the handoff. JSON authoring,
+asset mixing and a general editor are not prerequisites. The record stayed
+`planned` until P5 landed, and it was completed together with P5; see the
+completion record below.
 
 The renderer roadmap uses the user-selected Meshy MCP for external PBR fixtures
 in R3/R4. That authoring workflow consumes the playground; it is not needed to
@@ -154,6 +160,41 @@ Repository-relative source paths: `src_rebuild/Game/C/main.c` (`State_GameInit`,
 `system.c` (`SetCityType`), `dr2roads.c`, `wheelforces.c`, `cell.c`, `map.c`,
 `spool.c`, `objcoll.c`, `camera.c`, `src_rebuild/Game/Frontend/FEmain.c`, and
 `src_rebuild/utils/DeveloperDebugStart.*`. Verify these against the live source.
+
+## Completion record
+
+### 2026-09-15 - P1-P5 delivered
+
+Delivered as a new game module (`src_rebuild/Game/C/playground.c` and
+`playground.h`) with narrow hooks in `main.c`, `draw.c`, `spool.c` and
+`Frontend/FEmain.c`.
+
+- **P1**: Traced launch, allocation, surface/collision queries, map/streaming
+  consumers and teardown. Scene identity is `playground.flatpad.v1`. The world
+  adapter points all four `RoadMapDataRegions` at a non-level buffer so
+  `sdGetCell` returns `default_plane` (flat concrete at height 0, up normal),
+  and replaces `cell_ptrs`, `cells` and `cell_objects` with generated storage.
+- **P2**: Generated flat floor (19x19 one-cell tiles) and the original player
+  car, drawn through the legacy path; scripted captures confirm the car rests
+  on the surface.
+- **P3**: Six generated collidable boxes with `COLLISION_PACKET` data, car
+  reset (`R`), traffic/police/missions and donor camera events disabled, plus
+  spooler guards so donor regions cannot overwrite the generated world.
+- **P4**: Developer entry point `-playground` (DEBUG_OPTIONS), reusing
+  `GAME_TAKEADRIVE` on a donor Chicago level for car, texture and sound
+  resources.
+- **P5**: A **Playground** choice on the Take A Ride city screen, installed at
+  runtime in `LoadFrontendScreens`, calls the same launcher and starts the
+  fixture from every build. Verified installed with
+  `action=0x200 var=0x1000 name=Playground`.
+
+Evidence (Windows `Release_dev` x64): startup log
+`Playground: scene playground.flatpad.v1 active (367 objects, spawn
+6216,-222456, 9336 bytes generated)`; repeated 20-30 s sessions stayed stable;
+instrumented draw counts showed only the generated model slots (no donor
+geometry). CPU/GPU profiling and automated menu navigation were not performed;
+the frontend entry is verified by its installed action/variable wiring plus the
+shared launcher's runtime path.
 
 ## Handoff and completion
 

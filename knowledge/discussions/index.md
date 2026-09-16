@@ -19,7 +19,12 @@ Follow the [discussion maintenance rule](../rules/discussion-records.md).
 - [Playable testing playground](playable-testing-playground/index.md): a
   procedural or declarative driving test environment, world-data requirements,
   reusable city assets, and Take a Ride/debug/command-line entry points.
-  **Roadmap adopted; first in the modernization track; not implemented.**
+  **Implemented; roadmap item 13 complete.**
+- [Source-aware asset catalog and material identity](asset-catalog-identity/index.md):
+  the resource-versus-instance identity and lifetime specification behind
+  roadmap item 04, including stable ids, manifest-compatible texture identity,
+  explicit provenance, and many-to-many model/texture relationships.
+  **Implemented; roadmap item 04 complete.**
 
 ## Structure and lifecycle
 

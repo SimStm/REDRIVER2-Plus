@@ -10,6 +10,8 @@
 - [What this project is](#what-this-project-is)
 - [Legal game data](#legal-game-data)
 - [Building and running](#building-and-running)
+- [Command-line parameters](#command-line-parameters)
+- [Configuration keys](#configuration-keys)
 - [Developer panel](#developer-panel)
 - [Technology](#technology)
 - [Project layout](#project-layout)
@@ -47,6 +49,82 @@ REDRIVER2-Plus builds with Premake 5 on Windows (Visual Studio 2022) and on Linu
 The game resolves a `DRIVER2/` game-data folder from its working directory, so keep the prepared data next to the executable or set `RED2_DIR` (see [Legal game data](#legal-game-data)).
 
 **[BUILDING.md](BUILDING.md)** has the complete instructions: prerequisites and how to install them, per-platform build and run steps (including WSL), the deterministic debug-start arguments and capture workflow, the standalone export tests, screenshots, and troubleshooting.
+
+## Command-line parameters
+
+Every build accepts the base arguments. The **debug arguments** exist only in
+`Debug` and `Release_dev`, because those configurations define
+`DEBUG_OPTIONS`; plain `Release` ignores them (see
+[Configurations](BUILDING.md#configurations)). Run the executable from a folder
+that contains the `DRIVER2/` game data (or point `RED2_DIR` at it).
+
+### Base arguments (all builds)
+
+| Argument | Meaning |
+| --- | --- |
+| `-ini <file.ini>` | Load a specific configuration file instead of `config.ini`. |
+| `-cdimage <file.iso\|file.bin>` | Read game data from a CD image instead of the `DRIVER2/` folder. |
+| `-nointro` | Skip the intro movie and splash screens that play when launched with no arguments. |
+| `-nofmv` | Disable all FMV playback. |
+| `-replay <file.d2rp>` | Start the attract/user replay from a `.d2rp` file. Works in every build. |
+
+### Debug arguments (`Debug` and `Release_dev`)
+
+| Argument | Meaning |
+| --- | --- |
+| `-mission <n>` | Start the given mission number directly, skipping the frontend. |
+| `-gametype <n>` | Override the game type for the started session (see `GAMETYPE` in `game/dr2types.h`; `GAME_TAKEADRIVE` is `1`). |
+| `-level <n>` | Select the city/level for the started session (`0` Chicago, `1` Havana, `2` Vegas, `3` Rio). For `GAME_TAKEADRIVE` the level determines the derived mission number. |
+| `-playercar <n>` | Force the player-1 car model. |
+| `-player2car <n>` | Force the player-2 car model. |
+| `-players <1\|2>` | Set the player count. |
+| `-startpos <x> <z>` | Override the player start position in game units. |
+| `-startdir <0..4095>` | Override the player start heading as a 12-bit PlayStation angle. |
+| `-chase <n>` | Force a specific chase number instead of a random one. |
+| `-playground` | Start the dedicated generated playground scene (roadmap item 13). Reuses a Chicago take-a-ride level for car/texture/sound resources and replaces world geometry, roads and collisions with a regenerated flat fixture. |
+| `-exportxasubtitles` | Export the strings embedded in XA audio to an SBN subtitle file. |
+| `-recordcutscene <file.ini>` | Start a scripted cutscene-recording session from an INI file. |
+| `-chaseautotest <file.ini>` | Start a scripted chase auto-test from an INI file. |
+
+Reproducible single-session launches combine these; the canonical examples are:
+
+```text
+REDRIVER2_dev -nointro -mission <N> -gametype <G> -level <L> -playercar <C> -startpos <x> <z> -startdir <A> -players <P> [-chase <H>]
+REDRIVER2_dev -nointro -replay "DRIVER2/REPLAYS/ATTRACT.400"
+REDRIVER2_dev -nointro -nofmv -playground
+```
+
+The **Game Debug** tab of the developer panel captures the current session into
+that command line and can persist it to `developer_debug_start.ini` (applied
+automatically at startup when `enabled=1`). See
+[Deterministic debug start](BUILDING.md#deterministic-debug-start) for the full
+workflow and the `scripts/run_debug_start.ps1` helper.
+
+## Configuration keys
+
+`config.ini` is read from the working directory (or from `-ini <file>`). Keys
+outside `[game]`/`[render]` are commented in the shipped file. The keys that
+matter most when testing are:
+
+| Section | Key | Meaning |
+| --- | --- | --- |
+| `[fs]` | `dataFolder` | Game-data folder relative to the executable (default `DRIVER2`). |
+| `[game]` | `drawDistance` | World draw distance (441..1800). |
+| `[game]` | `fieldOfView` | Camera field of view (128..384, 256 default). |
+| `[game]` | `freeCamera` | `1` enables the F7 free-fly camera. |
+| `[game]` | `captureAfterSeconds` | Save `SCREENSHOT.BMP` once, this many seconds after gameplay begins (`0` disables). |
+| `[game]` | `overrideContent` | Enable modded textures and car models (HD overrides). |
+| `[game]` | `languageId` | `0` English, `1` Italian, `2` German, `3` French, `4` Spanish. |
+| `[game]` | `unlockAll` | Debug builds only: unlock all missions and cheats. |
+| `[render]` | `textureOverrides` | Initial HD-texture override state (`0`/`1`); lets a capture run with overrides disabled. |
+| `[render]` | `vsync`, `fullscreen`, `windowWidth`/`windowHeight` | Presentation controls. |
+| `[render]` | `pgxpTextureMapping`, `pgxpZbuffer`, `bilinearFiltering` | PSX-accurate or smoothed rendering toggles. |
+| `[pad]` | `pad1device`, `pad2device` | Controller device index (`-1` for automatic). |
+| `[cdfs]` | `image`, `mode` | CD image path and sector mode (do not change `mode`). |
+
+In-game control bindings live under `[kbcontrols_game]`, `[kbcontrols_menu]`,
+`[controls_game]` and `[controls_menu]`; the developer panel can capture and
+persist its own settings separately in `developer_graphics.ini`.
 
 ## Developer panel
 

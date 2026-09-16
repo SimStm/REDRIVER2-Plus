@@ -34,5 +34,11 @@ tags: [okf, rules]
 - [Reproduce gameplay with debug start snapshots](developer-debug-start.md):
   start a debug build directly at a known mission, vehicle, and position, and
   capture frames without input injection.
+- [Generate a coherent world for a playground or new map](world-scene-generation.md):
+  replace surface, cell, collision, visibility and streaming data together when
+  adding a generated scene, and avoid donor-world leakage.
+- [Keep asset identity and instance identity separate](asset-identity-lifetime.md):
+  resource records are shared and stable while instances and runtime slots are
+  not, and retained references must detect reuse.
 - [Self-learning rules](self-learning.md): turn repeated, evidenced constraints
   into durable project knowledge.

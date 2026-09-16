@@ -59,6 +59,8 @@
 #include "platform.h"
 #include "state.h"
 #include "cutrecorder.h"
+#include "playground.h"
+#include "assetcatalog_game.h"
 #include "../utils/DeveloperDebugStart.h"
 
 int levelstartpos[8][4] = {
@@ -407,6 +409,9 @@ void LoadGameLevel(void)
 			SetCityType(CITYTYPE_MULTI_DAY);
 	}
 
+	// Begin the asset-catalog context before texture pages are registered.
+	AssetCatalogGame_BeginLevel();
+
 	ReportMode(0);
 
 	sector = citylumps[GameLevel][CITYLUMP_DATA1].x / CDSECTOR_SIZE;
@@ -452,7 +457,10 @@ void LoadGameLevel(void)
 		LoadPermanentTPagesFromTIM();
 	}
 #endif
-	
+
+	// Models, textures and car slots are loaded now; populate the catalog.
+	AssetCatalogGame_PopulateLevel();
+
 	ReportMode(1);
 }
 
@@ -632,6 +640,11 @@ void State_GameInit(void* param)
 
 	int_garage_door();
 	SpoolSYNC();
+
+	// The playground replaces the loaded world with a generated, resident
+	// fixture while reusing the donor level's car, texture and sound data.
+	if (NewLevel)
+		Playground_BuildScene();
 
 	InitialiseCarHandling();
 	ClearMem((char*)player, sizeof(player));
@@ -1286,6 +1299,8 @@ void StepGame(void)
 {
 	int i;
 	PLAYER* pl;
+
+	Playground_Tick();
 
 	if (CameraCnt == 3 && !pauseflag)
 		StartXM(gDriver1Music);
@@ -2049,6 +2064,18 @@ int redriver2_main(int argc, char** argv)
 
 			GameLevel = atoi(argv[i + 1]);
 			i++;
+		}
+		else if (!strcmp(argv[i], "-playground"))
+		{
+			SetFEDrawMode();
+
+			gInFrontend = 0;
+			AttractMode = 0;
+
+			Playground_RequestLaunch();
+
+			SetState(STATE_GAMELAUNCH);
+			launchedFromCommandLine = 1;
 		}
 #endif // _DEBUG_OPTIONS
 		else if (!strcmp(argv[i], "-replay"))

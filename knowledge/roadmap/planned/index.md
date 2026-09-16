@@ -20,7 +20,8 @@ Every record contains its own milestone sequence, prerequisites, non-goals,
 acceptance criteria and validation plan. Dependencies inside the record take
 precedence over the simple reading order.
 
-1. **04 — [Source-aware asset catalog and material identity](asset-catalog-identity.md)**
+1. **04 — [Source-aware asset catalog and material identity](../done/asset-catalog-identity.md)**:
+   implemented 2026-09-15.
 2. **05 — [Batch texture export with model references](object-texture-batch-export.md)**
 3. **06 — [Whole-object selection across renderer categories](inspector-selection-coverage.md)**
 4. **07 — [Inspector navigation and independent previews](inspector-camera-preview.md)**
@@ -36,9 +37,10 @@ The user adopted this track on 2026-09-15 with the playground first. Labels
 13 and 14 extend the catalog without renumbering existing records; they do not
 require completing every unrelated entry above before starting this track.
 
-1. **13 — [Playable testing playground](playable-testing-playground.md)**:
-   build the resident driving fixture on the existing renderer; milestones
-   P1-P4 provide the minimum handoff. P5 adds Take a Ride access.
+1. **13 — [Playable testing playground](../done/playable-testing-playground.md)**:
+   implemented 2026-09-15. The resident driving fixture is available on the
+   existing renderer, and its P1-P4 handoff is in place; P5 added Take a Ride
+   access.
 2. **14 — [Renderer modernization](renderer-modernization.md)**:
    use that fixture for modern meshes, PBR, lighting and measured pipeline/backend
    work. R2 waits for verified playground P1-P4; R1 audits can happen earlier.
@@ -50,6 +52,12 @@ discussions inside both records for the reasoning and adopted decision.
 
 ## Completed
 
+- **04 — [Source-aware asset catalog and material identity](../done/asset-catalog-identity.md)**:
+  implemented 2026-09-15; see
+  [`knowledge/product/asset-catalog-identity.md`](../../product/asset-catalog-identity.md).
+- **13 — [Playable testing playground](../done/playable-testing-playground.md)**:
+  implemented 2026-09-15; see
+  [`knowledge/product/playable-testing-playground.md`](../../product/playable-testing-playground.md).
 - **00 — [Mod-system branch PR readiness](../done/mod-system-pr-readiness.md)**:
   implemented 2026-09-15; see
   [`knowledge/product/mod-system-pr-readiness.md`](../../product/mod-system-pr-readiness.md).
@@ -71,7 +79,7 @@ intentional gaps at 01, 02 and 03.
 > Order 00 was completed on 2026-09-15 (PR
 > [#2](https://github.com/SimStm/REDRIVER2-Plus/pull/2), merge `5f1da8a2`).
 > The guidance below is the historical merge boundary for the mod-system
-> foundation; the next planned order is 04.
+> foundation; the next planned order is 05.
 
 Start with order 00 as an audit, not a requirement to complete orders 01–12.
 Transparent-PNG rendering is an existing correctness defect and should be

@@ -21,6 +21,7 @@
 #include "ASM/rndrasm.h"
 
 #ifndef PSX
+#include "assetcatalog.h"
 #include "PsyX/PsyX_public.h"
 #include <string>
 #include "../../utils/InspectorExport.h"
@@ -1408,7 +1409,20 @@ void DrawCarObject(CAR_MODEL* car, MATRIX* matrix, VECTOR* pos, int palette, CAR
 	snprintf(inspectorLabel, sizeof(inspectorLabel), "Car #%d | model %d | %s detail | palette %d",
 		cp->id, cp->ap.model, detail ? "high" : "low", palette);
 	PsyXInspectorObject inspectorObject = {};
-	snprintf(inspectorObject.key, sizeof(inspectorObject.key), "car:%d:%d:%d", GameLevel, cp->id, cp->ap.model);
+
+	// Source identity (model number) is distinct from the live car slot; keep
+	// both, and add the city variant, so a reused slot cannot aliase keys.
+	AssetCatalogContext catalogContext;
+	const int cityVariant = AssetCatalog_GetContext(&catalogContext) ? catalogContext.variant : (int)GetCityType();
+	int carModelNumber = -1;
+	const int carRecord = AssetCatalog_FindCar(cp->ap.model);
+	if (carRecord >= 0)
+		AssetCatalog_GetCar(carRecord, NULL, &carModelNumber, NULL, 0, NULL);
+	else if (cp->ap.model >= 0 && cp->ap.model < MAX_CAR_RESIDENT_MODELS)
+		carModelNumber = residentCarModels[cp->ap.model];
+
+	snprintf(inspectorObject.key, sizeof(inspectorObject.key), "car:%d:%d:%d:%d:%d",
+		GameLevel, cityVariant, cp->id, cp->ap.model, carModelNumber);
 	snprintf(inspectorObject.modelName, sizeof(inspectorObject.modelName), "Resident car %d", cp->ap.model);
 	inspectorObject.modelIndex = cp->ap.model;
 	inspectorObject.polygonCount = car->numFT3 + car->numGT3 + car->numB3;

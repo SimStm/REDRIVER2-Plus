@@ -21,6 +21,7 @@
 #include "C/loadsave.h"
 #include "C/spool.h"
 #include "C/state.h"
+#include "C/playground.h"
 
 #ifndef PSX
 
@@ -827,6 +828,11 @@ void SetVariable(int var)
 			GameType = GAME_IDLEDEMO;
 			gCurrentMissionNumber = (value + 400);
 			break;
+		case 16:
+			// [A] Playground test fixture (roadmap item 13). Reuses the shared
+			// scene launcher; car and time are fixed for the fixture.
+			Playground_RequestLaunch();
+			break;
 #if ENABLE_BONUS_CONTENT
 		case 14: // [A]
 		{
@@ -1337,6 +1343,30 @@ void LoadFrontendScreens(int full)
 		PsxScreens[4].buttons[0].action = FE_MAKEVAR(BTN_NEXT_SCREEN, 39);
 		PsxScreens[4].buttons[0].var = -1;
 		PsxScreens[39].userFunctionNum = 21;		// UserReplaySelectScreen
+
+		// Playground test fixture (roadmap item 13, P5): an extra Take A Ride
+		// city choice that starts the shared playground launcher directly.
+		if (PsxScreens[1].numButtons >= 4)
+		{
+			PSXBUTTON* cityButtons = PsxScreens[1].buttons;
+			PSXBUTTON* playground = &cityButtons[4];
+
+			memcpy(playground, &cityButtons[3], sizeof(PSXBUTTON));
+
+			playground->y = cityButtons[3].y + 40;
+			playground->s_y = cityButtons[3].s_y + 40;
+			playground->action = FE_MAKEVAR(BTN_START_GAME, 0);
+			playground->var = FE_MAKEVAR(16, 0);
+
+			snprintf(playground->Name, sizeof(playground->Name), "Playground");
+
+			playground->u = 4;		// up -> Rio
+			playground->d = 1;		// down -> Chicago
+			cityButtons[0].u = 5;	// Chicago up -> Playground
+			cityButtons[3].d = 5;	// Rio down -> Playground
+
+			PsxScreens[1].numButtons = 5;
+		}
 #endif // PSX
 
 #if ENABLE_BONUS_CONTENT

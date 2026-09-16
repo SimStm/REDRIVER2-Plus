@@ -32,8 +32,9 @@ no prototype or implementation is delivered by creating it.
 
 - [Renderer discussion](../../discussions/renderer-modernization/index.md)
 - [Detailed technical sequence](../../discussions/renderer-modernization/exploration-sequence.md)
-- [Playground roadmap](playable-testing-playground.md), milestones P1-P4:
-  explicit implementation prerequisite for R2 below.
+- [Playground roadmap](../done/playable-testing-playground.md), milestones
+  P1-P4: explicit implementation prerequisite for R2 below. Implemented
+  2026-09-15.
 - [Playground discussion](../../discussions/playable-testing-playground/index.md)
 - [Measured graphics improvements](graphics-quality-profiles.md): remains the
   separate plan for bounded legacy-renderer effects and quality profiles.
@@ -66,7 +67,8 @@ second backend require separately bounded follow-up scopes.
 Catalog label 14 follows playground label 13 within this dedicated track.
 **No circular dependency:** the playground uses existing rendering; it does
 not depend on this roadmap. Source audits, platform feasibility and R1 contract
-work can proceed before its handoff, but R2 waits for verified P1-P4 evidence.
+work can proceed before its handoff; the playground P1-P4 handoff is now
+implemented (2026-09-15), so R2 may begin once the R1 contracts are defined.
 Menu polish and deferred playground authoring features do not block rendering.
 
 The playground cannot replace original-city tests: streaming, legacy alpha,

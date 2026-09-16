@@ -4,6 +4,7 @@
 #include "spool.h"
 #include "mission.h"
 #include "cars.h"
+#include "assetcatalog_game.h"
 
 #if USE_PC_FILESYSTEM
 extern int gContentOverride;
@@ -45,6 +46,9 @@ int CleanSpooledModelSlots()
 				modelpointers[i] = &dummyModel;
 				pLodModels[i] = &dummyModel;
 				litSprites[i >> 5] &= ~(1 << (i & 31));
+
+				// A freed streamed slot invalidates any retained catalog handle.
+				AssetCatalogGame_InvalidateModel(i);
 
 				num_freed++;
 			}

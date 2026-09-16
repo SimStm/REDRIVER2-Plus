@@ -19,6 +19,23 @@ directory as the working directory. Tests create `test.png`, `car.obj`, and a
 `mods/regression` directory there; do not run them against a real mod directory.
 Exit code zero means all checks passed. Artifacts are retained for inspection.
 
+## Asset catalog tests
+
+`AssetCatalogTests.cpp` tests the source-aware asset catalog (roadmap item 04)
+in isolation: generation and context lifetime, model/slot revision handles,
+texture manifest-triple deduplication, many-to-many model/texture relationships,
+explicit provenance, palette relationships, and graceful bounds handling. It
+needs no game data or graphics context. Because the catalog is a `.c` file that
+the project compiles as C++, pass `/TP` when building it by hand:
+
+```bat
+cl.exe /nologo /TP /EHsc /std:c++14 /O2 /Gy tests\AssetCatalogTests.cpp Game\C\assetcatalog.c /Fo:build\ /Fe:build\AssetCatalogTests.exe /link /OPT:REF
+build\AssetCatalogTests.exe
+```
+
+It prints a check/failure count and exits non-zero on failure. It creates no
+files, so any working directory is safe.
+
 Manual in-game verification:
 
 1. Select a texture and export it twice to the same mod id. Both operations

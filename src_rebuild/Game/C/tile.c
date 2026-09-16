@@ -9,6 +9,7 @@
 #include "ASM/rndrasm.h"
 
 #ifndef PSX
+#include "assetcatalog.h"
 #include "PsyX/PsyX_public.h"
 #endif
 
@@ -312,8 +313,18 @@ void DrawTILES(PACKED_CELL_OBJECT** tiles, int tile_amount)
 #ifndef PSX
 		char inspectorLabel[PSYX_INSPECTOR_LABEL_LENGTH];
 		PsyXInspectorObject inspectorObject = {};
-		snprintf(inspectorObject.key, sizeof(inspectorObject.key), "tile:%d:%d:%d:%d:%d:%d",
-			GameLevel, sourceModelNumber, ppco->pos.vx, ppco->pos.vy, ppco->pos.vz, yang);
+		char catalogModelId[ASSET_CATALOG_ID_CAPACITY];
+		if (AssetCatalog_MakeModelId(sourceModelNumber, catalogModelId, sizeof(catalogModelId)))
+		{
+			// The tile already uses the source model number (LOD-independent).
+			snprintf(inspectorObject.key, sizeof(inspectorObject.key), "tile:%s:%d:%d:%d:%d",
+				catalogModelId, ppco->pos.vx, ppco->pos.vy, ppco->pos.vz, yang);
+		}
+		else
+		{
+			snprintf(inspectorObject.key, sizeof(inspectorObject.key), "tile:%d:%d:%d:%d:%d:%d",
+				GameLevel, sourceModelNumber, ppco->pos.vx, ppco->pos.vy, ppco->pos.vz, yang);
+		}
 		const char* inspectorName = GetModelNameByIndex(sourceModelNumber);
 		snprintf(inspectorObject.modelName, sizeof(inspectorObject.modelName), "%s", inspectorName ? inspectorName : "Unnamed model");
 		inspectorObject.modelIndex = sourceModelNumber;

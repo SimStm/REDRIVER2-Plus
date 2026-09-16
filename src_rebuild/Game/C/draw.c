@@ -15,7 +15,9 @@
 #include "debris.h"
 #include "ASM/rndrasm.h"
 #include "event.h"
+#include "playground.h"
 #ifndef PSX
+#include "assetcatalog.h"
 #include "PsyX/PsyX_public.h"
 #endif
 
@@ -388,7 +390,14 @@ void SetupDrawMapPSX(void)
 	current_cell_z = cell_z;
 
 	pvs_cell = (cell_z % MAP_REGION_SIZE) * MAP_REGION_SIZE + (cell_x % MAP_REGION_SIZE);
-	if (pvs_cell != current_pvs_cell)
+	if (Playground_IsActive())
+	{
+		// The generated fixture has no encoded PVS data; expose its bounded
+		// cell neighbourhood directly instead of decoding a donor region.
+		Playground_FillVisibility();
+		current_pvs_cell = pvs_cell;
+	}
+	else if (pvs_cell != current_pvs_cell)
 	{
 		int region_x1, region_z1;
 		int current_barrel_region_x1, current_barrel_region_z1;
@@ -1006,8 +1015,18 @@ int DrawAllBuildings(CELL_OBJECT** objects, int num_buildings)
 
 #ifndef PSX
 		PsyXInspectorObject inspectorObject = {};
-		snprintf(inspectorObject.key, sizeof(inspectorObject.key), "building:%d:%d:%d:%d:%d:%d",
-			GameLevel, cop->type, cop->pos.vx, cop->pos.vy, cop->pos.vz, cop->yang);
+		char catalogModelId[ASSET_CATALOG_ID_CAPACITY];
+		if (AssetCatalog_MakeModelId(cop->type, catalogModelId, sizeof(catalogModelId)))
+		{
+			// Stable, variant-aware resource id plus the instance placement.
+			snprintf(inspectorObject.key, sizeof(inspectorObject.key), "building:%s:%d:%d:%d:%d",
+				catalogModelId, cop->pos.vx, cop->pos.vy, cop->pos.vz, cop->yang);
+		}
+		else
+		{
+			snprintf(inspectorObject.key, sizeof(inspectorObject.key), "building:%d:%d:%d:%d:%d:%d",
+				GameLevel, cop->type, cop->pos.vx, cop->pos.vy, cop->pos.vz, cop->yang);
+		}
 		const char* inspectorName = GetModelNameByIndex(cop->type);
 		snprintf(inspectorObject.modelName, sizeof(inspectorObject.modelName), "%s", inspectorName ? inspectorName : "Unnamed model");
 		inspectorObject.modelIndex = cop->type;

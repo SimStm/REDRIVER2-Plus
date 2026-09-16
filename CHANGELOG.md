@@ -10,6 +10,29 @@ where release policy permits it.
 
 ### Added
 
+- A resident procedural playground scene (roadmap item 13, milestones P1-P5)
+  that reuses the existing renderer and original vehicle simulation: a
+  generated flat drivable surface, collidable box obstacles, disabled donor
+  traffic/police/missions and camera events, a car reset control, safe return
+  to the frontend, a `-playground` developer launch path, and a **Playground**
+  choice on the Take a Ride city screen that starts the same launcher from every
+  build. A loaded original level only supplies car, texture and sound resources;
+  its world geometry, roads and collisions are replaced. The stable fixture
+  identity is `playground.flatpad.v1`.
+- A source-aware asset catalog (roadmap item 04, complete): a game-owned,
+  allocation-free module that separates stable resource identity (models,
+  textures, cars, palettes) from runtime instances, keeps the exact
+  `(texture, texturePage, textureIndex)` identity the mod manifest matches on,
+  records explicit `UNKNOWN`/`DECLARED`/`VERIFIED` provenance, links models to
+  textures and LODs many-to-many, and invalidates retained handles when a
+  runtime slot is reused, streamed away, or the level changes. It is populated
+  from the level loaders (models with names and LOD links, texture sets, car
+  resident slots, model material links), re-populated as regions stream, and
+  includes the playground's generated assets; the building/tile/car inspector
+  keys carry catalog source identity and the city variant. The 3D Debug tab
+  shows catalog context, counts vs capacity, the fixed footprint, and the
+  selected building/tile's stable id, provenance and source-material list
+  (including hidden faces). Covered by the standalone `AssetCatalogTests`.
 - Linked playground and renderer-modernization roadmaps, with a validated
   minimum playground preceding modern scene experiments and original-city
   regression checks retained alongside the dedicated test environment.
@@ -76,6 +99,12 @@ where release policy permits it.
 
 ### Changed
 
+- Reorganised the developer panel: modding information (override toggle, mod
+  diagnostics, mods root, reload, enabled mod order, declared override list)
+  moved from the Graphics and 3D Debug tabs into a dedicated **Mods** tab, and
+  the **3D Debug** tab is now render-debug only (picking, highlight, selection
+  details, asset-catalog diagnostics, and model/texture export plus the mod
+  reload action). The **Graphics** tab keeps renderer controls.
 - Fully opaque texture overrides now generate mipmaps and use mipmap
   minification, which reduces the minification shimmer reported for large
   upscales such as `GRASS01C`. Overrides that contain transparency keep plain

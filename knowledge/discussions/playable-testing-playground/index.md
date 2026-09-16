@@ -1,7 +1,7 @@
 ---
 type: Discussion
 title: A playable testing playground separate from the original cities
-status: roadmap-adopted
+status: implemented
 created: 2026-09-15
 updated: 2026-09-15
 tags: [discussions, world, levels, procedural, testing, frontend]
@@ -251,6 +251,20 @@ and frontend modifications. Concluded all proposed entry points are feasible
 after implementing a dedicated scene path; current code is not a generic level
 registry. Recommended a small procedural resident scene with explicit physical
 surfaces, followed by declarative authoring and normal-menu integration.
+
+### 2026-09-15 - Playground implemented and roadmap completed
+
+The planned P1-P5 were implemented in `src_rebuild/Game/C/playground.c` and the
+frontend entry; the roadmap record moved to `done/`. Runtime evidence on Windows
+`Release_dev` x64: `playground.flatpad.v1` builds 367 generated objects with a
+flat concrete surface, the original car, six collidable boxes, disabled donor
+traffic/missions/events and a spooler guard; Take a Ride exposes the same
+launcher. See
+[`knowledge/product/playable-testing-playground.md`](../../product/playable-testing-playground.md)
+and
+[`knowledge/rules/world-scene-generation.md`](../../rules/world-scene-generation.md).
+Reusing real city meshes for streets and measured GPU profiling remain
+follow-up candidates, not part of the completed scope.
 
 ### 2026-09-15 - Playground-first roadmap adopted
 

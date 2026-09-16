@@ -9,6 +9,7 @@
 
 #ifndef PSX
 #include "../utils/HdTextureOverrides.h"
+#include "assetcatalog.h"
 #endif
 
 SXYPAIR tpagepos[20] =
@@ -179,10 +180,60 @@ static void RegisterHdTextureOverridesForPage(int tpage2send)
 	for (int i = 0; i < tpage_texamts[tpage2send]; ++i)
 	{
 		const TEXINF* texture = &tpage_ids[tpage2send][i];
-		HdTextureOverrides_RegisterTexture(tpage2send, i,
-			texturename_buffer + texture->nameoffset,
+		const char* name = texturename_buffer + texture->nameoffset;
+		HdTextureOverrides_RegisterTexture(tpage2send, i, name,
 			texture_pages[tpage2send], texture_cluts[tpage2send][i],
 			texture->x, texture->y, texture->width, texture->height);
+
+		// The catalog keys textures on the same (name, page, index) triple the
+		// mod manifest matches, so shared textures stay a single record.
+		AssetCatalog_RegisterTexture(name, tpage2send, i, tpage2send, ASSET_CATALOG_SOURCE_DECLARED);
+	}
+}
+
+// Walks a model's polygons and links every textured material to the catalog.
+// This enumerates hidden faces and separate pieces, not just the drawn ones.
+void RegisterCatalogModelTextures(MODEL* model, int modelRecord)
+{
+	if (model == NULL || model->num_polys <= 0)
+		return;
+
+	unsigned char* polylist = (unsigned char*)GET_MODEL_DATA(char, model, poly_block);
+
+	for (int i = 0; i < model->num_polys; i++)
+	{
+		const int ptype = *polylist & 0x1F;
+
+		switch (ptype)
+		{
+			case 4:
+			case 5:
+			case 6:
+			case 7:
+			case 20:
+			case 21:
+			case 22:
+			case 23:
+			{
+				const int textureSet = polylist[1];
+				const int textureId = polylist[2];
+
+				if (textureSet < tpage_amount && textureId < tpage_texamts[textureSet])
+				{
+					const char* name = texturename_buffer + tpage_ids[textureSet][textureId].nameoffset;
+					int textureRecord = AssetCatalog_RegisterTexture(name, textureSet, textureId,
+						textureSet, ASSET_CATALOG_SOURCE_DECLARED);
+
+					if (textureRecord >= 0)
+						AssetCatalog_AddModelTexture(modelRecord, textureRecord);
+				}
+				break;
+			}
+			default:
+				break;
+		}
+
+		polylist += PolySizes[*polylist & 0x1F];
 	}
 }
 

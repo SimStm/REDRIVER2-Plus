@@ -17,6 +17,7 @@
 #include "cutrecorder.h"
 
 #include "Frontend/FEmain.h"
+#include "playground.h"
 
 struct MISSION_STEP
 {
@@ -321,6 +322,10 @@ void ReInitFrontend(int returnToMain)
 
 	wantedWeather = -1;
 	wantedTimeOfDay = -1;
+
+	// Leaving a session releases the generated playground world. Its D_MALLOC
+	// arena is reclaimed by the next NewLevel allocation reset.
+	Playground_Shutdown();
 
 	gHaveStoredData = 0;
 

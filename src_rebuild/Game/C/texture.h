@@ -53,6 +53,9 @@ extern void ReloadIcons(); // 0x00081118
  // [A] - loads TIM files as level textures
 void LoadTPageFromTIMs(int tpage2send);
 void LoadPermanentTPagesFromTIM();
+
+// Asset catalog adapter: links a model's textured materials to its record.
+void RegisterCatalogModelTextures(MODEL* model, int modelRecord);
 #endif
 
 #endif
