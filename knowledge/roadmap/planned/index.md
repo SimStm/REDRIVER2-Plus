@@ -68,6 +68,11 @@ intentional gaps at 01, 02 and 03.
 
 ## Current-branch merge boundary
 
+> Order 00 was completed on 2026-09-15 (PR
+> [#2](https://github.com/SimStm/REDRIVER2-Plus/pull/2), merge `5f1da8a2`).
+> The guidance below is the historical merge boundary for the mod-system
+> foundation; the next planned order is 04.
+
 Start with order 00 as an audit, not a requirement to complete orders 01–12.
 Transparent-PNG rendering is an existing correctness defect and should be
 fixed before merging the current texture-override foundation. Classify the

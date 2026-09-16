@@ -8,8 +8,9 @@ tags: [okf, mods, textures, rendering, release]
 # Foundation PR description
 
 Base: `master` at upstream `8.0` (`b2d88574`). Head:
-`codex/modular-mod-system`. This is the text to use when opening the PR; a PR
-is not opened yet.
+`codex/modular-mod-system`. This text was used for
+[PR #2](https://github.com/SimStm/REDRIVER2-Plus/pull/2), which was merged as
+`5f1da8a2`.
 
 ## Title
 
