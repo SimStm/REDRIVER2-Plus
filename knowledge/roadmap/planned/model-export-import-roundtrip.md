@@ -26,7 +26,7 @@ Do not promise OBJ preserves skeletons or every PSX material semantic. Do not si
 
 ## Dependencies and risks
 
-Order 09 after [04](../done/asset-catalog-identity.md), [05](object-texture-batch-export.md), [06](../done/inspector-selection-coverage.md) and the format decision in [08](modding-toolchain-integration.md). Export-only milestones may precede import.
+Order 09 after [04](../done/asset-catalog-identity.md), [05](../done/object-texture-batch-export.md), [06](../done/inspector-selection-coverage.md) and the format decision in [08](modding-toolchain-integration.md). Export-only milestones may precede import.
 
 ## Suggested execution order
 

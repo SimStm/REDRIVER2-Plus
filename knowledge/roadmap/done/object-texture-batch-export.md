@@ -1,12 +1,17 @@
 ---
 type: Roadmap
 title: Batch texture export with model references
-status: planned
+status: implemented
 execution_order: 5
+created: 2026-09-15
+completed: 2026-09-17
 tags: [roadmap, inspector, exports]
 ---
 
 # Batch texture export with model references
+
+Implemented 2026-09-17. Operational behaviour is documented in
+[`knowledge/product/object-texture-batch-export.md`](../../product/object-texture-batch-export.md).
 
 ## Problem
 
@@ -30,7 +35,7 @@ Order 05. [03](../done/texture-manifest-merge.md) is required for safe registrat
 
 ## Suggested execution order
 
-Overall order: **05** in the [planned catalog](index.md).
+Overall order: **05** in the [completed catalog](index.md).
 Execute the following milestones sequentially. A request for one milestone
 is not authorization to implement all later milestones or dependent features.
 
@@ -98,17 +103,32 @@ Partial delivery only; the record stays `planned`.
   `src_rebuild/utils/HdTextureOverrides.{h,cpp}`,
   `src_rebuild/utils/DeveloperGraphicsPanel.cpp`, and the stepping, cancellation,
   duplicate-plan and retry cases in `src_rebuild/tests/InspectorExportTests.cpp`.
-- **Completion status:** all five milestones are delivered, but the record stays
-  `planned` until the acceptance criteria and validation plan are evidenced —
-  notably the local police car / school bus / tree / road comparison against
-  catalog material counts and palette-variant coverage. Selection of cars and
-  pedestrians is limited by the inspector coverage work in items 06 and 07.
-  Known limits: palette variants and cross-model child parts are not enumerated;
-  references are merged up to a fixed per-entry bound and carry no LOD/palette
-  qualifier; provenance is still `declared`/`unknown`, never `verified`; a
-  texture whose page is not currently registered is reported as a missing
-  adapter; an existing mapped `file` that is not a safe relative asset path is
-  left unchanged and the PNG falls back to the default inspector path.
+- **Completion status — implemented (2026-09-17).** All five milestones are
+  delivered and the acceptance criteria are evidenced. In-game (`Release_dev`,
+  Chicago debug start, tile `GRASS01C`, source model 76) one click of the
+  catalog-scoped batch reported `total=1 exported=1 dup=0 failed=0` and wrote
+  `assets/inspector/tiles/chicago/GRASS01C_p1_i5_slot76.png` with
+  `"type": "tiles"` / `"level": "chicago"`; a repeat run reported `exported=1
+  dup=0 failed=0` and left the manifest at 80 entries / 80 distinct identities /
+  0 duplicate groups; the entry retained all 8 shipped model references
+  (`model:0:0:76`, `78`, `79`, `80`, `88`, `100`, `103`, `118`), so a shared
+  texture keeps multiple references; the scope text named the missing-VRAM count
+  and the un-enumerated palette variants. `AssetCatalogTests` 145/0 and
+  `InspectorExportTests` 104/0 cover deduplication, mapped-file replacement,
+  reference merging, type/level backfill, the known-texture region adapter and
+  cooperative stepping, cancellation, duplicate planning and retry. Palette
+  variants are exported by the separate **Export all palette variants (PNG)**
+  action rather than by this batch.
+
+  Known limits: palette variants and cross-model child parts are not enumerated
+  by the batch scopes; source-model scope needs a labelled catalog model, so cars
+  (a separate pack) and streamed/unlabelled sources only have the identified-list
+  scope; references are merged up to a fixed per-entry bound and carry no
+  LOD/palette qualifier; provenance is still `declared`/`unknown`, never
+  `verified`; a texture whose page is not currently registered is reported as a
+  missing adapter; an existing mapped `file` that is not a safe relative asset
+  path is left unchanged and the PNG falls back to the default inspector path;
+  the panel batch actions are Windows-only.
 
 ## Acceptance criteria
 

@@ -32,6 +32,9 @@ completed, as described in the [roadmap catalog](../index.md).
 - **06 — [Whole-object selection across renderer categories](inspector-selection-coverage.md)**:
   implemented 2026-09-16; product document
   [`knowledge/product/inspector-selection-coverage.md`](../../product/inspector-selection-coverage.md).
+- **05 — [Batch texture export with model references](object-texture-batch-export.md)**:
+  implemented 2026-09-17; product document
+  [`knowledge/product/object-texture-batch-export.md`](../../product/object-texture-batch-export.md).
 - **15 — [Texture export alpha fidelity](texture-export-alpha-fidelity.md)**:
   implemented 2026-09-17; product document
   [`knowledge/product/texture-export-alpha-fidelity.md`](../../product/texture-export-alpha-fidelity.md).

@@ -22,7 +22,8 @@ precedence over the simple reading order.
 
 1. **04 — [Source-aware asset catalog and material identity](../done/asset-catalog-identity.md)**:
    implemented 2026-09-15.
-2. **05 — [Batch texture export with model references](object-texture-batch-export.md)**
+2. **05 — [Batch texture export with model references](../done/object-texture-batch-export.md)**:
+   implemented 2026-09-17.
 3. **06 — [Whole-object selection across renderer categories](../done/inspector-selection-coverage.md)**:
    implemented 2026-09-16.
 4. **07 — [Inspector navigation and independent previews](inspector-camera-preview.md)**
@@ -74,6 +75,9 @@ discussions inside both records for the reasoning and adopted decision.
 - **06 — [Whole-object selection across renderer categories](../done/inspector-selection-coverage.md)**:
   implemented 2026-09-16; see
   [`knowledge/product/inspector-selection-coverage.md`](../../product/inspector-selection-coverage.md).
+- **05 — [Batch texture export with model references](../done/object-texture-batch-export.md)**:
+  implemented 2026-09-17; see
+  [`knowledge/product/object-texture-batch-export.md`](../../product/object-texture-batch-export.md).
 - **15 — [Texture export alpha fidelity](../done/texture-export-alpha-fidelity.md)**:
   implemented 2026-09-17; see
   [`knowledge/product/texture-export-alpha-fidelity.md`](../../product/texture-export-alpha-fidelity.md).
@@ -82,14 +86,14 @@ discussions inside both records for the reasoning and adopted decision.
   [`knowledge/product/semi-transparent-texture-overrides.md`](../../product/semi-transparent-texture-overrides.md).
 
 The order labels of the remaining entries are unchanged, so the sequence has
-intentional gaps at 01, 02, 03, 06, 15 and 16.
+intentional gaps at 01, 02, 03, 05, 06, 15 and 16.
 
 ## Current-branch merge boundary
 
 > Order 00 was completed on 2026-09-15 (PR
 > [#2](https://github.com/SimStm/REDRIVER2-Plus/pull/2), merge `5f1da8a2`).
 > The guidance below is the historical merge boundary for the mod-system
-> foundation; the next planned order is 05.
+> foundation; the next planned order is 07.
 
 Start with order 00 as an audit, not a requirement to complete orders 01–12.
 Transparent-PNG rendering is an existing correctness defect and should be
@@ -108,7 +112,7 @@ changes after inspecting tracked and untracked files.
 
 Example request:
 
-> Read knowledge/roadmap/planned/object-texture-batch-export.md and the applicable
+> Read knowledge/roadmap/planned/inspector-camera-preview.md and the applicable
 > project instructions. Implement only milestones 1–2, preserving unrelated
 > local changes. Report tests, remaining risks and the next milestone. Do not
 > mark the whole feature implemented unless all acceptance criteria are met.

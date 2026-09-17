@@ -81,20 +81,29 @@ both and keeps item 05 `planned`.
   and are not enumerated; hidden faces within the listed models are included.
 - A catalog material whose page is not currently registered is reported as a
   missing adapter rather than exported.
-- All five milestones are delivered, but the roadmap record stays `planned` until
-  the acceptance evidence is complete: a local police car / school bus / tree /
-  road count comparison and palette-variant coverage, both partly gated by the
-  inspector selection work in items 06 and 07.
+- The record moved to `done/` on 2026-09-17 after the acceptance evidence: an
+  in-game Chicago batch on tile `GRASS01C` exported 1/1 with 0 duplicates, a
+  repeat added no duplicate identity, and the shared entry kept its 8 model
+  references. Palette variants are exported by the separate palette-variant
+  action, not by the batch.
 - References are merged up to a fixed per-entry bound, carry no LOD/palette
   qualifier, and provenance is still `declared`/`unknown`, never `verified`.
 - An existing mapped `file` that is not a safe relative asset path is left
   unchanged and the PNG falls back to the default inspector path.
-- The panel wiring is validated by build only; the catalog and adapter logic is
-  covered by the standalone suites.
+- The panel wiring was validated in-game on 2026-09-17; the catalog and adapter
+  logic is covered by the standalone suites.
 
 ## Validation
 
-- `InspectorExportTests.exe` exits 0 with 68 checks and 0 failures.
-- `AssetCatalogTests.exe` exits 0 with 87 checks and 0 failures.
+- In-game `Release_dev` (2026-09-17, Chicago debug start, tile `GRASS01C`, source
+  model 76): the catalog-scoped batch reported `total=1 exported=1 dup=0 failed=0`
+  and wrote `assets/inspector/tiles/chicago/GRASS01C_p1_i5_slot76.png`; a repeat
+  run reported `exported=1 dup=0 failed=0` and left the manifest at 80 entries /
+  80 distinct identities / 0 duplicate groups, with the entry keeping its 8 model
+  references.
+- `InspectorExportTests.exe` exits 0 with 104 checks and 0 failures (68 at the
+  2026-09-16 delivery; later work added cases).
+- `AssetCatalogTests.exe` exits 0 with 145 checks and 0 failures (87 at the
+  2026-09-16 delivery).
 - `Release_dev` x64 solution build: 0 failed projects.
 - `git diff --check` passed for the source and documentation changes.
