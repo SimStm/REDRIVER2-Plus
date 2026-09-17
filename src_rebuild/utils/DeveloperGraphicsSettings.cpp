@@ -113,6 +113,7 @@ DeveloperGraphicsSettings DeveloperGraphicsSettings_ReadRuntime()
 	settings.hdTextureOverrides = hdTextures.enabled;
 	settings.organizeTextureExports = HdTextureOverrides_IsOrganizedExportEnabled();
 	settings.exportBaseColours = HdTextureOverrides_IsBaseColourExportEnabled();
+	settings.overrideProportionalAlpha = g_cfg_overrideProportionalAlpha != 0;
 	return settings;
 }
 
@@ -129,6 +130,7 @@ void DeveloperGraphicsSettings_Apply(const DeveloperGraphicsSettings& settings)
 	HdTextureOverrides_SetEnabled(settings.hdTextureOverrides);
 	HdTextureOverrides_SetOrganizedExport(settings.organizeTextureExports);
 	HdTextureOverrides_SetBaseColourExport(settings.exportBaseColours);
+	g_cfg_overrideProportionalAlpha = settings.overrideProportionalAlpha != 0;
 }
 
 bool DeveloperGraphicsSettings_LoadAndApply()
@@ -157,6 +159,7 @@ bool DeveloperGraphicsSettings_LoadAndApply()
 		else if (!strcmp(key, "hdTextureOverrides")) settings.hdTextureOverrides = value;
 		else if (!strcmp(key, "organizeTextureExports")) settings.organizeTextureExports = value;
 		else if (!strcmp(key, "exportBaseColours")) settings.exportBaseColours = value;
+		else if (!strcmp(key, "overrideProportionalAlpha")) settings.overrideProportionalAlpha = value;
 	}
 
 	const bool readOk = ferror(file) == 0;
@@ -176,7 +179,7 @@ bool DeveloperGraphicsSettings_SaveRuntime()
 	const int written = fprintf(file,
 		"# REDRIVER2 developer graphics settings\n"
 		"# This file is managed separately and never modifies config.ini.\n"
-		"schemaVersion=4\n"
+		"schemaVersion=5\n"
 		"bilinearFiltering=%d\n"
 		"pgxpTextureMapping=%d\n"
 		"pgxpZBuffer=%d\n"
@@ -186,10 +189,12 @@ bool DeveloperGraphicsSettings_SaveRuntime()
 		"showLegacyStats=%d\n"
 		"hdTextureOverrides=%d\n"
 		"organizeTextureExports=%d\n"
-		"exportBaseColours=%d\n",
+		"exportBaseColours=%d\n"
+		"overrideProportionalAlpha=%d\n",
 		settings.bilinearFiltering, settings.pgxpTextureMapping, settings.pgxpZBuffer,
 		settings.vsync, settings.drawDistance, settings.fieldOfView, settings.showLegacyStats,
-		settings.hdTextureOverrides, settings.organizeTextureExports, settings.exportBaseColours);
+		settings.hdTextureOverrides, settings.organizeTextureExports, settings.exportBaseColours,
+		settings.overrideProportionalAlpha);
 
 	bool writeOk = written > 0 && FlushAndSync(file);
 	const int closeResult = fclose(file);
@@ -213,5 +218,6 @@ void DeveloperGraphicsSettings_RestoreDefaults()
 	defaults.hdTextureOverrides = 1;
 	defaults.organizeTextureExports = 0;
 	defaults.exportBaseColours = 1;
+	defaults.overrideProportionalAlpha = 0;
 	DeveloperGraphicsSettings_Apply(defaults);
 }

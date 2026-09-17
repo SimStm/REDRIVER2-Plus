@@ -1,5 +1,5 @@
 diff --git a/include/PsyX/PsyX_public.h b/include/PsyX/PsyX_public.h
-index 91b0297..4bb7633 100644
+index 91b0297..99e8d5c 100644
 --- a/include/PsyX/PsyX_public.h
 +++ b/include/PsyX/PsyX_public.h
 @@ -1,8 +1,13 @@
@@ -16,7 +16,7 @@ index 91b0297..4bb7633 100644
  
  typedef struct
  {
-@@ -39,6 +44,77 @@ typedef struct
+@@ -39,6 +44,78 @@ typedef struct
  typedef void(*GameDebugKeysHandlerFunc)(int nKey, char down);
  typedef void(*GameDebugMouseHandlerFunc)(int x, int y, int dx, int dy);
  typedef void(*GameOnTextInputHandler)(const char* buf);
@@ -72,6 +72,7 @@ index 91b0297..4bb7633 100644
 +	int textureOverridden;
 +	int cutoutSampled; /* override cutout coverage was consulted for this pick */
 +	int wholeObject; /* the key is the parent of the picked component, not the part */
++	int semiTransparent; /* the picked primitive is drawn with PSX semi-transparency */
 +	unsigned short tpage;
 +	unsigned short clut;
 +	unsigned short u[3];
@@ -94,7 +95,7 @@ index 91b0297..4bb7633 100644
  
  //------------------------------------------------------------------------
  
-@@ -53,6 +129,7 @@ extern int							g_cfg_controllerToSlotMapping[2];
+@@ -53,12 +130,16 @@ extern int							g_cfg_controllerToSlotMapping[2];
  
  /* Game inputs */
  extern GameOnTextInputHandler		g_cfg_gameOnTextInput;
@@ -102,7 +103,16 @@ index 91b0297..4bb7633 100644
  
  /* Graphics configuration */
  extern int							g_cfg_swapInterval;
-@@ -79,6 +156,90 @@ extern void PsyX_SetCursorPosition(int x, int y);
+ extern int							g_cfg_pgxpZBuffer;
+ extern int							g_cfg_bilinearFiltering;
+ extern int							g_cfg_pgxpTextureCorrection;
++/* Opt-in: honour override PNG alpha proportionally on BM_AVERAGE draws.
++   Off keeps the binary 0.5 cutout that existing mods were authored against. */
++extern int							g_cfg_overrideProportionalAlpha;
+ 
+ /* Debug inputs */
+ extern GameDebugKeysHandlerFunc		g_dbg_gameDebugKeys;
+@@ -79,6 +160,90 @@ extern void PsyX_SetCursorPosition(int x, int y);
  /* Sets mouse relative movement */
  extern void PsyX_SetCursorRelative(int enable);
  
@@ -193,7 +203,7 @@ index 91b0297..4bb7633 100644
  /* Usually called after ClearOTag/ClearOTagR */
  extern char PsyX_BeginScene(void);
  
-@@ -110,4 +271,4 @@ extern void PsyX_SetSwapInterval(int interval);
+@@ -110,4 +275,4 @@ extern void PsyX_SetSwapInterval(int interval);
  }
  #endif
  
@@ -201,7 +211,7 @@ index 91b0297..4bb7633 100644
 \ No newline at end of file
 +#endif
 diff --git a/include/PsyX/PsyX_render.h b/include/PsyX/PsyX_render.h
-index ad168c3..ea2ebdb 100644
+index ad168c3..7ab3f1c 100644
 --- a/include/PsyX/PsyX_render.h
 +++ b/include/PsyX/PsyX_render.h
 @@ -189,6 +189,7 @@ extern void			GR_UpdateVRAM();
@@ -212,29 +222,32 @@ index ad168c3..ea2ebdb 100644
  extern ShaderID		GR_Shader_Compile(const char* source, int isPsxShader);
  
  extern void			GR_SetShader(const ShaderID shader);
-@@ -205,6 +206,7 @@ extern void			GR_SetupClipMode(const RECT16* clipRect, int enable);
+@@ -205,6 +206,9 @@ extern void			GR_SetupClipMode(const RECT16* clipRect, int enable);
  extern void			GR_SetViewPort(int x, int y, int width, int height);
  extern void			GR_SetTexture(TextureID texture, TexFormat texFormat);
  extern void			GR_SetOverrideTextureSize(int width, int height);
-+extern void			GR_SetOverrideTextureCutout(int enable);
++/* Override alpha policy for the current draw: 0 = not an override, 1 = binary
++   0.5 cutout (compatibility), 2 = proportional (only alpha 0 is a hole). */
++extern void			GR_SetOverrideAlphaMode(int mode);
  extern void			GR_SetWireframe(int enable);
  
  extern void			GR_DestroyTexture(TextureID texture);
 diff --git a/src/PsyX_main.cpp b/src/PsyX_main.cpp
-index f558b40..ee8f1a0 100644
+index f558b40..6bb7720 100644
 --- a/src/PsyX_main.cpp
 +++ b/src/PsyX_main.cpp
-@@ -49,6 +49,9 @@ int							g_cfg_swapInterval = 0;
+@@ -49,6 +49,10 @@ int							g_cfg_swapInterval = 0;
  PsyXKeyboardMapping			g_cfg_keyboardMapping;
  PsyXControllerMapping		g_cfg_controllerMapping;
  GameOnTextInputHandler		g_cfg_gameOnTextInput = NULL;
 +PsyXSDLEventHandlerFunc		g_cfg_sdlEventHandler = NULL;
 +PsyXRenderOverlayHandlerFunc	g_cfg_renderOverlayHandler = NULL;
 +int							g_cfg_inputCapture = 0;
++int							g_cfg_overrideProportionalAlpha = 0;
  
  GameDebugKeysHandlerFunc	g_dbg_gameDebugKeys = NULL;
  GameDebugMouseHandlerFunc	g_dbg_gameDebugMouse = NULL;
-@@ -665,6 +668,26 @@ void PsyX_GetScreenSize(int* screenWidth, int* screenHeight)
+@@ -665,6 +669,26 @@ void PsyX_GetScreenSize(int* screenWidth, int* screenHeight)
  	SDL_GetWindowSize(g_window, screenWidth, screenHeight);
  }
  
@@ -261,7 +274,7 @@ index f558b40..ee8f1a0 100644
  void PsyX_SetCursorPosition(int x, int y)
  {
  	SDL_WarpMouseInWindow(g_window, x, y);
-@@ -688,6 +711,8 @@ void PsyX_Sys_DoPollEvent()
+@@ -688,6 +712,8 @@ void PsyX_Sys_DoPollEvent()
  	SDL_Event event;
  	while (SDL_PollEvent(&event))
  	{
@@ -270,7 +283,7 @@ index f558b40..ee8f1a0 100644
  		switch (event.type)
  		{
  			case SDL_CONTROLLERDEVICEADDED:
-@@ -713,14 +738,17 @@ void PsyX_Sys_DoPollEvent()
+@@ -713,14 +739,17 @@ void PsyX_Sys_DoPollEvent()
  				}
  				break;
  			case SDL_MOUSEMOTION:
@@ -290,7 +303,7 @@ index f558b40..ee8f1a0 100644
  				if (nKey == SDL_SCANCODE_RALT)
  				{
  					g_altKeyState = (event.type == SDL_KEYDOWN);
-@@ -757,7 +785,7 @@ void PsyX_Sys_DoPollEvent()
+@@ -757,7 +786,7 @@ void PsyX_Sys_DoPollEvent()
  			}
  			case SDL_TEXTINPUT:
  			{
@@ -299,7 +312,7 @@ index f558b40..ee8f1a0 100644
  					(g_cfg_gameOnTextInput)(event.text.text);
  				break;
  			}			
-@@ -801,6 +829,7 @@ char PsyX_BeginScene()
+@@ -801,6 +830,7 @@ char PsyX_BeginScene()
  	}
  
  	GR_BeginScene();
@@ -307,7 +320,7 @@ index f558b40..ee8f1a0 100644
  
  	if (activeDrawEnv.isbg)
  	{
-@@ -839,6 +868,9 @@ void PsyX_EndScene()
+@@ -839,6 +869,9 @@ void PsyX_EndScene()
  	
  	GR_StoreFrameBuffer(activeDispEnv.disp.x, activeDispEnv.disp.y, activeDispEnv.disp.w, activeDispEnv.disp.h);
  
@@ -317,7 +330,7 @@ index f558b40..ee8f1a0 100644
  	GR_SwapWindow();
  	
  	SDL_Delay(0);
-@@ -847,18 +879,46 @@ void PsyX_EndScene()
+@@ -847,18 +880,46 @@ void PsyX_EndScene()
  #if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__)
  void PsyX_TakeScreenshot()
  {
@@ -372,7 +385,7 @@ index f558b40..ee8f1a0 100644
  	free(pixels);
  }
 diff --git a/src/gpu/PsyX_GPU.cpp b/src/gpu/PsyX_GPU.cpp
-index 6e9e6f6..b31222f 100644
+index 6e9e6f6..4118770 100644
 --- a/src/gpu/PsyX_GPU.cpp
 +++ b/src/gpu/PsyX_GPU.cpp
 @@ -8,7 +8,10 @@
@@ -386,7 +399,7 @@ index 6e9e6f6..b31222f 100644
  
  #define GET_TPAGE_FORMAT(tpage) ((TexFormat)((tpage >> 7) & 0x3))
  #define GET_TPAGE_BLEND(tpage)  ((BlendMode)(((tpage >> 5) & 3) + 1))
-@@ -29,9 +32,126 @@ TextureID overrideTexture = 0;
+@@ -29,9 +32,141 @@ TextureID overrideTexture = 0;
  int overrideTextureWidth = 0;
  int overrideTextureHeight = 0;
  
@@ -426,7 +439,8 @@ index 6e9e6f6..b31222f 100644
 +	TextureID textureId;
 +	int width;
 +	int height;
-+	unsigned char* bits;
++	unsigned char* bits;		// 1 = alpha >= 128 (binary cutout coverage)
++	unsigned char* coverage;	// 1 = alpha > 0 (proportional-mode coverage)
 +};
 +
 +CutoutMask g_cutoutMasks[MAX_CUTOUT_MASKS];
@@ -443,14 +457,23 @@ index 6e9e6f6..b31222f 100644
 +	const int texels = width * height;
 +	const int byteCount = (texels + 7) / 8;
 +	unsigned char* bits = (unsigned char*)malloc(byteCount);
-+	if (!bits)
++	unsigned char* coverage = (unsigned char*)malloc(byteCount);
++	if (!bits || !coverage)
++	{
++		free(bits);
++		free(coverage);
 +		return;
++	}
 +
 +	memset(bits, 0, byteCount);
++	memset(coverage, 0, byteCount);
 +	for (int i = 0; i < texels; ++i)
 +	{
-+		if (rgbaPixels[i * 4 + 3] >= 128)
++		const unsigned char alpha = rgbaPixels[i * 4 + 3];
++		if (alpha >= 128)
 +			bits[i >> 3] |= (unsigned char)(1 << (i & 7));
++		if (alpha > 0)
++			coverage[i >> 3] |= (unsigned char)(1 << (i & 7));
 +	}
 +
 +	CutoutMask& mask = g_cutoutMasks[g_cutoutMaskCount++];
@@ -458,6 +481,7 @@ index 6e9e6f6..b31222f 100644
 +	mask.width = width;
 +	mask.height = height;
 +	mask.bits = bits;
++	mask.coverage = coverage;
 +}
 +
 +void ReleaseCutoutMask(TextureID textureId)
@@ -468,6 +492,7 @@ index 6e9e6f6..b31222f 100644
 +			continue;
 +
 +		free(g_cutoutMasks[i].bits);
++		free(g_cutoutMasks[i].coverage);
 +		memmove(&g_cutoutMasks[i], &g_cutoutMasks[i + 1], sizeof(CutoutMask) * (g_cutoutMaskCount - i - 1));
 +		--g_cutoutMaskCount;
 +		return;
@@ -485,9 +510,11 @@ index 6e9e6f6..b31222f 100644
 +}
 +
 +// Normalised override UV in [0,1], matching the 32-bit RGBA shader's
-+// tc = v_texcoord.xy / 255 over the source region. Returns 1 (opaque),
-+// 0 (cut out) or -1 when no mask is retained for the texture.
-+int SampleCutoutMask(TextureID textureId, float u, float v)
++// tc = v_texcoord.xy / 255 over the source region. Returns 1 (drawable),
++// 0 (cut out) or -1 when no mask is retained for the texture. In binary cutout
++// mode a texel below half alpha is a hole; in proportional mode only a fully
++// transparent texel is a hole, mirroring overrideAlphaMode in the shader.
++int SampleCutoutMask(TextureID textureId, float u, float v, int proportional)
 +{
 +	for (int i = 0; i < g_cutoutMaskCount; ++i)
 +	{
@@ -503,7 +530,8 @@ index 6e9e6f6..b31222f 100644
 +		if (y >= mask.height) y = mask.height - 1;
 +
 +		const int index = y * mask.width + x;
-+		return (mask.bits[index >> 3] >> (index & 7)) & 1;
++		const unsigned char* source = proportional ? mask.coverage : mask.bits;
++		return (source[index >> 3] >> (index & 7)) & 1;
 +	}
 +
 +	return -1;
@@ -513,7 +541,7 @@ index 6e9e6f6..b31222f 100644
  struct GPUDrawSplit
  {
  	DRAWENV			drawenv;
-@@ -47,6 +167,12 @@ struct GPUDrawSplit
+@@ -47,6 +182,12 @@ struct GPUDrawSplit
  	u_short			startVertex;
  	u_short			numVerts;
  
@@ -526,7 +554,7 @@ index 6e9e6f6..b31222f 100644
  	const char*		debugText;
  };
  
-@@ -57,10 +183,344 @@ GPUDrawSplit g_splits[MAX_DRAW_SPLITS];
+@@ -57,10 +198,344 @@ GPUDrawSplit g_splits[MAX_DRAW_SPLITS];
  
  int g_vertexIndex = 0;
  int g_splitIndex = 0;
@@ -871,7 +899,7 @@ index 6e9e6f6..b31222f 100644
  	g_vertexIndex = 0;
  	g_splitIndex = 0;
  	g_splits[0].texFormat = (TexFormat)0xFFFF;
-@@ -332,6 +792,8 @@ void MakeTexcoordQuad(GrVertex* vertex, unsigned char* uv0, unsigned char* uv1,
+@@ -332,6 +807,8 @@ void MakeTexcoordQuad(GrVertex* vertex, unsigned char* uv0, unsigned char* uv1,
  	vertex[3].dither = dither;
  	vertex[3].page = page;
  	vertex[3].clut = clut;
@@ -880,7 +908,7 @@ index 6e9e6f6..b31222f 100644
  	/*
  	if (g_cfg_bilinearFiltering)
  	{
-@@ -377,6 +839,8 @@ void MakeTexcoordTriangle(GrVertex* vertex, unsigned char* uv0, unsigned char* u
+@@ -377,6 +854,8 @@ void MakeTexcoordTriangle(GrVertex* vertex, unsigned char* uv0, unsigned char* u
  	vertex[2].dither = dither;
  	vertex[2].page = page;
  	vertex[2].clut = clut;
@@ -889,7 +917,7 @@ index 6e9e6f6..b31222f 100644
  	/*
  	if (g_cfg_bilinearFiltering)
  	{
-@@ -447,6 +911,8 @@ void MakeTexcoordRect(GrVertex* vertex, unsigned char* uv, short page, short clu
+@@ -447,6 +926,8 @@ void MakeTexcoordRect(GrVertex* vertex, unsigned char* uv, short page, short clu
  		vertex[3].tcx = -1;
  		vertex[3].tcy = -1;
  	}
@@ -898,7 +926,7 @@ index 6e9e6f6..b31222f 100644
  }
  
  void MakeTexcoordLineZero(GrVertex* vertex, unsigned char dither)
-@@ -678,11 +1144,11 @@ static void AddSplit(bool semiTrans, bool textured)
+@@ -678,11 +1159,11 @@ static void AddSplit(bool semiTrans, bool textured)
  	TexFormat texFormat = GET_TPAGE_FORMAT(tpage);
  	TextureID textureId = textured ? g_vramTexture : g_whiteTexture;
  
@@ -912,7 +940,7 @@ index 6e9e6f6..b31222f 100644
  	}
  
  	// FIXME: compare drawing environment too?
-@@ -695,6 +1161,11 @@ static void AddSplit(bool semiTrans, bool textured)
+@@ -695,6 +1176,11 @@ static void AddSplit(bool semiTrans, bool textured)
  		curSplit.drawenv.clip.w == activeDrawEnv.clip.w &&
  		curSplit.drawenv.clip.h == activeDrawEnv.clip.h &&
  		curSplit.drawenv.dfe == activeDrawEnv.dfe &&
@@ -924,7 +952,7 @@ index 6e9e6f6..b31222f 100644
  		curSplit.debugText == currentSplitDebugText)
  	{
  		return;
-@@ -717,8 +1188,13 @@ static void AddSplit(bool semiTrans, bool textured)
+@@ -717,8 +1203,13 @@ static void AddSplit(bool semiTrans, bool textured)
  	split.dispenv = activeDispEnv;
  	split.debugText = currentSplitDebugText;
  
@@ -940,18 +968,28 @@ index 6e9e6f6..b31222f 100644
  
  	split.startVertex = g_vertexIndex;
  	split.numVerts = 0;
-@@ -734,7 +1210,10 @@ void DrawSplit(const GPUDrawSplit& split)
+@@ -734,7 +1225,20 @@ void DrawSplit(const GPUDrawSplit& split)
  	GR_SetTexture(split.textureId, split.texFormat);
  
  	if (split.texFormat == TF_32_BIT_RGBA)
 +	{
++		// 0 = not an override, 1 = binary 0.5 cutout (compatibility default),
++		// 2 = proportional when the opt-in flag is on and this draw blends.
++		// Additive/subtractive and opaque draws keep the cutout so their
++		// colour-driven behaviour and punch-through holes are unchanged.
++		int alphaMode = 0;
++		if (split.textureOverridden)
++		{
++			const bool proportional = g_cfg_overrideProportionalAlpha != 0 && split.blendMode == BM_AVERAGE;
++			alphaMode = proportional ? 2 : 1;
++		}
  		GR_SetOverrideTextureSize(split.drawenv.tw.w, split.drawenv.tw.h);
-+		GR_SetOverrideTextureCutout(split.textureOverridden);
++		GR_SetOverrideAlphaMode(alphaMode);
 +	}
  
  	const bool drawOnScreen = split.drawenv.dfe;
  	GR_SetupClipMode(&split.drawenv.clip, drawOnScreen);
-@@ -748,8 +1227,672 @@ void DrawSplit(const GPUDrawSplit& split)
+@@ -748,8 +1252,682 @@ void DrawSplit(const GPUDrawSplit& split)
  		GR_PopDebugLabel();
  }
  
@@ -964,6 +1002,13 @@ index 6e9e6f6..b31222f 100644
 +			return &split;
 +	}
 +	return nullptr;
++}
++
++// Mirrors DrawSplit's overrideAlphaMode decision for the CPU picker: with the
++// opt-in flag on, a blending override only treats alpha 0 as a hole.
++static int OverrideProportionalSampling(const GPUDrawSplit* split)
++{
++	return (g_cfg_overrideProportionalAlpha != 0 && split && split->blendMode == BM_AVERAGE) ? 1 : 0;
 +}
 +
 +static bool ProjectInspectorTriangle(int vertex, const GPUDrawSplit& split, PsyXInspectorTriangle& triangle)
@@ -1086,7 +1131,7 @@ index 6e9e6f6..b31222f 100644
 +			const float sampleV = (sampleBarycentric[s][0] * vertices[0].v + sampleBarycentric[s][1] * vertices[1].v +
 +				sampleBarycentric[s][2] * vertices[2].v) / 255.0f;
 +
-+			if (SampleCutoutMask(split->textureId, sampleU, sampleV) == 0)
++			if (SampleCutoutMask(split->textureId, sampleU, sampleV, OverrideProportionalSampling(split)) == 0)
 +				cutOutIndex = s;
 +		}
 +
@@ -1239,7 +1284,7 @@ index 6e9e6f6..b31222f 100644
 +
 +				const float cutoutU = (w0 * vertices[0].u + w1 * vertices[1].u + w2 * vertices[2].u) / 255.0f;
 +				const float cutoutV = (w0 * vertices[0].v + w1 * vertices[1].v + w2 * vertices[2].v) / 255.0f;
-+				const int coverage = SampleCutoutMask(split->textureId, cutoutU, cutoutV);
++				const int coverage = SampleCutoutMask(split->textureId, cutoutU, cutoutV, OverrideProportionalSampling(split));
 +				if (coverage >= 0)
 +				{
 +					cutoutSampled = 1;
@@ -1331,7 +1376,7 @@ index 6e9e6f6..b31222f 100644
 +			const float sampleV = (sampleBarycentric[s][0] * vertices[0].v + sampleBarycentric[s][1] * vertices[1].v +
 +				sampleBarycentric[s][2] * vertices[2].v) / 255.0f;
 +
-+			if (SampleCutoutMask(split->textureId, sampleU, sampleV) == 0)
++			if (SampleCutoutMask(split->textureId, sampleU, sampleV, OverrideProportionalSampling(split)) == 0)
 +				cutOutIndex = s;
 +		}
 +
@@ -1417,6 +1462,9 @@ index 6e9e6f6..b31222f 100644
 +	selection.valid = 1;
 +	selection.cutoutSampled = selectedCutoutSampled;
 +	selection.primitiveIndex = selectedVertex / 3;
++	// The PSX semi-transparency flag lives in the primitive command, not in the
++	// tpage, so record the split's blend mode for export-time alpha decisions.
++	selection.semiTransparent = (split && split->blendMode != BM_NONE) ? 1 : 0;
 +	selection.tpage = (unsigned short)vertices[0].page;
 +	selection.clut = (unsigned short)vertices[0].clut;
 +	selection.textured = selection.tpage != 0 || selection.clut != 0;
@@ -1624,7 +1672,7 @@ index 6e9e6f6..b31222f 100644
  //
  // Draws all polygons after AggregatePTAG
  //
-@@ -785,11 +1928,17 @@ void DrawAllSplits()
+@@ -785,11 +1963,17 @@ void DrawAllSplits()
  #endif // _DEBUG
  
  	// next code ideally should be called before EndScene
@@ -1642,7 +1690,7 @@ index 6e9e6f6..b31222f 100644
  	ClearSplits();
  }
  
-@@ -1118,6 +2267,7 @@ static int ProcessFlatPoly(P_TAG* polyTag)
+@@ -1118,6 +2302,7 @@ static int ProcessFlatPoly(P_TAG* polyTag)
  		// It is an official hack from SCE devs to not use DR_TPAGE and instead use null polygon
  		if (!IsNull(poly))
  		{
@@ -1650,7 +1698,7 @@ index 6e9e6f6..b31222f 100644
  			AddSplit(semiTrans, true);
  
  			GrVertex* firstVertex = &g_vertexBuffer[g_vertexIndex];
-@@ -1157,6 +2307,7 @@ static int ProcessFlatPoly(P_TAG* polyTag)
+@@ -1157,6 +2342,7 @@ static int ProcessFlatPoly(P_TAG* polyTag)
  		POLY_FT4* poly = (POLY_FT4*)polyTag;
  		activeDrawEnv.tpage = poly->tpage;
  
@@ -1658,7 +1706,7 @@ index 6e9e6f6..b31222f 100644
  		AddSplit(semiTrans, true);
  
  		GrVertex* firstVertex = &g_vertexBuffer[g_vertexIndex];
-@@ -1214,6 +2365,7 @@ static int ProcessGouraudPoly(P_TAG* polyTag)
+@@ -1214,6 +2400,7 @@ static int ProcessGouraudPoly(P_TAG* polyTag)
  		POLY_GT3* poly = (POLY_GT3*)polyTag;
  		activeDrawEnv.tpage = poly->tpage;
  
@@ -1666,7 +1714,7 @@ index 6e9e6f6..b31222f 100644
  		AddSplit(semiTrans, true);
  
  		GrVertex* firstVertex = &g_vertexBuffer[g_vertexIndex];
-@@ -1253,6 +2405,7 @@ static int ProcessGouraudPoly(P_TAG* polyTag)
+@@ -1253,6 +2440,7 @@ static int ProcessGouraudPoly(P_TAG* polyTag)
  		POLY_GT4* poly = (POLY_GT4*)polyTag;
  		activeDrawEnv.tpage = poly->tpage;
  
@@ -1674,7 +1722,7 @@ index 6e9e6f6..b31222f 100644
  		AddSplit(semiTrans, true);
  
  		GrVertex* firstVertex = &g_vertexBuffer[g_vertexIndex];
-@@ -1311,6 +2464,7 @@ static int ProcessTileAndSprt(P_TAG* polyTag)
+@@ -1311,6 +2499,7 @@ static int ProcessTileAndSprt(P_TAG* polyTag)
  	{
  		SPRT* poly = (SPRT*)polyTag;
  
@@ -1682,7 +1730,7 @@ index 6e9e6f6..b31222f 100644
  		AddSplit(semiTrans, true);
  
  		GrVertex* firstVertex = &g_vertexBuffer[g_vertexIndex];
-@@ -1371,6 +2525,7 @@ static int ProcessTileAndSprt(P_TAG* polyTag)
+@@ -1371,6 +2560,7 @@ static int ProcessTileAndSprt(P_TAG* polyTag)
  	{
  		SPRT_8* poly = (SPRT_8*)polyTag;
  
@@ -1690,7 +1738,7 @@ index 6e9e6f6..b31222f 100644
  		AddSplit(semiTrans, true);
  
  		GrVertex* firstVertex = &g_vertexBuffer[g_vertexIndex];
-@@ -1411,6 +2566,7 @@ static int ProcessTileAndSprt(P_TAG* polyTag)
+@@ -1411,6 +2601,7 @@ static int ProcessTileAndSprt(P_TAG* polyTag)
  	{
  		SPRT_16* poly = (SPRT_16*)polyTag;
  
@@ -1698,7 +1746,7 @@ index 6e9e6f6..b31222f 100644
  		AddSplit(semiTrans, true);
  
  		GrVertex* firstVertex = &g_vertexBuffer[g_vertexIndex];
-@@ -1533,6 +2689,8 @@ static int ProcessPsyXPrims(P_TAG* polyTag)
+@@ -1533,6 +2724,8 @@ static int ProcessPsyXPrims(P_TAG* polyTag)
  int ParsePrimitive(P_TAG* polyTag)
  {
  	const int primType = polyTag->code & 0xF0;
@@ -1707,7 +1755,7 @@ index 6e9e6f6..b31222f 100644
  
  	int primLength = 0;
  
-@@ -1615,5 +2773,11 @@ int ParsePrimitive(P_TAG* polyTag)
+@@ -1615,5 +2808,11 @@ int ParsePrimitive(P_TAG* polyTag)
  		eprinterr("Unhandled zero length %0x primitive\n", primType);
  	}
  
@@ -1771,7 +1819,7 @@ index d073549..258faf1 100644
 \ No newline at end of file
 +}
 diff --git a/src/render/PsyX_render.cpp b/src/render/PsyX_render.cpp
-index 9324471..5704a2b 100644
+index 9324471..1ba05e9 100644
 --- a/src/render/PsyX_render.cpp
 +++ b/src/render/PsyX_render.cpp
 @@ -348,6 +348,29 @@ int GR_InitialiseGLContext(char* windowName, int fullscreen)
@@ -1825,7 +1873,7 @@ index 9324471..5704a2b 100644
  	GLint projection3DLoc;
  	GLint bilinearFilterLoc;
  	GLint texelSizeLoc;
-+	GLint overrideCutoutLoc;
++	GLint overrideAlphaModeLoc;
  	GLint texLoc;
  	GLint lutLoc;
  #endif
@@ -1833,24 +1881,27 @@ index 9324471..5704a2b 100644
  GLint u_projectionLoc;
  GLint u_projection3DLoc;
  GLint u_texelSizeLoc;
-+GLint u_overrideCutoutLoc;
++GLint u_overrideAlphaModeLoc;
  
  #define GPU_SAMPLE_TEXTURE_4BIT_FUNC\
      "   // returns 16 bit colour\n"\
-@@ -634,9 +669,12 @@ const char* gpu_shader_16 = GPU_FRAGMENT_SAMPLE_SHADER(16);
+@@ -634,9 +669,15 @@ const char* gpu_shader_16 = GPU_FRAGMENT_SAMPLE_SHADER(16);
  const char* gpu_shader_32_rgba = 
  	"	uniform sampler2D s_texture;\n"\
  	"	uniform vec2 texelSize;\n"\
-+	"	uniform int overrideCutout;\n"\
++	"	uniform int overrideAlphaMode;\n"\
  	"	void main() {\n"\
  	"		vec2 tc = v_texcoord.xy * texelSize + texelSize * 0.5;\n"\
  	"		vec4 color = texture2D(s_texture, tc);\n"\
-+	"		// Cutout only for override images; original PSX behaviour is unchanged.\n"\
-+	"		if (overrideCutout != 0 && color.a < 0.5) { discard; }\n"\
++	"		// 0 = not an override, 1 = binary cutout (compatibility), 2 = proportional\n"\
++	"		// alpha where only a fully transparent texel is a hole. Original PSX\n"\
++	"		// behaviour is unchanged because the mode is 0 for non-overrides.\n"\
++	"		if (overrideAlphaMode == 1 && color.a < 0.5) { discard; }\n"\
++	"		else if (overrideAlphaMode == 2 && color.a < (0.5 / 255.0)) { discard; }\n"\
  	"		fragColor = dither(color * v_color);\n"\
  	"	}\n";
  
-@@ -916,6 +954,26 @@ TextureID GR_CreateRGBATexture(int width, int height, u_char* data /*= nullptr*/
+@@ -916,6 +957,26 @@ TextureID GR_CreateRGBATexture(int width, int height, u_char* data /*= nullptr*/
  	return newTexture;
  }
  
@@ -1877,56 +1928,56 @@ index 9324471..5704a2b 100644
  void GR_CompilePSXShader(PSXGPU_Shader* sh, const char* source)
  {
  	sh->shader = GR_Shader_Compile(source, true);
-@@ -924,6 +982,7 @@ void GR_CompilePSXShader(PSXGPU_Shader* sh, const char* source)
+@@ -924,6 +985,7 @@ void GR_CompilePSXShader(PSXGPU_Shader* sh, const char* source)
  	sh->bilinearFilterLoc = glGetUniformLocation(sh->shader, "bilinearFilter");
  	sh->projectionLoc = glGetUniformLocation(sh->shader, "Projection");
  	sh->texelSizeLoc = glGetUniformLocation(sh->shader, "texelSize");
-+	sh->overrideCutoutLoc = glGetUniformLocation(sh->shader, "overrideCutout");
++	sh->overrideAlphaModeLoc = glGetUniformLocation(sh->shader, "overrideAlphaMode");
  	sh->texLoc = glGetUniformLocation(sh->shader, "s_texture");
  	sh->lutLoc = glGetUniformLocation(sh->shader, "s_rgLut");
  #if USE_PGXP
-@@ -1249,6 +1308,7 @@ void GR_SetTexture(TextureID texture, TexFormat texFormat)
+@@ -1249,6 +1311,7 @@ void GR_SetTexture(TextureID texture, TexFormat texFormat)
  		texLoc = g_gpu_shader_4.texLoc;
  		lutLoc = g_gpu_shader_4.lutLoc;
  		u_texelSizeLoc = -1;
-+		u_overrideCutoutLoc = -1;
++		u_overrideAlphaModeLoc = -1;
  		break;
  	case TF_8_BIT:
  		GR_SetShader(g_gpu_shader_8.shader);
-@@ -1258,6 +1318,7 @@ void GR_SetTexture(TextureID texture, TexFormat texFormat)
+@@ -1258,6 +1321,7 @@ void GR_SetTexture(TextureID texture, TexFormat texFormat)
  		texLoc = g_gpu_shader_8.texLoc;
  		lutLoc = g_gpu_shader_8.lutLoc;
  		u_texelSizeLoc = -1;
-+		u_overrideCutoutLoc = -1;
++		u_overrideAlphaModeLoc = -1;
  		break;
  	case TF_16_BIT:
  		GR_SetShader(g_gpu_shader_16.shader);
-@@ -1267,6 +1328,7 @@ void GR_SetTexture(TextureID texture, TexFormat texFormat)
+@@ -1267,6 +1331,7 @@ void GR_SetTexture(TextureID texture, TexFormat texFormat)
  		texLoc = g_gpu_shader_16.texLoc;
  		lutLoc = g_gpu_shader_16.lutLoc;
  		u_texelSizeLoc = -1;
-+		u_overrideCutoutLoc = -1;
++		u_overrideAlphaModeLoc = -1;
  		break;
  	case TF_32_BIT_RGBA:
  		GR_SetShader(g_gpu_shader_32_rgba.shader);
-@@ -1276,6 +1338,7 @@ void GR_SetTexture(TextureID texture, TexFormat texFormat)
+@@ -1276,6 +1341,7 @@ void GR_SetTexture(TextureID texture, TexFormat texFormat)
  		texLoc = g_gpu_shader_32_rgba.texLoc;
  		lutLoc = -1;
  		u_texelSizeLoc = g_gpu_shader_32_rgba.texelSizeLoc;
-+		u_overrideCutoutLoc = g_gpu_shader_32_rgba.overrideCutoutLoc;
++		u_overrideAlphaModeLoc = g_gpu_shader_32_rgba.overrideAlphaModeLoc;
  		break;
  	}
  
-@@ -1316,6 +1379,14 @@ void GR_SetOverrideTextureSize(int width, int height)
+@@ -1316,6 +1382,14 @@ void GR_SetOverrideTextureSize(int width, int height)
  	glUniform2fv(u_texelSizeLoc, 1, vec);
  }
  
-+void GR_SetOverrideTextureCutout(int enable)
++void GR_SetOverrideAlphaMode(int mode)
 +{
-+	if (u_overrideCutoutLoc == -1)
++	if (u_overrideAlphaModeLoc == -1)
 +		return;
 +
-+	glUniform1i(u_overrideCutoutLoc, enable ? 1 : 0);
++	glUniform1i(u_overrideAlphaModeLoc, mode);
 +}
 +
  void GR_DestroyTexture(TextureID texture)

@@ -88,8 +88,86 @@ int main()
 		decoded[3] == 255, "primitive-palette export keeps the drawn colours");
 	free(decoded);
 	HdTextureOverrides_SetBaseColourExport(1);
+
+	// Exported alpha describes the texture's transparency, not the colour.
+	// 0000h is a cutout in every context; STP=1 is half alpha only when the
+	// consuming primitive actually blends, because PSX ignores STP on an
+	// opaque draw. An unknown blend context stays conservative (128).
+	HdTextureExportContext opaqueContext = {};
+	opaqueContext.blendModeKnown = 1;
+	opaqueContext.semiTransparent = 0;
+	Check(HdTextureOverrides_ExportTextureWithContext(1, 1, 0, 0, 4, 4, "OPAQUECTX", 1, 6, "regression",
+		&opaqueContext, status, sizeof(status)), "opaque-context STP export succeeds");
+	decoded = NULL;
+	Check(LoadPngRgba("mods/regression/assets/inspector/OPAQUECTX_p1_i6.png", &decoded, &width, &height) &&
+		decoded[3] == 255, "STP=1 on an opaque draw exports as opaque 255");
+	free(decoded);
+	HdTextureExportContext semiContext = {};
+	semiContext.blendModeKnown = 1;
+	semiContext.semiTransparent = 1;
+	Check(HdTextureOverrides_ExportTextureWithContext(1, 1, 0, 0, 4, 4, "SEMICTX", 1, 7, "regression",
+		&semiContext, status, sizeof(status)), "semi-context STP export succeeds");
+	decoded = NULL;
+	Check(LoadPngRgba("mods/regression/assets/inspector/SEMICTX_p1_i7.png", &decoded, &width, &height) &&
+		decoded[3] == 128, "STP=1 on a semi-transparent draw exports as half alpha");
+	free(decoded);
+	Check(HdTextureOverrides_ExportTextureWithContext(256, 0, 64, 0, 4, 1, "CUTOUT", 1, 8, "regression",
+		&opaqueContext, status, sizeof(status)), "export of a region containing 0000h succeeds");
+	decoded = NULL;
+	Check(LoadPngRgba("mods/regression/assets/inspector/CUTOUT_p1_i8.png", &decoded, &width, &height) &&
+		decoded[3] == 0 && decoded[7] == 255, "0000h exports as a cutout next to opaque texels even on an opaque draw");
+	free(decoded);
 	Check(!HdTextureOverrides_ExportTexture(256, 0, 255, 0, 4, 4, "RED", 1, 1, "regression", status, sizeof(status)), "out-of-range source rejected");
 	Check(!HdTextureOverrides_ExportInspectorReport("../outside", "invalid", status, sizeof(status)), "unsafe mod id rejected");
+
+	// Palette variants: the same (name, page, index) is exported once per CLUT,
+	// each file and manifest entry carrying its own palette so a car or
+	// pedestrian colour scheme stays distinct.
+	HdTextureExportContext variantContext = {};
+	variantContext.blendModeKnown = 1;
+	variantContext.semiTransparent = 1;
+	const int variantCluts[2] = { 1, 2 };
+	char variantStatus[512];
+	const int exportedVariants = HdTextureOverrides_ExportPaletteVariants(1, 0, 0, 4, 4, "PALVAR", 3, 4,
+		"regression", variantCluts, 2, &variantContext, variantStatus, sizeof(variantStatus));
+	Check(exportedVariants == 2, "palette variant export writes every requested CLUT");
+	decoded = NULL;
+	Check(LoadPngRgba("mods/regression/assets/inspector/PALVAR_p3_i4_clut1.png", &decoded, &width, &height) &&
+		decoded[3] == 128, "first palette variant is read with its own CLUT");
+	free(decoded);
+	decoded = NULL;
+	Check(LoadPngRgba("mods/regression/assets/inspector/PALVAR_p3_i4_clut2.png", &decoded, &width, &height) &&
+		decoded[3] == 255, "second palette variant is read with its own CLUT");
+	free(decoded);
+	int variantBytes = 0;
+	char* variantManifest = ReadTextFile("mods/regression/manifest.json", &variantBytes);
+	int variantEntries = 0;
+	if (variantManifest)
+		for (char* scan = variantManifest; (scan = strstr(scan, "\"PALVAR\"")) != NULL; ++scan) ++variantEntries;
+	Check(variantManifest && strstr(variantManifest, "\"clut\": 1") && strstr(variantManifest, "\"clut\": 2"),
+		"manifest records each palette variant CLUT");
+	Check(variantEntries == 2, "palette variants are two distinct manifest entries");
+	free(variantManifest);
+
+	const int onlyVariant[1] = { 1 };
+	Check(HdTextureOverrides_ExportPaletteVariants(1, 0, 0, 4, 4, "PALVAR", 3, 4, "regression",
+		onlyVariant, 1, &variantContext, variantStatus, sizeof(variantStatus)) == 1,
+		"re-export of one palette variant succeeds");
+	variantManifest = ReadTextFile("mods/regression/manifest.json", &variantBytes);
+	variantEntries = 0;
+	if (variantManifest)
+		for (char* scan = variantManifest; (scan = strstr(scan, "\"PALVAR\"")) != NULL; ++scan) ++variantEntries;
+	Check(variantEntries == 2, "re-export reuses the variant entry instead of appending");
+	free(variantManifest);
+
+	Check(HdTextureOverrides_ExportTexture(1, 1, 0, 0, 4, 4, "PALVAR", 3, 4, "regression", status, sizeof(status)),
+		"plain export alongside palette variants succeeds");
+	variantManifest = ReadTextFile("mods/regression/manifest.json", &variantBytes);
+	variantEntries = 0;
+	if (variantManifest)
+		for (char* scan = variantManifest; (scan = strstr(scan, "\"PALVAR\"")) != NULL; ++scan) ++variantEntries;
+	Check(variantEntries == 3, "a plain export is a distinct identity from the palette variants");
+	free(variantManifest);
 
 	// Append-only manifest merging.
 	Check(HdTextureOverrides_ExportTexture(256, 0, 0, 0, 4, 4, "BLUE", 1, 2, "regression", status, sizeof(status)), "second distinct texture export");
@@ -298,6 +376,45 @@ int main()
 		for (char* scan = legacyText; (scan = strstr(scan, "\"OLD\"")) != NULL; ++scan) ++legacyEntries;
 	Check(legacyEntries == 1, "legacy entry is not duplicated");
 	free(legacyText);
+
+	// A pre-existing entry also gains type/level metadata on re-export when the
+	// caller provides a context, again without a duplicate registration.
+	const char* untypedManifest = "{ \"schemaVersion\": 1, \"id\": \"mapped3\", \"textures\": [ { \"texture\": \"UNTYPED\", \"texturePage\": 5, \"textureIndex\": 5, \"file\": \"assets/inspector/UNTYPED_keep.png\" } ] }";
+	CreateDirectoryA("mods", NULL);
+	CreateDirectoryA("mods/mapped3", NULL);
+	Check(InspectorExport_WriteText("mods/mapped3/manifest.json", untypedManifest, status, sizeof(status)), "write a manifest entry without type or level");
+	HdTextureOverrideBatchItem untyped = {};
+	untyped.tpage = 256; untyped.clut = 0; untyped.u = 0; untyped.v = 0; untyped.width = 4; untyped.height = 4;
+	snprintf(untyped.textureName, sizeof(untyped.textureName), "UNTYPED");
+	untyped.texturePage = 5; untyped.textureIndex = 5;
+	snprintf(untyped.objectType, sizeof(untyped.objectType), "buildings");
+	snprintf(untyped.levelName, sizeof(untyped.levelName), "Havana");
+	HdTextureOverrideBatchResult untypedResult = {};
+	Check(HdTextureOverrides_ExportTextureBatch("mapped3", &untyped, 1, &untypedResult) && untypedResult.exported == 1,
+		"re-export of an entry without metadata succeeds");
+	decoded = NULL;
+	Check(LoadPngRgba("mods/mapped3/assets/inspector/UNTYPED_keep.png", &decoded, &width, &height) && width == 4,
+		"metadata backfill keeps the mapped file");
+	free(decoded);
+	int untypedBytes = 0;
+	char* untypedText = ReadTextFile("mods/mapped3/manifest.json", &untypedBytes);
+	Check(untypedText && strstr(untypedText, "UNTYPED_keep.png") &&
+		strstr(untypedText, "\"type\": \"buildings\"") && strstr(untypedText, "\"level\": \"havana\""),
+		"re-export backfills lowercased type and level into the existing entry");
+	int untypedEntries = 0;
+	if (untypedText)
+		for (char* scan = untypedText; (scan = strstr(scan, "\"UNTYPED\"")) != NULL; ++scan) ++untypedEntries;
+	Check(untypedEntries == 1, "metadata backfill does not duplicate the entry");
+	free(untypedText);
+
+	Check(HdTextureOverrides_ExportTextureBatch("mapped3", &untyped, 1, &untypedResult) && untypedResult.exported == 1,
+		"second re-export of the metadata entry succeeds");
+	untypedText = ReadTextFile("mods/mapped3/manifest.json", &untypedBytes);
+	int typeCount = 0;
+	if (untypedText)
+		for (char* scan = untypedText; (scan = strstr(scan, "\"type\"")) != NULL; ++scan) ++typeCount;
+	Check(typeCount == 1, "metadata is not duplicated by a further re-export");
+	free(untypedText);
 
 	// Milestone 4: the catalog material adapter resolves a hidden material's
 	// VRAM region from the registered level texture set.

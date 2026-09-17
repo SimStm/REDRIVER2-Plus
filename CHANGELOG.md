@@ -10,6 +10,33 @@ where release policy permits it.
 
 ### Added
 
+- Palette variant texture exports: a manifest entry may now carry a `"clut"`
+  that is part of the override identity, so a car or pedestrian texture drawn
+  through several runtime palettes gets one PNG and one registration per
+  palette instead of collapsing into a single `(texture, texturePage,
+  textureIndex)`. The 3D Debug tab exposes **Export all palette variants (PNG)**
+  for car and pedestrian selections, writing `NAME_pP_iI_clutN.png` files. Legacy
+  entries without `clut` keep the previous single-override behaviour, and a load
+  registers one override per declared CLUT. Measured with two `clut` entries for
+  `GRASS01C`: 2 loaded images and 2 active renderer mappings.
+- Type/level metadata backfill on re-export: a pre-existing manifest entry that
+  predates the descriptive `type`/`level` fields gains them on the next
+  re-export with a context, without a duplicate registration, alongside the
+  existing model-reference merge.
+- A live page-registration cost diagnostic on the Mods tab. Measured on the
+  Chicago debug start: 0.176 ms of name registration for 18 pages with no mods,
+  versus 927.6 ms when the `inspector-export` mod's PNGs are decoded during the
+  pass, so the spool cost is override-image decoding rather than the
+  registration walk.
+- Opt-in proportional texture-override alpha (roadmap item 16, complete): the
+  new persisted `Proportional override alpha` developer setting (Mods tab,
+  default off) makes `BM_AVERAGE` override draws blend the imported PNG alpha
+  through `SRC_ALPHA, ONE_MINUS_SRC_ALPHA` instead of the binary 0.5 cutout, so
+  `alpha 0/64/128/192/255` render five steps while `alpha 0` still punches
+  through and `alpha 128` still matches the original `STP=1` blend. Opaque,
+  additive and subtractive draws keep the compatibility cutout, so existing mods
+  are unaffected until the flag is enabled; the CPU picker mirrors whichever
+  mode is active.
 - Whole-object selection across renderer categories (roadmap item 06,
   complete): the 3D Debug inspector now resolves a clicked primitive to the
   source that produced it and reads it at four scopes - **Face**, **Material**,
@@ -155,9 +182,15 @@ where release policy permits it.
 - Mipmapped overrides now use anisotropic filtering (capped at 4x) when the
   driver exposes `GL_EXT_texture_filter_anisotropic`, reducing grazing-angle
   shimmer on roads and ground. The PSX nearest-filtered path is unchanged.
-- Exported textures encode the PSX STP semi-transparency flag as half alpha
-  (`128`) instead of opaque, so semitransparent texels survive the
-  export/re-import round trip and blend on semitransparent primitives.
+- Exported texture alpha now follows the PSX transparency rules and the
+  consuming draw's blend context (roadmap item 15, complete). `0000h` always
+  exports as a cutout (`0`), because PSX treats it as fully transparent in every
+  context and Driver 2 writes opaque black as `8000h`. The `STP` flag exports
+  `128` on a semi-transparent draw and `255` on an opaque draw, where PSX
+  ignores it, so an opaque texture now exports `255` everywhere instead of a
+  half-alpha black that could be mistaken for a blend. Batch and catalog exports
+  have no primitive context and keep the conservative `128`. The 3D Debug tab
+  shows the effective rule for the current selection.
 - An enabled `developer_debug_start.ini` now also skips the intro movie, as if
   `-nointro` had been passed.
 

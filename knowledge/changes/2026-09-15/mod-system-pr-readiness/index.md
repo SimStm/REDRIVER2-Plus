@@ -131,7 +131,7 @@ The debug and correctness work continued after the initial audit:
   override inherits `BM_AVERAGE` (proportional alpha) or the
   additive/subtractive modes (alpha ignored). Product behaviour and limits are
   documented in
-  [`knowledge/product/texture-alpha-semantics.md`](../../product/texture-alpha-semantics.md);
+  [`knowledge/product/texture-alpha-semantics.md`](../../../product/texture-alpha-semantics.md);
   roadmap order 01 is completed.
 
 ## Limitations and pending checks

@@ -20,7 +20,7 @@ No calendar estimates or performance numbers are asserted without measurement.
 
 ## Adopted prerequisite: the playable playground
 
-Implement and validate [playground milestones P1-P4](../../roadmap/planned/playable-testing-playground.md)
+Implement and validate [playground milestones P1-P4](../../roadmap/done/playable-testing-playground.md)
 using the existing renderer before the modern mesh experiment in step 3 below
 (roadmap R2). This fixture supplies a drivable floor, legacy-rendered obstacles,
 stable scene/spawn/camera identity, captures and safe reset/teardown.

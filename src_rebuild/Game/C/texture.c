@@ -184,6 +184,11 @@ void RegisterHdTextureOverridesForPage(int tpage2send)
 
 	HdTextureOverrides_BeginPage(tpage2send);
 
+	// Measure the whole pass: registering a streamed page's names can decode
+	// override PNGs on the loading thread. The accumulated cost is reported by
+	// the developer panel diagnostics.
+	HdTextureOverrides_PageRegistrationBegin();
+
 	for (int i = 0; i < tpage_texamts[tpage2send]; ++i)
 	{
 		const TEXINF* texture = &tpage_ids[tpage2send][i];
@@ -196,6 +201,8 @@ void RegisterHdTextureOverridesForPage(int tpage2send)
 		// mod manifest matches, so shared textures stay a single record.
 		AssetCatalog_RegisterTexture(name, tpage2send, i, tpage2send, ASSET_CATALOG_SOURCE_DECLARED);
 	}
+
+	HdTextureOverrides_PageRegistrationEnd(tpage_texamts[tpage2send]);
 }
 
 // Walks a model's polygons and links every textured material to the catalog.

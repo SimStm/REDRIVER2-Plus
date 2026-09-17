@@ -11,6 +11,12 @@ struct HdTextureOverrideDiagnostics
 	int activeMods;
 	int loadedImages;
 	int registeredOverrides;
+	// Load-time cost of page registration in the texture spool. Streamed pages
+	// register their texture names once their VRAM slot is known, which can
+	// decode override PNGs on the loading thread.
+	int pageRegistrationCount;
+	int pageRegistrationTextures;
+	int pageRegistrationMicros;
 	char status[160];
 };
 
@@ -57,6 +63,20 @@ struct HdTextureExportContext
 {
 	const char* objectType;	// "buildings", "cars", "pedestrians", ...
 	const char* levelName;	// "CHICAGO", "HAVANA", ...
+	// Blend context of the draw that owns the exported texture. A single export
+	// knows the clicked primitive's PSX semi-transparency flag; a batch or
+	// catalog export does not. When blendModeKnown is 0, STP=1 is encoded
+	// conservatively as semi-transparent (128) so a batch cannot turn a
+	// semi-transparent surface opaque. When it is 1, STP=1 on an opaque draw is
+	// encoded as opaque (255) because PSX ignores the STP bit there.
+	int blendModeKnown;
+	int semiTransparent;
+	// Optional palette variant. When hasPaletteClut is set the export reads VRAM
+	// with this CLUT instead of the base palette, writes the CLUT into the file
+	// name, and records it in the manifest entry so the variant is a distinct
+	// identity (name, page, index, clut) from the other palettes.
+	int hasPaletteClut;
+	int paletteClut;
 };
 
 // One resource requested by a batch export. Model references are informational
@@ -130,6 +150,13 @@ void HdTextureOverrides_RegisterTexture(int texturePage, int textureIndex, const
 void HdTextureOverrides_SetEnabled(int enabled);
 bool HdTextureOverrides_Reload();
 void HdTextureOverrides_GetDiagnostics(HdTextureOverrideDiagnostics* diagnostics);
+
+// Times one texture-page registration pass (the loop in
+// RegisterHdTextureOverridesForPage). The accumulated count, texture total and
+// elapsed microseconds are reported by GetDiagnostics. Begin without a
+// matching End is ignored, so a partial pass cannot corrupt the total.
+void HdTextureOverrides_PageRegistrationBegin(void);
+void HdTextureOverrides_PageRegistrationEnd(int textureCount);
 int HdTextureOverrides_GetModCount();
 bool HdTextureOverrides_GetModInfo(int index, HdTextureOverrideModInfo* info);
 int HdTextureOverrides_GetEntryCount();
@@ -166,6 +193,15 @@ bool HdTextureOverrides_ExportTextureWithContext(unsigned short tpage, unsigned 
 	unsigned short u, unsigned short v, unsigned short width, unsigned short height,
 	const char* textureName, int texturePage, int textureIndex, const char* modId,
 	const HdTextureExportContext* context, char* status, int statusCapacity);
+
+// Exports one PNG per requested palette variant of a texture region. Each
+// variant is read with its own CLUT, its file name carries the CLUT, and the
+// manifest records a `clut` so the variants stay distinct identities. Returns
+// the number exported; status carries the last per-variant outcome.
+int HdTextureOverrides_ExportPaletteVariants(unsigned short tpage, unsigned short u, unsigned short v,
+	unsigned short width, unsigned short height, const char* textureName, int texturePage, int textureIndex,
+	const char* modId, const int* cluts, int clutCount, const HdTextureExportContext* context,
+	char* status, int statusCapacity);
 
 // When enabled, exports are written under assets/inspector/<type>/<level>/ and
 // the manifest records that relative path. Disabled by default; the manifest

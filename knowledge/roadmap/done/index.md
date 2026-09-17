@@ -32,6 +32,12 @@ completed, as described in the [roadmap catalog](../index.md).
 - **06 — [Whole-object selection across renderer categories](inspector-selection-coverage.md)**:
   implemented 2026-09-16; product document
   [`knowledge/product/inspector-selection-coverage.md`](../../product/inspector-selection-coverage.md).
+- **15 — [Texture export alpha fidelity](texture-export-alpha-fidelity.md)**:
+  implemented 2026-09-17; product document
+  [`knowledge/product/texture-export-alpha-fidelity.md`](../../product/texture-export-alpha-fidelity.md).
+- **16 — [Semi-transparent texture overrides](semi-transparent-texture-overrides.md)**:
+  implemented 2026-09-17; product document
+  [`knowledge/product/semi-transparent-texture-overrides.md`](../../product/semi-transparent-texture-overrides.md).
 - **13 — [Playable testing playground](playable-testing-playground.md)**:
   implemented 2026-09-15; product document
   [`knowledge/product/playable-testing-playground.md`](../../product/playable-testing-playground.md).

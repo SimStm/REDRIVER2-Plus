@@ -23,7 +23,7 @@ compatibility layer is not a prerequisite for these goals.
 After the initial exploration, the user requested roadmap adoption on 2026-09-15
 with the dedicated playground implemented first. The
 [renderer roadmap](../../roadmap/planned/renderer-modernization.md) and
-[playground roadmap](../../roadmap/planned/playable-testing-playground.md)
+[playground roadmap](../../roadmap/done/playable-testing-playground.md)
 now govern the staged plan. Playground P1-P4 are the prerequisite for the first
 modern in-game mesh slice (R2); renderer audits can happen earlier.
 Backend/pipeline choices and hardware budgets remain decision gates.
@@ -230,12 +230,12 @@ choices are pending, with OpenGL on an existing desktop target the initial appro
 
 - [Playable testing playground discussion](../playable-testing-playground/index.md):
   the first implementation stage and controlled graphics test environment.
-- [Playground roadmap](../../roadmap/planned/playable-testing-playground.md):
+- [Playground roadmap](../../roadmap/done/playable-testing-playground.md):
   minimum handoff P1-P4; Take a Ride integration follows at P5.
 - [Renderer modernization roadmap](../../roadmap/planned/renderer-modernization.md):
   the adopted staged plan, distinct from bounded legacy graphics improvements.
 - [Model round trips](../../roadmap/planned/model-export-import-roundtrip.md)
-- [Asset identity](../../roadmap/planned/asset-catalog-identity.md)
+- [Asset identity](../../roadmap/done/asset-catalog-identity.md)
 - [Tool interoperability](../../roadmap/planned/modding-toolchain-integration.md)
 - [Draw distance and streaming](../../roadmap/planned/draw-distance-streaming.md)
 - [Graphics quality profiles](../../roadmap/planned/graphics-quality-profiles.md)

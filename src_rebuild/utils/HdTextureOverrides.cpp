@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <string>
+#include <chrono>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -43,6 +44,12 @@ struct ManifestEntry
 	int modIndex;
 	int texturePage;
 	int textureIndex;
+	// Palette variant. When set, the entry only overrides draws whose CLUT
+	// equals this GP0 clut word; without it the entry uses the CLUT the level
+	// registered, which is the pre-palette-variant behaviour. It is part of the
+	// override identity (name, page, index, clut).
+	int hasClut;
+	int clut;
 	unsigned int textureId;
 	int imageWidth;
 	int imageHeight;
@@ -345,6 +352,8 @@ bool ParseTextureObject(JsonReader* reader, int modIndex)
 	char imagePath[192] = {};
 	int texturePage = -1;
 	int textureIndex = -1;
+	int clut = 0;
+	int hasClut = 0;
 	while (!Consume(reader, '}'))
 	{
 		char key[64];
@@ -365,6 +374,11 @@ bool ParseTextureObject(JsonReader* reader, int modIndex)
 		{
 			if (!ParseInteger(reader, &textureIndex)) return false;
 		}
+		else if (strcmp(key, "clut") == 0)
+		{
+			if (!ParseInteger(reader, &clut)) return false;
+			hasClut = 1;
+		}
 		else if (!SkipValue(reader, 0)) return false;
 		if (Consume(reader, '}')) break;
 		if (!Consume(reader, ',')) return false;
@@ -376,6 +390,8 @@ bool ParseTextureObject(JsonReader* reader, int modIndex)
 	entry->modIndex = modIndex;
 	entry->texturePage = texturePage;
 	entry->textureIndex = textureIndex;
+	entry->hasClut = hasClut;
+	entry->clut = clut;
 	++g_mods[modIndex].textureEntries;
 	return true;
 }
@@ -864,10 +880,13 @@ struct ManifestEntryLocation
 	const char* referencesEnd;
 	bool hasFile;
 	bool hasReferences;
+	bool hasType;
+	bool hasLevel;
 };
 
 bool LocateTextureEntry(const char* spanBegin, const char* spanEnd,
-	const char* textureName, int texturePage, int textureIndex, ManifestEntryLocation* location)
+	const char* textureName, int texturePage, int textureIndex, int clut, bool matchClut,
+	ManifestEntryLocation* location)
 {
 	if (!spanBegin || !spanEnd || !location)
 		return false;
@@ -884,9 +903,13 @@ bool LocateTextureEntry(const char* spanBegin, const char* spanEnd,
 		char candidateName[48] = {};
 		int candidatePage = -1;
 		int candidateIndex = -1;
+		int candidateClut = 0;
+		bool candidateHasClut = false;
 		const char* fileQuote = NULL;
 		const char* referencesBegin = NULL;
 		const char* referencesEnd = NULL;
+		bool candidateHasType = false;
+		bool candidateHasLevel = false;
 
 		while (true)
 		{
@@ -918,6 +941,21 @@ bool LocateTextureEntry(const char* spanBegin, const char* spanEnd,
 				referencesBegin = valueBegin;
 				referencesEnd = reader.cursor;
 			}
+			else if (strcmp(key, "type") == 0)
+			{
+				if (!SkipValue(&reader, 0)) return false;
+				candidateHasType = true;
+			}
+			else if (strcmp(key, "level") == 0)
+			{
+				if (!SkipValue(&reader, 0)) return false;
+				candidateHasLevel = true;
+			}
+			else if (strcmp(key, "clut") == 0)
+			{
+				if (!ParseInteger(&reader, &candidateClut)) return false;
+				candidateHasClut = true;
+			}
 			else if (!SkipValue(&reader, 0)) return false;
 
 			if (Consume(&reader, '}')) break;
@@ -925,8 +963,14 @@ bool LocateTextureEntry(const char* spanBegin, const char* spanEnd,
 		}
 
 		const char* entryEnd = reader.cursor;
+		// A palette-variant export matches only entries with the same CLUT; a
+		// plain export matches only entries without one, so the two identities
+		// never overwrite each other.
+		const bool clutMatches = matchClut
+			? (candidateHasClut && candidateClut == clut)
+			: !candidateHasClut;
 		if (candidateName[0] != '\0' && strcmp(candidateName, textureName) == 0 &&
-			candidatePage == texturePage && candidateIndex == textureIndex)
+			candidatePage == texturePage && candidateIndex == textureIndex && clutMatches)
 		{
 			location->begin = entryBegin;
 			location->end = entryEnd;
@@ -935,6 +979,8 @@ bool LocateTextureEntry(const char* spanBegin, const char* spanEnd,
 			location->referencesBegin = referencesBegin;
 			location->referencesEnd = referencesEnd;
 			location->hasReferences = referencesBegin != NULL && referencesEnd != NULL;
+			location->hasType = candidateHasType;
+			location->hasLevel = candidateHasLevel;
 			return true;
 		}
 
@@ -1031,40 +1077,77 @@ std::string BuildModelReferencesJson(const char* const* modelReferences, int cou
 	return json;
 }
 
-// Rewrites only the modelReferences value of one located entry, inserting the
-// field when the entry predates it. The rest of the document is copied as-is.
-std::string ReplaceReferencesInManifest(const char* text, int byteCount,
-	const ManifestEntryLocation& located, const std::string& referencesJson)
+// Rewrites one located entry in place. It backfills descriptive `type`/`level`
+// metadata the entry predates and, when requested, replaces the modelReferences
+// value (reusing the existing field or inserting it). Unknown fields and the
+// surrounding document are copied verbatim, so the entry is never duplicated.
+std::string RewriteManifestEntry(const char* text, int byteCount, const ManifestEntryLocation& located,
+	const std::string* referencesJson, const char* typeToken, const char* levelToken)
 {
-	if (located.hasReferences)
+	const char* innerBegin = located.begin + 1;
+	const char* innerEnd = located.end - 1;
+	std::string inner(innerBegin, innerEnd);
+
+	if (referencesJson && located.hasReferences)
 	{
-		std::string result(text, (size_t)(located.referencesBegin - text));
-		result += referencesJson;
-		result.append(located.referencesEnd, (size_t)byteCount - (size_t)(located.referencesEnd - text));
-		return result;
+		const size_t referencesBegin = (size_t)(located.referencesBegin - innerBegin);
+		const size_t referencesEnd = (size_t)(located.referencesEnd - innerBegin);
+		inner = inner.substr(0, referencesBegin) + *referencesJson + inner.substr(referencesEnd);
 	}
 
-	bool emptyObject = true;
-	for (const char* scan = located.begin + 1; scan < located.end - 1; ++scan)
+	// Fields are appended before the closing brace, after trimming the entry's
+	// trailing whitespace so the JSON stays well formed.
+	size_t bodyEnd = inner.size();
+	while (bodyEnd > 0 && (inner[bodyEnd - 1] == ' ' || inner[bodyEnd - 1] == '\t' ||
+		inner[bodyEnd - 1] == '\r' || inner[bodyEnd - 1] == '\n'))
+		--bodyEnd;
+	const std::string body = inner.substr(0, bodyEnd);
+	const std::string trailing = inner.substr(bodyEnd);
+
+	std::string fields;
+	bool hasFields = !body.empty();
+
+	const bool insertReferences = referencesJson != NULL && !located.hasReferences;
+	if (insertReferences)
 	{
-		if (*scan != ' ' && *scan != '\t' && *scan != '\r' && *scan != '\n')
-		{
-			emptyObject = false;
-			break;
-		}
+		if (hasFields) fields += ", ";
+		fields += "\"modelReferences\": ";
+		fields += *referencesJson;
+		hasFields = true;
+	}
+	const bool insertType = typeToken && typeToken[0] && !located.hasType;
+	if (insertType)
+	{
+		if (hasFields) fields += ", ";
+		fields += "\"type\": \"";
+		fields += typeToken;
+		fields += "\"";
+		hasFields = true;
+	}
+	const bool insertLevel = levelToken && levelToken[0] && !located.hasLevel;
+	if (insertLevel)
+	{
+		if (hasFields) fields += ", ";
+		fields += "\"level\": \"";
+		fields += levelToken;
+		fields += "\"";
 	}
 
-	std::string result(text, (size_t)(located.end - 1 - text));
-	if (!emptyObject) result += ", ";
-	result += "\"modelReferences\": ";
-	result += referencesJson;
-	result.append(located.end - 1, (size_t)byteCount - (size_t)(located.end - 1 - text));
+	std::string entry = "{";
+	entry += body;
+	entry += fields;
+	entry += trailing;
+	entry += "}";
+
+	std::string result(text, (size_t)(located.begin - text));
+	result += entry;
+	result.append(located.end, (size_t)byteCount - (size_t)(located.end - text));
 	return result;
 }
 
 std::string BuildManifestEntry(const std::string& escapedTextureName, int texturePage, int textureIndex,
 	const char* relativePrefix, const char* fileName, const std::string& modelReferencesJson,
-	const char* objectType, const char* levelName)
+	const char* objectType, const char* levelName, int clut, bool hasClut)
 {
 	char numbers[160];
 	snprintf(numbers, sizeof(numbers), "\", \"texturePage\": %d, \"textureIndex\": %d, \"file\": \"assets/inspector/%s",
@@ -1075,6 +1158,14 @@ std::string BuildManifestEntry(const std::string& escapedTextureName, int textur
 	entry += fileName;
 	entry += "\", \"modelReferences\": ";
 	entry += modelReferencesJson;
+
+	// The CLUT makes a palette variant a distinct override identity.
+	if (hasClut)
+	{
+		char clutField[32];
+		snprintf(clutField, sizeof(clutField), ", \"clut\": %d", clut);
+		entry += clutField;
+	}
 
 	// Descriptive only: the type/level never participate in override matching.
 	if (objectType && objectType[0])
@@ -1202,19 +1293,67 @@ void HdTextureOverrides_RegisterTexture(int texturePage, int textureIndex, const
 	if (!textureName || width == 0 || height == 0) return;
 	LoadManifests();
 	RegisterKnownTexture(texturePage, textureIndex, textureName, tpage, clut, u, v, width, height);
-	if (g_activeOverrideCount >= kMaximumActiveOverrides) return;
-	ManifestEntry* entry = FindManifestEntry(textureName, texturePage, textureIndex);
-	if (!entry || !EnsureImageLoaded(entry)) return;
-	PsyXTextureOverride descriptor = {};
-	descriptor.tpage = tpage; descriptor.clut = clut; descriptor.u = u; descriptor.v = v;
-	descriptor.width = width; descriptor.height = height; descriptor.textureId = entry->textureId;
-	const int overrideId = PsyX_RegisterTextureOverride(&descriptor);
-	if (overrideId == 0) { SetStatus("PsyCross could not register another mod texture override"); return; }
-	ActiveOverride* active = &g_activeOverrides[g_activeOverrideCount++];
-	active->texturePage = texturePage; active->textureIndex = textureIndex; active->overrideId = overrideId;
-	active->manifestIndex = (int)(entry - g_manifestEntries);
-	snprintf(g_status, sizeof(g_status), "Applied %s from mod %s as %d x %d RGBA", textureName,
-		g_mods[entry->modIndex].id, entry->imageWidth, entry->imageHeight);
+
+	// Collect the distinct CLUT variants declared for this identity. A legacy
+	// entry without a clut uses the CLUT the level registered, so it keeps the
+	// pre-palette-variant behaviour. When several entries share a CLUT the
+	// highest mod index (the later enabled mod) wins.
+	const int kMaximumVariants = 16;
+	int variantEntry[kMaximumVariants];
+	int variantClut[kMaximumVariants];
+	int variantMod[kMaximumVariants];
+	int variantCount = 0;
+
+	for (int i = 0; i < g_manifestEntryCount; ++i)
+	{
+		ManifestEntry* entry = &g_manifestEntries[i];
+		if (!g_mods[entry->modIndex].enabled) continue;
+		if (strcmp(entry->textureName, textureName) != 0) continue;
+		if (entry->texturePage >= 0 && entry->texturePage != texturePage) continue;
+		if (entry->textureIndex >= 0 && entry->textureIndex != textureIndex) continue;
+
+		const int entryClut = entry->hasClut ? entry->clut : (int)clut;
+		int slot = -1;
+		for (int c = 0; c < variantCount; ++c)
+		{
+			if (variantClut[c] == entryClut) { slot = c; break; }
+		}
+		if (slot < 0)
+		{
+			if (variantCount >= kMaximumVariants) continue;
+			slot = variantCount++;
+			variantClut[slot] = entryClut;
+			variantEntry[slot] = i;
+			variantMod[slot] = entry->modIndex;
+		}
+		else if (entry->modIndex >= variantMod[slot])
+		{
+			variantEntry[slot] = i;
+			variantMod[slot] = entry->modIndex;
+		}
+	}
+
+	for (int c = 0; c < variantCount; ++c)
+	{
+		if (g_activeOverrideCount >= kMaximumActiveOverrides) return;
+		ManifestEntry* entry = &g_manifestEntries[variantEntry[c]];
+		if (!EnsureImageLoaded(entry)) continue;
+
+		PsyXTextureOverride descriptor = {};
+		descriptor.tpage = tpage;
+		descriptor.clut = (unsigned short)variantClut[c];
+		descriptor.u = u; descriptor.v = v;
+		descriptor.width = width; descriptor.height = height;
+		descriptor.textureId = entry->textureId;
+
+		const int overrideId = PsyX_RegisterTextureOverride(&descriptor);
+		if (overrideId == 0) { SetStatus("PsyCross could not register another mod texture override"); return; }
+		ActiveOverride* active = &g_activeOverrides[g_activeOverrideCount++];
+		active->texturePage = texturePage; active->textureIndex = textureIndex; active->overrideId = overrideId;
+		active->manifestIndex = variantEntry[c];
+		snprintf(g_status, sizeof(g_status), "Applied %s from mod %s as %d x %d RGBA", textureName,
+			g_mods[entry->modIndex].id, entry->imageWidth, entry->imageHeight);
+	}
 }
 
 void HdTextureOverrides_SetEnabled(int enabled)
@@ -1258,6 +1397,37 @@ bool HdTextureOverrides_Reload()
 	return true;
 }
 
+// Accumulated load-time cost of registering texture names for streamed pages.
+namespace
+{
+long long g_pageRegistrationNanos = 0;
+int g_pageRegistrationCount = 0;
+int g_pageRegistrationTextures = 0;
+int g_pageRegistrationMicros = 0;
+bool g_pageRegistrationTiming = false;
+std::chrono::steady_clock::time_point g_pageRegistrationStart;
+}
+
+void HdTextureOverrides_PageRegistrationBegin(void)
+{
+	g_pageRegistrationStart = std::chrono::steady_clock::now();
+	g_pageRegistrationTiming = true;
+}
+
+void HdTextureOverrides_PageRegistrationEnd(int textureCount)
+{
+	if (!g_pageRegistrationTiming)
+		return;
+
+	g_pageRegistrationTiming = false;
+	const long long nanos = std::chrono::duration_cast<std::chrono::nanoseconds>(
+		std::chrono::steady_clock::now() - g_pageRegistrationStart).count();
+	g_pageRegistrationNanos += nanos;
+	g_pageRegistrationMicros = (int)(g_pageRegistrationNanos / 1000);
+	++g_pageRegistrationCount;
+	g_pageRegistrationTextures += textureCount > 0 ? textureCount : 0;
+}
+
 void HdTextureOverrides_GetDiagnostics(HdTextureOverrideDiagnostics* diagnostics)
 {
 	if (!diagnostics) return;
@@ -1281,6 +1451,9 @@ void HdTextureOverrides_GetDiagnostics(HdTextureOverrideDiagnostics* diagnostics
 	diagnostics->activeMods = activeMods;
 	diagnostics->loadedImages = loadedImages;
 	diagnostics->registeredOverrides = rendererStats.registeredCount;
+	diagnostics->pageRegistrationCount = g_pageRegistrationCount;
+	diagnostics->pageRegistrationTextures = g_pageRegistrationTextures;
+	diagnostics->pageRegistrationMicros = g_pageRegistrationMicros;
 	CopyText(diagnostics->status, sizeof(diagnostics->status), g_status);
 }
 
@@ -1666,6 +1839,12 @@ static bool ExportTextureCore(unsigned short tpage, unsigned short clut,
 			paletteClut = palette->clut;
 	}
 
+	// A palette-variant export reads VRAM with the requested runtime palette
+	// instead of the base one.
+	const bool hasPaletteVariant = context != NULL && context->hasPaletteClut != 0;
+	if (hasPaletteVariant)
+		paletteClut = (unsigned short)context->paletteClut;
+
 	const int clutX = (paletteClut & 0x3f) << 4;
 	const int clutY = paletteClut >> 6;
 	bool valid = clutY >= 0 && clutY < VRAM_HEIGHT && clutX >= 0 && clutX < VRAM_WIDTH;
@@ -1703,9 +1882,14 @@ static bool ExportTextureCore(unsigned short tpage, unsigned short clut,
 			pixel[0] = (unsigned char)(((colour & 31) << 3) | ((colour & 31) >> 2));
 			pixel[1] = (unsigned char)((((colour >> 5) & 31) << 3) | ((colour >> 5) & 31) >> 2);
 			pixel[2] = (unsigned char)((((colour >> 10) & 31) << 3) | ((colour >> 10) & 31) >> 2);
-			// colour 0 is PSX transparent; bit 15 is the STP semi-transparency
-			// flag, exported as half alpha so it survives round trips.
-			pixel[3] = colour == 0 ? 0 : ((colour & 0x8000) ? 128 : 255);
+			// PSX 0000h is fully transparent in every context, so it is the only
+			// texel that exports as a cutout. Bit 15 is the STP semi-transparency
+			// flag: it only matters when the consuming primitive is drawn
+			// semi-transparently, because PSX ignores it on an opaque draw. With
+			// no known blend context (batch/catalog export) keep the conservative
+			// 128 so a semi-transparent surface cannot become opaque.
+			const bool semiTransparent = !context || !context->blendModeKnown || context->semiTransparent;
+			pixel[3] = colour == 0 ? 0 : (((colour & 0x8000) && semiTransparent) ? 128 : 255);
 		}
 	}
 	if (!valid)
@@ -1728,10 +1912,19 @@ static bool ExportTextureCore(unsigned short tpage, unsigned short clut,
 	char safeSuffix[48] = {};
 	const bool hasSuffix = filenameSuffix && filenameSuffix[0] &&
 		HdTextureOverrides_MakeSafeNameToken(filenameSuffix, safeSuffix, sizeof(safeSuffix));
+	char variantToken[24] = {};
+	if (hasPaletteVariant)
+		snprintf(variantToken, sizeof(variantToken), "_clut%u", (unsigned)paletteClut);
 	char fileName[128] = {};
-	const int fileNameLength = hasSuffix
-		? snprintf(fileName, sizeof(fileName), "%s_p%d_i%d_%s.png", safeName, texturePage, textureIndex, safeSuffix)
-		: snprintf(fileName, sizeof(fileName), "%s_p%d_i%d.png", safeName, texturePage, textureIndex);
+	int fileNameLength = 0;
+	if (hasPaletteVariant && hasSuffix)
+		fileNameLength = snprintf(fileName, sizeof(fileName), "%s_p%d_i%d%s_%s.png", safeName, texturePage, textureIndex, variantToken, safeSuffix);
+	else if (hasPaletteVariant)
+		fileNameLength = snprintf(fileName, sizeof(fileName), "%s_p%d_i%d%s.png", safeName, texturePage, textureIndex, variantToken);
+	else if (hasSuffix)
+		fileNameLength = snprintf(fileName, sizeof(fileName), "%s_p%d_i%d_%s.png", safeName, texturePage, textureIndex, safeSuffix);
+	else
+		fileNameLength = snprintf(fileName, sizeof(fileName), "%s_p%d_i%d.png", safeName, texturePage, textureIndex);
 	if (fileNameLength <= 0 || fileNameLength >= (int)sizeof(fileName))
 	{
 		free(vram); free(rgba);
@@ -1788,7 +1981,8 @@ static bool ExportTextureCore(unsigned short tpage, unsigned short clut,
 	ManifestEntryLocation located = {};
 	bool entryFound = false;
 	if (existingText && FindTexturesArraySpan(existingText, existingBytes, &spanBegin, &spanEnd))
-		entryFound = LocateTextureEntry(spanBegin, spanEnd, textureName, texturePage, textureIndex, &located);
+		entryFound = LocateTextureEntry(spanBegin, spanEnd, textureName, texturePage, textureIndex,
+			(int)paletteClut, hasPaletteVariant, &located);
 
 	char outputPath[448] = {};
 	if (entryFound && located.hasFile)
@@ -1846,31 +2040,46 @@ static bool ExportTextureCore(unsigned short tpage, unsigned short clut,
 
 	if (entryFound)
 	{
-		// Reuse the existing entry: merge references textually and keep the
-		// mapped file. A second registration is never appended.
+		// Reuse the existing entry: merge references textually, keep the mapped
+		// file, and backfill descriptive type/level metadata the entry predates.
+		// A second registration is never appended.
 		char stored[16][HD_TEXTURE_MODEL_REFERENCE_CAPACITY] = {};
 		char merged[16][HD_TEXTURE_MODEL_REFERENCE_CAPACITY] = {};
 		int storedCount = 0;
 		if (located.hasReferences)
 			storedCount = ParseModelReferencesValue(located.referencesBegin, located.referencesEnd, stored, 16);
 
-		bool changed = false;
+		bool referencesChanged = false;
+		std::string mergedReferencesJson;
 		if (storedCount >= 0)
 		{
 			const int mergedCount = MergeReferenceLists(stored, storedCount, modelReferences,
-				modelReferenceCount, merged, 16, &changed);
-			if (changed)
+				modelReferenceCount, merged, 16, &referencesChanged);
+			if (referencesChanged)
 			{
 				const char* mergedPointers[16];
 				for (int i = 0; i < mergedCount && i < 16; ++i) mergedPointers[i] = merged[i];
-				const std::string mergedText = ReplaceReferencesInManifest(existingText, existingBytes, located,
-					BuildModelReferencesJson(mergedPointers, mergedCount));
-				const bool published = PublishManifestFile(manifestPath, existingText, existingBytes, mergedText, status, statusCapacity);
-				free(existingText);
-				if (published)
-					snprintf(status, statusCapacity, "Exported and replaced %s; merged model references in mod %s", textureName, modId);
-				return published;
+				mergedReferencesJson = BuildModelReferencesJson(mergedPointers, mergedCount);
 			}
+		}
+
+		const bool backfillType = hasType && !located.hasType;
+		const bool backfillLevel = hasLevel && !located.hasLevel;
+		if (referencesChanged || backfillType || backfillLevel)
+		{
+			const std::string updated = RewriteManifestEntry(existingText, existingBytes, located,
+				referencesChanged ? &mergedReferencesJson : NULL,
+				backfillType ? typeToken : NULL, backfillLevel ? levelToken : NULL);
+			const bool published = PublishManifestFile(manifestPath, existingText, existingBytes, updated, status, statusCapacity);
+			free(existingText);
+			if (published)
+			{
+				snprintf(status, statusCapacity, referencesChanged
+					? "Exported and replaced %s; merged model references in mod %s"
+					: "Exported and replaced %s; recorded type/level metadata in mod %s",
+					textureName, modId);
+			}
+			return published;
 		}
 
 		free(existingText);
@@ -1881,7 +2090,8 @@ static bool ExportTextureCore(unsigned short tpage, unsigned short clut,
 	// No existing entry: append one that points at the freshly written file.
 	const std::string escapedTextureName = BuildJsonString(textureName);
 	const std::string entry = BuildManifestEntry(escapedTextureName, texturePage, textureIndex, relativePrefix,
-		fileName, referencesJson, typeToken, levelToken);
+		fileName, referencesJson, typeToken, levelToken,
+		hasPaletteVariant ? (int)paletteClut : 0, hasPaletteVariant);
 
 	if (existingText)
 	{
@@ -1940,6 +2150,33 @@ bool HdTextureOverrides_ExportTextureWithContext(unsigned short tpage, unsigned 
 {
 	return ExportTextureCore(tpage, clut, u, v, width, height, textureName, texturePage,
 		textureIndex, modId, NULL, NULL, 0, context, status, statusCapacity);
+}
+
+int HdTextureOverrides_ExportPaletteVariants(unsigned short tpage, unsigned short u, unsigned short v,
+	unsigned short width, unsigned short height, const char* textureName, int texturePage, int textureIndex,
+	const char* modId, const int* cluts, int clutCount, const HdTextureExportContext* context,
+	char* status, int statusCapacity)
+{
+	if (!cluts || clutCount <= 0)
+		return 0;
+
+	int exported = 0;
+	for (int i = 0; i < clutCount; ++i)
+	{
+		HdTextureExportContext variant = {};
+		if (context)
+			variant = *context;
+		variant.hasPaletteClut = 1;
+		variant.paletteClut = cluts[i];
+
+		char variantStatus[HD_TEXTURE_BATCH_MESSAGE_CAPACITY] = {};
+		if (ExportTextureCore(tpage, (unsigned short)cluts[i], u, v, width, height, textureName,
+			texturePage, textureIndex, modId, NULL, NULL, 0, &variant, variantStatus, sizeof(variantStatus)))
+			++exported;
+		if (status && statusCapacity > 0)
+			snprintf(status, statusCapacity, "%s", variantStatus);
+	}
+	return exported;
 }
 
 bool HdTextureOverrides_MakeSafeNameToken(const char* text, char* out, int capacity)

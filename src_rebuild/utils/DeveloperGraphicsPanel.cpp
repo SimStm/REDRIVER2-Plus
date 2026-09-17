@@ -897,6 +897,16 @@ void DrawThreeDDebugTab()
 		? "Base palette: original colours, keeps CLUT recolouring working."
 		: "Primitive palette: the colours this instance currently shows.");
 
+	// Alpha convention visibility: 0000h is always a cutout, while STP=1 only
+	// becomes half alpha when the draw that consumes the texture actually
+	// blends. On an opaque draw PSX ignores STP, so the export stays opaque.
+	if (hasTexture)
+	{
+		ImGui::TextDisabled(selection.semiTransparent
+			? "Exported alpha: 0000h -> cutout, STP=1 -> 128 (semi-transparent draw)."
+			: "Exported alpha: 0000h -> cutout, STP=1 -> 255 (opaque draw).");
+	}
+
 #ifdef _WIN32
 	const bool exportSupported = true;
 #else
@@ -906,14 +916,59 @@ void DrawThreeDDebugTab()
 	ImGui::BeginDisabled(!hasTexture || !exportSupported);
 	if (ImGui::Button("Export original full texture (PNG)"))
 	{
-		const HdTextureExportContext context = { HdTextureOverrides_ObjectTypeFromKey(selection.object.key),
-			LevelNames[GameLevel] };
+		HdTextureExportContext context = {};
+		context.objectType = HdTextureOverrides_ObjectTypeFromKey(selection.object.key);
+		context.levelName = LevelNames[GameLevel];
+		context.blendModeKnown = 1;
+		context.semiTransparent = selection.semiTransparent;
 		HdTextureOverrides_ExportTextureWithContext(selection.tpage, selection.clut, textureInfo.u, textureInfo.v,
 			textureInfo.width, textureInfo.height, textureInfo.textureName, textureInfo.texturePage,
 			textureInfo.textureIndex, g_inspectorExportModId, &context, g_inspectorExportStatus, sizeof(g_inspectorExportStatus));
 	}
 	ImGui::EndDisabled();
 	if (!hasTexture) ImGui::TextDisabled("PNG unavailable: select a primitive inside a registered texture region.");
+
+	// Palette variants: cars and pedestrians share one (name, page, index)
+	// identity across every runtime palette, so export each palette as its own
+	// PNG and manifest entry. civ_clut is indexed by car palette block, texture
+	// id and palette; pedestrians use block 0.
+	if (hasTexture && exportSupported)
+	{
+		const char* variantType = HdTextureOverrides_ObjectTypeFromKey(selection.object.key);
+		const bool isCar = strcmp(variantType, "cars") == 0;
+		const bool isPedestrian = strcmp(variantType, "pedestrians") == 0;
+		const int carPalette = isCar ? GetCarPalIndex(selection.tpage) : 0;
+		if ((isCar || isPedestrian) && textureInfo.textureIndex >= 0 && textureInfo.textureIndex < 32)
+		{
+			int variantCluts[6];
+			int variantCount = 0;
+			for (int pal = 0; pal < 6; ++pal)
+			{
+				const int variantClut = civ_clut[carPalette][textureInfo.textureIndex][pal];
+				if (variantClut == 0) continue;
+				bool duplicate = false;
+				for (int v = 0; v < variantCount; ++v) if (variantCluts[v] == variantClut) { duplicate = true; break; }
+				if (!duplicate) variantCluts[variantCount++] = variantClut;
+			}
+			ImGui::BeginDisabled(variantCount == 0);
+			if (ImGui::Button("Export all palette variants (PNG)"))
+			{
+				HdTextureExportContext variantContext = {};
+				variantContext.objectType = variantType;
+				variantContext.levelName = LevelNames[GameLevel];
+				variantContext.blendModeKnown = 1;
+				variantContext.semiTransparent = selection.semiTransparent;
+				HdTextureOverrides_ExportPaletteVariants(selection.tpage, textureInfo.u, textureInfo.v,
+					textureInfo.width, textureInfo.height, textureInfo.textureName, textureInfo.texturePage,
+					textureInfo.textureIndex, g_inspectorExportModId, variantCluts, variantCount,
+					&variantContext, g_inspectorExportStatus, sizeof(g_inspectorExportStatus));
+			}
+			ImGui::EndDisabled();
+			ImGui::SameLine();
+			ImGui::TextDisabled("Palette variants: %d (block %d)", variantCount, carPalette);
+		}
+	}
+
 	ImGui::BeginDisabled(!hasCar || !exportSupported);
 	if (ImGui::Button("Export selected car geometry (OBJ)"))
 		Cars_ExportInspectorModel(selectedCarId, g_inspectorExportModId, g_inspectorExportStatus, sizeof(g_inspectorExportStatus));
@@ -1088,6 +1143,18 @@ void DrawModsTab()
 			HdTextureOverrides_SetEnabled(enabled);
 		ImGui::SameLine();
 		HelpMarker("Takes effect on the next primitive without reloading the level. Manifest or PNG edits require a reload or a level reload.");
+
+		bool proportionalAlpha = g_cfg_overrideProportionalAlpha != 0;
+		if (ImGui::Checkbox("Proportional override alpha", &proportionalAlpha))
+		{
+			g_cfg_overrideProportionalAlpha = proportionalAlpha ? 1 : 0;
+			DeveloperGraphicsSettings_SaveRuntime();
+		}
+		ImGui::SameLine();
+		HelpMarker("Off (default): an override texel below 0.5 alpha is a hole, the behaviour existing mods were authored against.\n\nOn: on BM_AVERAGE draws the imported alpha blends proportionally, so 0/64/128/192/255 give five steps, while alpha 0 still cuts out and 128 still reproduces the original STP=1 blend. Additive, subtractive and opaque draws keep the binary cutout so rendered results and picking agree.");
+		ImGui::TextDisabled(proportionalAlpha
+			? "Override alpha: proportional on BM_AVERAGE; 0 cuts out, 128 matches the original STP=1 blend."
+			: "Override alpha: binary 0.5 cutout (compatibility default).");
 	}
 	else
 	{
@@ -1098,6 +1165,13 @@ void DrawModsTab()
 		diagnostics.activeMods, diagnostics.manifestEntries);
 	ImGui::Text("Loaded RGBA images: %d | active renderer mappings: %d", diagnostics.loadedImages,
 		diagnostics.registeredOverrides);
+	if (diagnostics.pageRegistrationCount > 0)
+	{
+		const double averageMicros = (double)diagnostics.pageRegistrationMicros / diagnostics.pageRegistrationCount;
+		ImGui::Text("Page registration: %.3f ms over %d pages (%d textures, avg %.1f us/page)",
+			diagnostics.pageRegistrationMicros / 1000.0, diagnostics.pageRegistrationCount,
+			diagnostics.pageRegistrationTextures, averageMicros);
+	}
 	ImGui::TextWrapped("%s", diagnostics.status);
 
 	char modsDirectory[512];

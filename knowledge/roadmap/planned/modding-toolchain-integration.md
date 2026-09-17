@@ -26,7 +26,7 @@ Do not assume the tools are a drop-in runtime dependency. Do not copy code witho
 
 ## Dependencies and risks
 
-Order 08; read-only format/license investigation can happen earlier. Implement adapters after the catalog contract in [04](asset-catalog-identity.md). Supply evidence for [09](model-export-import-roundtrip.md).
+Order 08; read-only format/license investigation can happen earlier. Implement adapters after the catalog contract in [04](../done/asset-catalog-identity.md). Supply evidence for [09](model-export-import-roundtrip.md).
 
 ## Suggested execution order
 

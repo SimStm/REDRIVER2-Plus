@@ -22,6 +22,10 @@ content.
   re-serialized, so fields the loader ignores survive.
 - **Existing key:** the PNG is replaced and the registration is reported as
   already present; the existing `file` reference is never redirected.
+- **Existing key metadata merge:** a re-export with a context merges new
+  `modelReferences` into the entry and backfills the descriptive `type`/`level`
+  fields an entry created before they existed lacks, without duplicating the
+  entry or the fields. An entry that already carries them is left alone.
 - **Wildcard entries** (an entry without `texturePage`/`textureIndex`) do not
   match a specific export; the specific entry is appended and the wildcard is
   preserved.
@@ -36,9 +40,10 @@ content.
 ## Limits
 
 - Automated tests cover repeated exports, wildcard entries, duplicate legacy
-  pairs, unknown fields, malformed documents and repeated writes. Escaped
-  texture names and an actually denied/destination write are not covered by an
-  automated test; publication still preserves the previous file by design.
+  pairs, unknown fields, malformed documents, repeated writes, reference
+  merging and type/level backfill. Escaped texture names and an actually
+  denied/destination write are not covered by an automated test; publication
+  still preserves the previous file by design.
 - The loader ignores unknown metadata, but the merge itself only understands the
   `textures` array; adding new top-level schema fields is out of scope.
 

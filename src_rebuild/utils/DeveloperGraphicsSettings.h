@@ -13,6 +13,7 @@ struct DeveloperGraphicsSettings
 	int hdTextureOverrides;
 	int organizeTextureExports;
 	int exportBaseColours;
+	int overrideProportionalAlpha;
 };
 
 DeveloperGraphicsSettings DeveloperGraphicsSettings_ReadRuntime();

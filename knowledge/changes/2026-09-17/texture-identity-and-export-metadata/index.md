@@ -93,9 +93,13 @@ of a texture or producer rather than of the picking policy:
 
 - Transparency is currently a hard cutout, and the exporter encodes "PSX
   transparent" as pure black, which punches holes in opaque textures. Both are
-  planned as
-  [`texture-export-alpha-fidelity`](../../roadmap/planned/texture-export-alpha-fidelity.md)
+  completed as
+  [`texture-export-alpha-fidelity`](../../../roadmap/done/texture-export-alpha-fidelity.md)
   and
-  [`semi-transparent-texture-overrides`](../../roadmap/planned/semi-transparent-texture-overrides.md).
+  [`semi-transparent-texture-overrides`](../../../roadmap/done/semi-transparent-texture-overrides.md).
 - Catalog-driven batches export the registered base CLUT while a single export
-  uses the clicked primitive's CLUT; exporting palette variants is not modelled.
+  uses the clicked primitive's CLUT. Palette variants are now modelled through a
+  manifest `clut` field and an **Export all palette variants (PNG)** action; see
+  [`texture-palette-variants`](../../../product/texture-palette-variants.md).
+- The load cost of registering streamed pages was measured; see
+  [`texture-page-registration-cost`](../texture-page-registration-cost/index.md).

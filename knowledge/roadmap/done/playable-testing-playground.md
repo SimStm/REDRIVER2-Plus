@@ -39,7 +39,7 @@ playground first as the test environment for renderer modernization. This
 request creates roadmap records; it does not start implementation.
 
 - [Playground discussion and source investigation](../../discussions/playable-testing-playground/index.md)
-- [Renderer modernization roadmap](renderer-modernization.md): depends on the
+- [Renderer modernization roadmap](../planned/renderer-modernization.md): depends on the
   minimum playground handoff below before its first in-game modern mesh slice.
 - [Renderer discussion](../../discussions/renderer-modernization/index.md)
 

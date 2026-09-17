@@ -38,7 +38,7 @@ Do not overwrite an existing entry's `file` on ordinary export. Do not treat a m
 
 ## Dependencies and risks
 
-Order 03 after export correctness review in [00](mod-system-pr-readiness.md). Required before [05](object-texture-batch-export.md). Consult the existing filename reconstruction rule.
+Order 03 after export correctness review in [00](mod-system-pr-readiness.md). Required before [05](../planned/object-texture-batch-export.md). Consult the existing filename reconstruction rule.
 
 ## Suggested execution order
 

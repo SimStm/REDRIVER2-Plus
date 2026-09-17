@@ -24,7 +24,7 @@ deliberate initialization path, not merely drawing a plane.
 
 On 2026-09-15 the user requested a roadmap and selected the playground as the
 first implementation stage for renderer modernization. The
-[playground roadmap](../../roadmap/planned/playable-testing-playground.md)
+[playground roadmap](../../roadmap/done/playable-testing-playground.md)
 defines the adopted bounded scope and the
 [renderer roadmap](../../roadmap/planned/renderer-modernization.md) consumes it.
 No implementation has started through this documentation task.
