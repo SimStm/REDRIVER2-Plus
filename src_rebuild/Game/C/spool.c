@@ -508,6 +508,13 @@ void SendTPage(void)
 			}
 
 			texture_pages[tpage2send] = getTPage(0, 0, tpage.x, tpage.y);
+
+#ifndef PSX
+			// The page's VRAM slot is now known, so its texture names can be
+			// registered. Without this a streamed page had no names and every
+			// primitive drawn from it reported an unregistered texture.
+			RegisterHdTextureOverridesForPage(tpage2send);
+#endif
 		}
 	}
 	else 

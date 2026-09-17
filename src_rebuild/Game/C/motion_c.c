@@ -20,6 +20,11 @@
 #include <math.h>
 #endif
 
+#ifndef PSX
+#include "assetcatalog.h"
+#include "PsyX/PsyX_public.h"
+#endif
+
 enum LIMBS
 {
 	ROOT = 0,
@@ -46,6 +51,46 @@ enum LIMBS
 	RTOE = 21,
 	JOINT = 22,
 };
+
+#ifndef PSX
+// Stable inspector identity for a pedestrian. The pool slot is the instance
+// identity, exactly like a car slot; the pool pointer itself is never an id.
+// A body part's logical parent is embedded in its component key.
+static void Ped_BuildInspectorKey(LPPEDESTRIAN pPed, char* out, int capacity)
+{
+	AssetCatalogContext catalogContext;
+	const int cityVariant = AssetCatalog_GetContext(&catalogContext) ? catalogContext.variant : (int)GetCityType();
+	const int slot = (int)(pPed - pedestrians);
+	snprintf(out, capacity, "ped:%d:%d:%d:%d", GameLevel, cityVariant, slot, (int)pPed->pedType);
+}
+
+// Registers the primitives a pedestrian part producer just submitted as a
+// component of the pedestrian instance, so a bone or head resolves to a stable
+// identity and a logical parent without a runtime pointer. Ranges are
+// frame-local; nothing here changes geometry, packets or animation.
+static void Ped_RegisterComponent(LPPEDESTRIAN pPed, const char* kind, int index,
+	const void* begin, const void* end, const char* name)
+{
+	char parentKey[ASSET_CATALOG_ID_CAPACITY];
+	char componentKey[ASSET_CATALOG_ID_CAPACITY];
+	char inspectorLabel[PSYX_INSPECTOR_LABEL_LENGTH];
+	const int slot = (int)(pPed - pedestrians);
+
+	Ped_BuildInspectorKey(pPed, parentKey, sizeof(parentKey));
+	if (!AssetCatalog_MakeComponentKey(parentKey, kind, index, componentKey, sizeof(componentKey)))
+		return;
+
+	PsyXInspectorObject object = {};
+	snprintf(object.key, sizeof(object.key), "%s", componentKey);
+	snprintf(object.modelName, sizeof(object.modelName), "%s %d", name, index);
+	object.modelIndex = -1;
+	object.position[0] = pPed->position.vx;
+	object.position[1] = pPed->position.vy;
+	object.position[2] = pPed->position.vz;
+	snprintf(inspectorLabel, sizeof(inspectorLabel), "%s %d of ped #%d", name, index, slot);
+	PsyX_Inspector_RegisterObjectRange(begin, end, inspectorLabel, &object);
+}
+#endif
 
 enum TEXTURE_PALS
 {
@@ -590,10 +635,17 @@ void DrawBodySprite(LPPEDESTRIAN pDrawingPed, int boneId, VERTTYPE v1[2], VERTTY
 		dy1 = y >> tmp2;
 	}
 
+#ifndef PSX
+	const void* componentBegin = current->primptr;
+#endif
 	prims = (POLY_FT4*)current->primptr;
 	setPolyFT4(prims);
 
 	current->primptr += sizeof(POLY_FT4);
+
+#ifndef PSX
+	Ped_RegisterComponent(pDrawingPed, "bone", (int)bone, componentBegin, current->primptr, "Bone");
+#endif
 
 	prims->x0 = v1[0] + FIXEDH(cs) + dx2;
 	prims->y0 = v1[1] + FIXEDH(sn) + dy2;
@@ -1171,8 +1223,14 @@ void newShowTanner(LPPEDESTRIAN pDrawingPed)
 						bias = 1;
 					else if (id == HEAD)
 						bias = 0;
-					
+
+#ifndef PSX
+					const void* componentBegin = current->primptr;
+#endif
 					RenderModel(model, NULL, &v, bias, PLOT_NO_SHADE, 0, 0);
+#ifndef PSX
+					Ped_RegisterComponent(pDrawingPed, "bone", id, componentBegin, current->primptr, "Bone");
+#endif
 				}
 
 #if 0
@@ -2018,7 +2076,13 @@ void DoCivHead(LPPEDESTRIAN pPed, SVECTOR* vert1, SVECTOR* vert2)
 	if (gNight)
 		combointensity = 0x404040;
 
+#ifndef PSX
+	const void* headComponentBegin = current->primptr;
+#endif
 	RenderModel(gPed1HeadModelPtr, pHeadRot, &pos, 1, flags, 0, 0);
+#ifndef PSX
+	Ped_RegisterComponent(pPed, "head", 0, headComponentBegin, current->primptr, "Head");
+#endif
 
 	combointensity = oldcombointensity;
 }

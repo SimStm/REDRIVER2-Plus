@@ -45,3 +45,5 @@ src_rebuild/*.make
 src_rebuild/Makefile
 data/DRIVER2/*
 data/_DRIVER2/*
+# Agent configuration for this checkout, not part of the project.
+.opencode/*

@@ -132,6 +132,11 @@ point math, timing, or rendering can affect compatibility.
   source file that is not already covered by the existing glob rules.
 - Run the smallest relevant validation available: `git diff --check` for text
   changes, then the appropriate generated build when the toolchain is present.
+  For the asset catalog or the inspector export path, run
+  `pwsh -NoProfile -File scripts/run_inspector_tests.ps1`, which builds and runs
+  `AssetCatalogTests` and `InspectorExportTests` in fresh directories.
+  `InspectorExportTests` is not idempotent, so never run it twice in the same
+  working directory.
 - All new documentation and developer-facing prose must be written in English.
 - Capture durable conventions in `knowledge/rules/` at the time they are
   learned; use `knowledge/changes/` for the context of shipped changes.

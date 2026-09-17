@@ -101,6 +101,60 @@ bool AssetCatalog_GetTexture(int record, char* name, int nameCapacity,
 bool AssetCatalog_MakeTextureId(const char* name, int texturePage, int textureIndex,
 	char* out, int capacity);
 
+/* --- component / parent identity ------------------------------------------ */
+
+/* A component is a named part of a parent instance: a wheel of a live car, a
+   bone of a pedestrian. The parent is an instance or resource key, never a raw
+   runtime pointer, and a component key is a stable string:
+       "<parentKey>/component:<kind>:<index>"
+   `kind` is a short game-owned token without '/' or ':' (for example "wheel"
+   or "bone"); `index` is the component ordinal inside that parent. The mod
+   override key is untouched; components are inspector identity only. */
+bool AssetCatalog_MakeComponentKey(const char* parentKey, const char* kind, int index,
+	char* out, int capacity);
+
+/* True when the key names a component of another key. */
+bool AssetCatalog_IsComponentKey(const char* key);
+
+/* Splits a component key into parent, kind and index. Returns false for a plain
+   key, a malformed key, or an output buffer too small (the capacities include
+   the terminator). Any output pointer may be NULL. */
+bool AssetCatalog_ParseComponentKey(const char* key, char* parentOut, int parentCapacity,
+	char* kindOut, int kindCapacity, int* index);
+
+/* --- retained selection anchors ------------------------------------------- */
+
+/* Outcome of validating a retained selection against the live catalog. */
+typedef enum AssetCatalogSelectionState
+{
+	ASSET_CATALOG_SELECTION_NONE = 0,	/* no anchor was captured */
+	ASSET_CATALOG_SELECTION_VALID,		/* the retained resource is still live */
+	ASSET_CATALOG_SELECTION_STALE,		/* generation/revision changed or the slot was reused */
+	ASSET_CATALOG_SELECTION_UNKNOWN		/* no model could be resolved from the key */
+} AssetCatalogSelectionState;
+
+/* A retained reference to the resource behind an inspector selection key. It
+   carries the generation and, for a key that embeds a model id, the model
+   handle, so a level change or streamed-slot reuse can be detected instead of
+   silently retargeting the selection. Instances (car/pedestrian slots) have no
+   model part and report UNKNOWN here; the caller validates those separately. */
+typedef struct AssetCatalogAnchor
+{
+	bool valid;
+	unsigned int generation;
+	bool hasModel;
+	AssetCatalogHandle model;
+	char key[ASSET_CATALOG_ID_CAPACITY];
+} AssetCatalogAnchor;
+
+/* Captures an anchor for a selection key. An embedded "model:<level>:<variant>:
+   <index>" (as used by building:/tile:/anim: keys, or a model resource key)
+   resolves to a model handle; a component key anchors through its parent. */
+bool AssetCatalog_CaptureAnchor(const char* key, AssetCatalogAnchor* anchor);
+
+/* Revalidates a retained anchor against the current catalog. */
+AssetCatalogSelectionState AssetCatalog_CheckAnchor(const AssetCatalogAnchor* anchor);
+
 /* --- relationships -------------------------------------------------------- */
 
 /* Many-to-many model <-> texture. Adds the pair once; returns false on a

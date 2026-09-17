@@ -47,6 +47,17 @@ struct HdTextureInspectorInfo
 
 #define HD_TEXTURE_MODEL_REFERENCE_CAPACITY 128
 #define HD_TEXTURE_MODEL_REFERENCES_MAX 8
+#define HD_TEXTURE_CONTEXT_CAPACITY 32
+
+// Descriptive metadata for one export: which kind of object the texture belongs
+// to and which level uses it. It never changes the identity triple or the
+// override matching key; it is written to the manifest and, when organized
+// export is enabled, becomes part of the output directory.
+struct HdTextureExportContext
+{
+	const char* objectType;	// "buildings", "cars", "pedestrians", ...
+	const char* levelName;	// "CHICAGO", "HAVANA", ...
+};
 
 // One resource requested by a batch export. Model references are informational
 // metadata: they are written to the manifest but never change the identity
@@ -60,6 +71,8 @@ struct HdTextureOverrideBatchItem
 	char filenameSuffix[48];
 	char modelReferences[HD_TEXTURE_MODEL_REFERENCES_MAX][HD_TEXTURE_MODEL_REFERENCE_CAPACITY];
 	int modelReferenceCount;
+	char objectType[HD_TEXTURE_CONTEXT_CAPACITY];
+	char levelName[HD_TEXTURE_CONTEXT_CAPACITY];
 };
 
 struct HdTextureOverrideBatchResult
@@ -124,10 +137,53 @@ bool HdTextureOverrides_GetEntryInfo(int index, HdTextureOverrideEntryInfo* info
 bool HdTextureOverrides_FindTextureInfo(unsigned short tpage, unsigned short clut,
 	unsigned short u, unsigned short v, unsigned short width, unsigned short height,
 	HdTextureInspectorInfo* info);
+/* Diagnostic: explains a texture-name lookup. Fills g_hdDebugPageClutMatches
+   (known textures sharing the page/CLUT), g_hdDebugRegionMatches (those that
+   also contain the region) and g_hdDebugBestIndex (the containing entry). */
+extern int g_hdDebugPageClutMatches;
+extern int g_hdDebugRegionMatches;
+extern int g_hdDebugBestIndex;
+extern char g_hdDebugBestName[48];
+extern int g_hdDebugPageMatches;
+extern int g_hdDebugPageFirstClut;
+extern char g_hdDebugPageFirstName[48];
+extern int g_hdDebugXYMatches;
+extern int g_hdDebugXYFirstClut;
+extern char g_hdDebugXYFirstName[48];
+/* Named textures on the same page that contain the region but whose CLUT
+   differs: the palette fallback used to resolve car/pedestrian palettes. */
+extern int g_hdDebugPaletteFallbackMatches;
+void HdTextureOverrides_DebugRegion(unsigned short tpage, unsigned short clut,
+	unsigned short u, unsigned short v, unsigned short width, unsigned short height);
 bool HdTextureOverrides_ExportTexture(unsigned short tpage, unsigned short clut,
 	unsigned short u, unsigned short v, unsigned short width, unsigned short height,
 	const char* textureName, int texturePage, int textureIndex, const char* modId,
 	char* status, int statusCapacity);
+
+// Same export with object/level metadata. The plain overload above keeps the
+// historical behaviour of exporting without metadata.
+bool HdTextureOverrides_ExportTextureWithContext(unsigned short tpage, unsigned short clut,
+	unsigned short u, unsigned short v, unsigned short width, unsigned short height,
+	const char* textureName, int texturePage, int textureIndex, const char* modId,
+	const HdTextureExportContext* context, char* status, int statusCapacity);
+
+// When enabled, exports are written under assets/inspector/<type>/<level>/ and
+// the manifest records that relative path. Disabled by default; the manifest
+// always stores the real location either way.
+void HdTextureOverrides_SetOrganizedExport(int enabled);
+int HdTextureOverrides_IsOrganizedExportEnabled();
+
+// When enabled (the default), an export resolves the palette the level
+// registered for the exported region instead of the palette the clicked
+// primitive is drawn with. Cars and pedestrians use runtime palettes, so this
+// chooses between "original colours, best for CLUT recolouring mods" and "the
+// colours this instance currently shows".
+void HdTextureOverrides_SetBaseColourExport(int enabled);
+int HdTextureOverrides_IsBaseColourExportEnabled();
+
+// Maps an inspector object key ("building:...", "car:...") to a stable type
+// token used for export metadata and the organized directory. Never NULL.
+const char* HdTextureOverrides_ObjectTypeFromKey(const char* key);
 
 // Sanitizes an arbitrary model label into a short, filesystem-safe token.
 // Returns false and clears out when no usable character remains.

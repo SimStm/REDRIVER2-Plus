@@ -251,6 +251,10 @@ void DrawSprites(PACKED_CELL_OBJECT** sprites, int numFound)
 
 		z = Apply_InvCameraMatrixAndSetMatrix((VECTOR_NOPAD*)plotContext.scribble, (MATRIX2*)&face_camera);
 
+#ifndef PSX
+		const void* spriteBegin = plotContext.primptr;
+#endif
+
 		if (z < 1000)
 		{
 			POLYFT4* src;
@@ -296,6 +300,45 @@ void DrawSprites(PACKED_CELL_OBJECT** sprites, int numFound)
 
 			plotContext.ot += 133;
 		}
+
+#ifndef PSX
+		// Sprite scenery (trees and other billboards) used to carry no identity at
+		// all: the canopy is plotted as a subdivided mesh, so a click resolved a
+		// single mesh triangle and reported an unsupported source. Register the
+		// billboard as a resource-backed object like the other producers do, so
+		// the whole sprite selects as one object. The ground shadow that follows
+		// is deliberately left outside the range.
+		if (plotContext.primptr != spriteBegin)
+		{
+			PsyXInspectorObject inspectorObject = {};
+			inspectorObject.modelIndex = modelnumber;
+			const char* inspectorSpriteName = GetModelNameByIndex(modelnumber);
+			snprintf(inspectorObject.modelName, sizeof(inspectorObject.modelName), "%s",
+				inspectorSpriteName ? inspectorSpriteName : "Unnamed model");
+			inspectorObject.vertexCount = model->num_vertices;
+			inspectorObject.polygonCount = model->num_polys;
+			inspectorObject.position[0] = pco->pos.vx;
+			inspectorObject.position[1] = pco->pos.vy;
+			inspectorObject.position[2] = pco->pos.vz;
+
+			char spriteCatalogId[ASSET_CATALOG_ID_CAPACITY];
+			if (AssetCatalog_MakeModelId(modelnumber, spriteCatalogId, sizeof(spriteCatalogId)))
+			{
+				snprintf(inspectorObject.key, sizeof(inspectorObject.key), "sprite:%s:%d:%d:%d",
+					spriteCatalogId, pco->pos.vx, pco->pos.vy, pco->pos.vz);
+			}
+			else
+			{
+				snprintf(inspectorObject.key, sizeof(inspectorObject.key), "sprite:%d:%d:%d:%d:%d",
+					GameLevel, modelnumber, pco->pos.vx, pco->pos.vy, pco->pos.vz);
+			}
+
+			char inspectorSpriteLabel[PSYX_INSPECTOR_LABEL_LENGTH];
+			snprintf(inspectorSpriteLabel, sizeof(inspectorSpriteLabel), "Sprite | %s | model %d",
+				inspectorObject.modelName, modelnumber);
+			PsyX_Inspector_RegisterObjectRange(spriteBegin, plotContext.primptr, inspectorSpriteLabel, &inspectorObject);
+		}
+#endif
 
 #ifdef PSX
 #define MAX_TREE_SHADOW_DISTANCE 7000

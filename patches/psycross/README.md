@@ -20,6 +20,28 @@ independent of LOD/display labels. Captured triangles expose source texture
 regions for the selected-object texture list. The renderer remains independent
 of game model types and mod-directory policy.
 
+Picking resolves candidates from the completed draw stream. Because the stream
+is walked in ordering-table order, arrival order is used as the depth test, but
+an identified source (a producer that registered a primitive range) is preferred
+over unidentified geometry, so screen-space overlays and effects can no longer
+shadow the scene they are composited over. The cursor is also projected back
+into the split's emulated display area so the viewport and display bounds are
+respected. `PsyX_Inspector_GetRangeInfo` exposes each frame-local range and the
+number of parsed vertices it owns; a range with zero vertices is registered but
+unreachable, which callers report instead of failing silently.
+`PsyX_Inspector_GetPickCostMicros` reports the CPU cost of the last resolved
+pick so the one-off cost can be measured next to the frame statistics.
+`PsyX_Inspector_GetSelectionRangeIndex` and `PsyX_Inspector_GetRangeBounds`
+expose the projected screen bounds of the selected source, so a source that is
+registered but not reachable (or that is occluded) can be located and reported.
+
+Picking mirrors the override cutout on the CPU: textures with transparency keep
+a one-bit-per-texel coverage mask (bounded, retained only for non-opaque images),
+and a pick that lands on an override samples that mask at the cursor using the
+shader's override UV mapping, so texels the renderer discards are skipped
+instead of selected. `PsyXInspectorSelection.cutoutSampled` reports whether the
+coverage was consulted.
+
 Override draws enable an explicit cutout: the 32-bit RGBA shader discards
 fragments whose alpha is below 0.5 only while a region override is active.
 Original PSX sampling and the high-resolution font/texture path keep their

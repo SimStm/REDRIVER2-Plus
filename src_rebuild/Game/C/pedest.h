@@ -15,6 +15,7 @@ extern int bKillTanner;
 extern int bReverseYRotation;
 
 extern LPPEDESTRIAN pUsedPeds;
+extern PEDESTRIAN pedestrians[MAX_PEDESTRIANS];
 
 extern void ProcessChairLump(char *lump_file, int lump_size); // 0x00073328
 

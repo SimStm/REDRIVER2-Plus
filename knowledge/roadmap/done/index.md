@@ -29,6 +29,9 @@ completed, as described in the [roadmap catalog](../index.md).
 - **04 — [Source-aware asset catalog and material identity](asset-catalog-identity.md)**:
   implemented 2026-09-15; product document
   [`knowledge/product/asset-catalog-identity.md`](../../product/asset-catalog-identity.md).
+- **06 — [Whole-object selection across renderer categories](inspector-selection-coverage.md)**:
+  implemented 2026-09-16; product document
+  [`knowledge/product/inspector-selection-coverage.md`](../../product/inspector-selection-coverage.md).
 - **13 — [Playable testing playground](playable-testing-playground.md)**:
   implemented 2026-09-15; product document
   [`knowledge/product/playable-testing-playground.md`](../../product/playable-testing-playground.md).

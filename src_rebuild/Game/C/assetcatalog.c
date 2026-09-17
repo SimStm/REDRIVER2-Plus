@@ -3,6 +3,7 @@
 #ifndef PSX
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 /*
@@ -14,6 +15,10 @@ namespace
 {
 // Cover every addressable model/texture slot a streaming level can touch, not
 // just the resident set: a model index is registered once and reused.
+// Marks a component key and separates it from its parent instance key. Neither
+// the parent nor the component token may contain it, so keys round-trip.
+const char kComponentMarker[] = "/component:";
+
 const int kMaxModels = 1536;
 const int kMaxTextures = 2048;
 const int kMaxCars = 32;
@@ -345,6 +350,126 @@ bool AssetCatalog_MakeTextureId(const char* name, int texturePage, int textureIn
 		return false;
 
 	return snprintf(out, capacity, "tex:%s:%d:%d", name ? name : "", texturePage, textureIndex) > 0;
+}
+
+bool AssetCatalog_MakeComponentKey(const char* parentKey, const char* kind, int index,
+	char* out, int capacity)
+{
+	if (out == NULL || capacity <= 0 || parentKey == NULL || parentKey[0] == '\0' ||
+		kind == NULL || kind[0] == '\0' || index < 0)
+		return false;
+
+	// A parent must be an instance (or resource) key, not another component, and
+	// the kind may not contain the separators, so ParseComponentKey is exact.
+	if (strstr(parentKey, kComponentMarker) != NULL)
+		return false;
+
+	for (const char* character = kind; *character; ++character)
+	{
+		if (*character == '/' || *character == ':')
+			return false;
+	}
+
+	return snprintf(out, capacity, "%s%s%s:%d", parentKey, kComponentMarker, kind, index) > 0;
+}
+
+bool AssetCatalog_IsComponentKey(const char* key)
+{
+	return key != NULL && strstr(key, kComponentMarker) != NULL;
+}
+
+bool AssetCatalog_ParseComponentKey(const char* key, char* parentOut, int parentCapacity,
+	char* kindOut, int kindCapacity, int* index)
+{
+	if (key == NULL)
+		return false;
+
+	const char* marker = strstr(key, kComponentMarker);
+	if (marker == NULL || marker == key)
+		return false;
+
+	const char* kind = marker + sizeof(kComponentMarker) - 1;
+	const char* separator = strrchr(kind, ':');
+	if (separator == NULL || separator == kind)
+		return false;
+
+	const size_t parentLength = (size_t)(marker - key);
+	const size_t kindLength = (size_t)(separator - kind);
+
+	char* end = NULL;
+	const long value = strtol(separator + 1, &end, 10);
+	if (end == separator + 1 || *end != '\0' || value < 0 || value > 0x7fffffff)
+		return false;
+
+	if (parentOut != NULL && parentCapacity > 0)
+	{
+		if (parentLength + 1 > (size_t)parentCapacity)
+			return false;
+		memcpy(parentOut, key, parentLength);
+		parentOut[parentLength] = '\0';
+	}
+
+	if (kindOut != NULL && kindCapacity > 0)
+	{
+		if (kindLength + 1 > (size_t)kindCapacity)
+			return false;
+		memcpy(kindOut, kind, kindLength);
+		kindOut[kindLength] = '\0';
+	}
+
+	if (index != NULL)
+		*index = (int)value;
+
+	return true;
+}
+
+bool AssetCatalog_CaptureAnchor(const char* key, AssetCatalogAnchor* anchor)
+{
+	if (anchor == NULL)
+		return false;
+
+	memset(anchor, 0, sizeof(*anchor));
+	if (key == NULL || key[0] == '\0')
+		return false;
+
+	snprintf(anchor->key, sizeof(anchor->key), "%s", key);
+	anchor->generation = s_generation;
+	anchor->valid = true;
+
+	// A model id embedded in a building/tile/anim or model-resource key is
+	// "model:<level>:<variant>:<index>". A component key anchors through the
+	// parent that carries it, so the same search covers both.
+	const char* marker = strstr(key, "model:");
+	if (marker != NULL && s_valid)
+	{
+		int level = -1, variant = -1, index = -1;
+		if (sscanf(marker, "model:%d:%d:%d", &level, &variant, &index) == 3 && index >= 0 &&
+			level == s_context.level && variant == s_context.variant)
+		{
+			const int record = AssetCatalog_FindModel(index);
+			if (record >= 0)
+			{
+				anchor->hasModel = true;
+				anchor->model = AssetCatalog_GetModelHandle(record);
+			}
+		}
+	}
+
+	return true;
+}
+
+AssetCatalogSelectionState AssetCatalog_CheckAnchor(const AssetCatalogAnchor* anchor)
+{
+	if (anchor == NULL || !anchor->valid)
+		return ASSET_CATALOG_SELECTION_NONE;
+
+	if (!s_valid || anchor->generation != s_generation)
+		return ASSET_CATALOG_SELECTION_STALE;
+
+	if (anchor->hasModel)
+		return AssetCatalog_HandleValid(anchor->model) ? ASSET_CATALOG_SELECTION_VALID : ASSET_CATALOG_SELECTION_STALE;
+
+	return ASSET_CATALOG_SELECTION_UNKNOWN;
 }
 
 bool AssetCatalog_AddModelTexture(int modelRecord, int textureRecord)

@@ -25,6 +25,11 @@ Follow the [discussion maintenance rule](../rules/discussion-records.md).
   roadmap item 04, including stable ids, manifest-compatible texture identity,
   explicit provenance, and many-to-many model/texture relationships.
   **Implemented; roadmap item 04 complete.**
+- [Whole-object selection across renderer categories](inspector-selection-coverage/index.md):
+  the coverage inventory behind roadmap item 06, the in-game reproduction of
+  unlabelled car/pedestrian/building selections, and the debugger root cause
+  (a late full-viewport unlabelled quad winning the depthless last-match pick).
+  **Exploring; roadmap item 06 planned.**
 
 ## Structure and lifecycle
 

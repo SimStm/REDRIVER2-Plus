@@ -1063,17 +1063,33 @@ std::string ReplaceReferencesInManifest(const char* text, int byteCount,
 }
 
 std::string BuildManifestEntry(const std::string& escapedTextureName, int texturePage, int textureIndex,
-	const char* fileName, const std::string& modelReferencesJson)
+	const char* relativePrefix, const char* fileName, const std::string& modelReferencesJson,
+	const char* objectType, const char* levelName)
 {
-	char numbers[96];
-	snprintf(numbers, sizeof(numbers), "\", \"texturePage\": %d, \"textureIndex\": %d, \"file\": \"assets/inspector/",
-		texturePage, textureIndex);
+	char numbers[160];
+	snprintf(numbers, sizeof(numbers), "\", \"texturePage\": %d, \"textureIndex\": %d, \"file\": \"assets/inspector/%s",
+		texturePage, textureIndex, relativePrefix);
 	std::string entry = "{ \"texture\": \"";
 	entry += escapedTextureName;
 	entry += numbers;
 	entry += fileName;
 	entry += "\", \"modelReferences\": ";
 	entry += modelReferencesJson;
+
+	// Descriptive only: the type/level never participate in override matching.
+	if (objectType && objectType[0])
+	{
+		entry += ", \"type\": \"";
+		entry += objectType;
+		entry += "\"";
+	}
+	if (levelName && levelName[0])
+	{
+		entry += ", \"level\": \"";
+		entry += levelName;
+		entry += "\"";
+	}
+
 	entry += " }";
 	return entry;
 }
@@ -1306,6 +1322,111 @@ bool HdTextureOverrides_GetEntryInfo(int index, HdTextureOverrideEntryInfo* info
 	return true;
 }
 
+// Diagnostic: explains why a picked primitive does or does not resolve to a
+// named texture. Counts known textures that share the page/CLUT, then how many
+// of those also contain the queried region, and records the best candidate.
+// A page/CLUT match with no region match means the texture is named but the
+// selected UV rectangle is outside every entry for that palette.
+int g_hdDebugPageClutMatches = 0;
+int g_hdDebugRegionMatches = 0;
+int g_hdDebugBestIndex = -1;
+char g_hdDebugBestName[48] = "";
+int g_hdDebugPageMatches = 0;
+int g_hdDebugPageFirstClut = -1;
+char g_hdDebugPageFirstName[48] = "";
+int g_hdDebugXYMatches = 0;
+int g_hdDebugXYFirstClut = -1;
+char g_hdDebugXYFirstName[48] = "";
+int g_hdDebugPaletteFallbackMatches = 0;
+
+void HdTextureOverrides_DebugRegion(unsigned short tpage, unsigned short clut,
+	unsigned short u, unsigned short v, unsigned short width, unsigned short height)
+{
+	LoadManifests();
+	g_hdDebugPageClutMatches = 0;
+	g_hdDebugRegionMatches = 0;
+	g_hdDebugBestIndex = -1;
+	g_hdDebugBestName[0] = '\0';
+	g_hdDebugPageMatches = 0;
+	g_hdDebugPageFirstClut = -1;
+	g_hdDebugPageFirstName[0] = '\0';
+	g_hdDebugXYMatches = 0;
+	g_hdDebugXYFirstClut = -1;
+	g_hdDebugXYFirstName[0] = '\0';
+	g_hdDebugPaletteFallbackMatches = 0;
+
+	int bestArea = 0;
+	for (int i = 0; i < g_knownTextureCount; ++i)
+	{
+		const KnownTexture* known = &g_knownTextures[i];
+
+		// Same page position with the depth bits ignored: isolates a depth
+		// mismatch from a CLUT or page mismatch.
+		if ((known->tpage & 0x1F) == (tpage & 0x1F))
+		{
+			if (g_hdDebugXYMatches == 0)
+			{
+				g_hdDebugXYFirstClut = known->clut;
+				CopyText(g_hdDebugXYFirstName, sizeof(g_hdDebugXYFirstName), known->textureName);
+			}
+			++g_hdDebugXYMatches;
+		}
+
+		if (ComparableTPage(known->tpage) != ComparableTPage(tpage))
+			continue;
+
+		if (g_hdDebugPageMatches == 0)
+		{
+			g_hdDebugPageFirstClut = known->clut;
+			CopyText(g_hdDebugPageFirstName, sizeof(g_hdDebugPageFirstName), known->textureName);
+		}
+		++g_hdDebugPageMatches;
+
+		if (known->clut != clut)
+			continue;
+
+		++g_hdDebugPageClutMatches;
+
+		const int right = (int)u + width;
+		const int bottom = (int)v + height;
+		if (u < known->u || v < known->v || right > (int)known->u + known->width || bottom > (int)known->v + known->height)
+			continue;
+
+		++g_hdDebugRegionMatches;
+		const int area = known->width * known->height;
+		if (g_hdDebugBestIndex < 0 || area < bestArea)
+		{
+			bestArea = area;
+			g_hdDebugBestIndex = i;
+		}
+	}
+
+	// Mirrors the palette fallback in HdTextureOverrides_FindTextureInfo.
+	if (g_hdDebugBestIndex < 0)
+	{
+		for (int i = 0; i < g_knownTextureCount; ++i)
+		{
+			const KnownTexture* known = &g_knownTextures[i];
+			if (ComparableTPage(known->tpage) != ComparableTPage(tpage))
+				continue;
+			const int right = (int)u + width;
+			const int bottom = (int)v + height;
+			if (u < known->u || v < known->v || right > (int)known->u + known->width || bottom > (int)known->v + known->height)
+				continue;
+			++g_hdDebugPaletteFallbackMatches;
+			const int area = known->width * known->height;
+			if (g_hdDebugBestIndex < 0 || area < bestArea)
+			{
+				bestArea = area;
+				g_hdDebugBestIndex = i;
+			}
+		}
+	}
+
+	if (g_hdDebugBestIndex >= 0)
+		CopyText(g_hdDebugBestName, sizeof(g_hdDebugBestName), g_knownTextures[g_hdDebugBestIndex].textureName);
+}
+
 bool HdTextureOverrides_FindTextureInfo(unsigned short tpage, unsigned short clut,
 	unsigned short u, unsigned short v, unsigned short width, unsigned short height,
 	HdTextureInspectorInfo* info)
@@ -1332,6 +1453,31 @@ bool HdTextureOverrides_FindTextureInfo(unsigned short tpage, unsigned short clu
 		{
 			best = known;
 			bestArea = area;
+		}
+	}
+	if (!best)
+	{
+		// Car and pedestrian palettes are generated at runtime and are never
+		// registered, so a drawn primitive's CLUT often differs from the base
+		// CLUT of the named texture on that page. Fall back to the named texture
+		// whose VRAM region contains the selection: it is the same artwork, and
+		// the exported PNG is resolved from VRAM with the primitive's own CLUT,
+		// so the palette is preserved.
+		for (int i = 0; i < g_knownTextureCount; ++i)
+		{
+			const KnownTexture* known = &g_knownTextures[i];
+			if (ComparableTPage(known->tpage) != ComparableTPage(tpage))
+				continue;
+			const int right = (int)u + width;
+			const int bottom = (int)v + height;
+			if (u < known->u || v < known->v || right > (int)known->u + known->width || bottom > (int)known->v + known->height)
+				continue;
+			const int area = known->width * known->height;
+			if (!best || area < bestArea)
+			{
+				best = known;
+				bestArea = area;
+			}
 		}
 	}
 	if (!best)
@@ -1395,11 +1541,66 @@ bool HdTextureOverrides_ExportInspectorReport(const char* modId, const char* rep
 #endif
 }
 
+static int g_organizedExport = 0;
+static int g_baseColourExport = 1;
+
+// Type and level are sanitized to path-safe lowercase tokens. They only affect
+// the output directory and manifest metadata, never the identity triple.
+static bool MakeContextToken(const char* text, char* out, int capacity)
+{
+	out[0] = '\0';
+	if (!text || !text[0] || !HdTextureOverrides_MakeSafeNameToken(text, out, capacity))
+	{
+		out[0] = '\0';
+		return false;
+	}
+
+	for (int i = 0; out[i]; ++i)
+	{
+		if (out[i] >= 'A' && out[i] <= 'Z')
+			out[i] = (char)(out[i] - 'A' + 'a');
+	}
+
+	return true;
+}
+
+const char* HdTextureOverrides_ObjectTypeFromKey(const char* key)
+{
+	if (!key || !key[0]) return "other";
+	if (strncmp(key, "building:", 9) == 0) return "buildings";
+	if (strncmp(key, "sprite:", 7) == 0) return "sprites";
+	if (strncmp(key, "car:", 4) == 0) return "cars";
+	if (strncmp(key, "ped:", 4) == 0) return "pedestrians";
+	if (strncmp(key, "tile:", 5) == 0) return "tiles";
+	if (strncmp(key, "anim:", 5) == 0) return "props";
+	return "other";
+}
+
+void HdTextureOverrides_SetOrganizedExport(int enabled)
+{
+	g_organizedExport = enabled != 0;
+}
+
+int HdTextureOverrides_IsOrganizedExportEnabled()
+{
+	return g_organizedExport;
+}
+
+void HdTextureOverrides_SetBaseColourExport(int enabled)
+{
+	g_baseColourExport = enabled != 0;
+}
+
+int HdTextureOverrides_IsBaseColourExportEnabled()
+{
+	return g_baseColourExport;
+}
+
 static bool ExportTextureCore(unsigned short tpage, unsigned short clut,
 	unsigned short u, unsigned short v, unsigned short width, unsigned short height,
 	const char* textureName, int texturePage, int textureIndex, const char* modId,
 	const char* filenameSuffix, const char* const* modelReferences, int modelReferenceCount,
-	char* status, int statusCapacity)
+	const HdTextureExportContext* context, char* status, int statusCapacity)
 {
 	if (!status || statusCapacity <= 0)
 		return false;
@@ -1434,8 +1635,39 @@ static bool ExportTextureCore(unsigned short tpage, unsigned short clut,
 		return false;
 	}
 	GR_ReadVRAM(vram, 0, 0, VRAM_WIDTH, VRAM_HEIGHT);
-	const int clutX = (clut & 0x3f) << 4;
-	const int clutY = clut >> 6;
+
+	// Base-colour export substitutes the palette the level registered for the
+	// exported region. Cars and pedestrians are drawn through runtime palettes
+	// (civ_clut), so the clicked primitive carries that instance's colours while
+	// the registered palette is the one a recolouring mod expects. Disable it to
+	// export the colours the instance is actually drawn with.
+	unsigned short paletteClut = clut;
+	if (g_baseColourExport)
+	{
+		const KnownTexture* palette = NULL;
+		int paletteArea = 0;
+		for (int i = 0; i < g_knownTextureCount; ++i)
+		{
+			const KnownTexture* known = &g_knownTextures[i];
+			if (ComparableTPage(known->tpage) != ComparableTPage(tpage))
+				continue;
+			if (u < known->u || v < known->v ||
+				(int)u + width > (int)known->u + known->width ||
+				(int)v + height > (int)known->v + known->height)
+				continue;
+			const int area = known->width * known->height;
+			if (palette == NULL || area < paletteArea)
+			{
+				palette = known;
+				paletteArea = area;
+			}
+		}
+		if (palette != NULL)
+			paletteClut = palette->clut;
+	}
+
+	const int clutX = (paletteClut & 0x3f) << 4;
+	const int clutY = paletteClut >> 6;
 	bool valid = clutY >= 0 && clutY < VRAM_HEIGHT && clutX >= 0 && clutX < VRAM_WIDTH;
 	for (int yPixel = 0; valid && yPixel < height; ++yPixel)
 	{
@@ -1518,6 +1750,32 @@ static bool ExportTextureCore(unsigned short tpage, unsigned short clut,
 		return false;
 	}
 
+	// Object type and level are metadata; they only change the directory when
+	// organized export is on.
+	char typeToken[HD_TEXTURE_CONTEXT_CAPACITY] = {};
+	char levelToken[HD_TEXTURE_CONTEXT_CAPACITY] = {};
+	const bool hasType = context && MakeContextToken(context->objectType, typeToken, sizeof(typeToken));
+	const bool hasLevel = context && MakeContextToken(context->levelName, levelToken, sizeof(levelToken));
+	const bool organized = g_organizedExport != 0 && hasType && hasLevel;
+
+	char relativePrefix[96] = {};
+	char outputDirectory[448];
+	snprintf(outputDirectory, sizeof(outputDirectory), "%s", inspectorDirectory);
+
+	if (organized)
+	{
+		char typeDirectory[384];
+		snprintf(relativePrefix, sizeof(relativePrefix), "%s/%s/", typeToken, levelToken);
+
+		if (!JoinPath(typeDirectory, sizeof(typeDirectory), inspectorDirectory, typeToken, NULL) ||
+			!JoinPath(outputDirectory, sizeof(outputDirectory), typeDirectory, levelToken, NULL))
+		{
+			free(vram); free(rgba);
+			snprintf(status, statusCapacity, "The export path is too long");
+			return false;
+		}
+	}
+
 	char manifestPath[320];
 	JoinPath(manifestPath, sizeof(manifestPath), modDirectory, "manifest.json", NULL);
 
@@ -1542,7 +1800,7 @@ static bool ExportTextureCore(unsigned short tpage, unsigned short clut,
 			JoinPath(mappedPath, sizeof(mappedPath), modDirectory, mappedFile, NULL))
 			snprintf(outputPath, sizeof(outputPath), "%s", mappedPath);
 	}
-	if (outputPath[0] == '\0' && !JoinPath(outputPath, sizeof(outputPath), inspectorDirectory, fileName, NULL))
+	if (outputPath[0] == '\0' && !JoinPath(outputPath, sizeof(outputPath), outputDirectory, fileName, NULL))
 	{
 		free(vram); free(rgba); free(existingText);
 		snprintf(status, statusCapacity, "The export path is too long");
@@ -1622,7 +1880,8 @@ static bool ExportTextureCore(unsigned short tpage, unsigned short clut,
 
 	// No existing entry: append one that points at the freshly written file.
 	const std::string escapedTextureName = BuildJsonString(textureName);
-	const std::string entry = BuildManifestEntry(escapedTextureName, texturePage, textureIndex, fileName, referencesJson);
+	const std::string entry = BuildManifestEntry(escapedTextureName, texturePage, textureIndex, relativePrefix,
+		fileName, referencesJson, typeToken, levelToken);
 
 	if (existingText)
 	{
@@ -1671,7 +1930,16 @@ bool HdTextureOverrides_ExportTexture(unsigned short tpage, unsigned short clut,
 	char* status, int statusCapacity)
 {
 	return ExportTextureCore(tpage, clut, u, v, width, height, textureName, texturePage,
-		textureIndex, modId, NULL, NULL, 0, status, statusCapacity);
+		textureIndex, modId, NULL, NULL, 0, NULL, status, statusCapacity);
+}
+
+bool HdTextureOverrides_ExportTextureWithContext(unsigned short tpage, unsigned short clut,
+	unsigned short u, unsigned short v, unsigned short width, unsigned short height,
+	const char* textureName, int texturePage, int textureIndex, const char* modId,
+	const HdTextureExportContext* context, char* status, int statusCapacity)
+{
+	return ExportTextureCore(tpage, clut, u, v, width, height, textureName, texturePage,
+		textureIndex, modId, NULL, NULL, 0, context, status, statusCapacity);
 }
 
 bool HdTextureOverrides_MakeSafeNameToken(const char* text, char* out, int capacity)
@@ -1789,10 +2057,12 @@ int HdTextureOverrides_StepBatchJob(HdTextureOverrideBatchJob* job, int maxSteps
 		for (int k = 0; k < referenceCount; ++k)
 			references[k] = item.modelReferences[k];
 
+		const HdTextureExportContext itemContext = { item.objectType, item.levelName };
+
 		char itemStatus[HD_TEXTURE_BATCH_MESSAGE_CAPACITY] = {};
 		const bool exported = ExportTextureCore(item.tpage, item.clut, item.u, item.v,
 			item.width, item.height, item.textureName, item.texturePage, item.textureIndex,
-			job->modId, item.filenameSuffix, references, referenceCount,
+			job->modId, item.filenameSuffix, references, referenceCount, &itemContext,
 			itemStatus, sizeof(itemStatus));
 		if (exported)
 		{

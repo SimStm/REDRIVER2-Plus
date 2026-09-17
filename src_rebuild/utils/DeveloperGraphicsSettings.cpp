@@ -111,6 +111,8 @@ DeveloperGraphicsSettings DeveloperGraphicsSettings_ReadRuntime()
 	HdTextureOverrideDiagnostics hdTextures = {};
 	HdTextureOverrides_GetDiagnostics(&hdTextures);
 	settings.hdTextureOverrides = hdTextures.enabled;
+	settings.organizeTextureExports = HdTextureOverrides_IsOrganizedExportEnabled();
+	settings.exportBaseColours = HdTextureOverrides_IsBaseColourExportEnabled();
 	return settings;
 }
 
@@ -125,6 +127,8 @@ void DeveloperGraphicsSettings_Apply(const DeveloperGraphicsSettings& settings)
 
 	gDisplayDrawStats = settings.showLegacyStats != 0;
 	HdTextureOverrides_SetEnabled(settings.hdTextureOverrides);
+	HdTextureOverrides_SetOrganizedExport(settings.organizeTextureExports);
+	HdTextureOverrides_SetBaseColourExport(settings.exportBaseColours);
 }
 
 bool DeveloperGraphicsSettings_LoadAndApply()
@@ -151,6 +155,8 @@ bool DeveloperGraphicsSettings_LoadAndApply()
 		else if (!strcmp(key, "fieldOfView")) settings.fieldOfView = value;
 		else if (!strcmp(key, "showLegacyStats")) settings.showLegacyStats = value;
 		else if (!strcmp(key, "hdTextureOverrides")) settings.hdTextureOverrides = value;
+		else if (!strcmp(key, "organizeTextureExports")) settings.organizeTextureExports = value;
+		else if (!strcmp(key, "exportBaseColours")) settings.exportBaseColours = value;
 	}
 
 	const bool readOk = ferror(file) == 0;
@@ -170,7 +176,7 @@ bool DeveloperGraphicsSettings_SaveRuntime()
 	const int written = fprintf(file,
 		"# REDRIVER2 developer graphics settings\n"
 		"# This file is managed separately and never modifies config.ini.\n"
-		"schemaVersion=2\n"
+		"schemaVersion=4\n"
 		"bilinearFiltering=%d\n"
 		"pgxpTextureMapping=%d\n"
 		"pgxpZBuffer=%d\n"
@@ -178,10 +184,12 @@ bool DeveloperGraphicsSettings_SaveRuntime()
 		"drawDistance=%d\n"
 		"fieldOfView=%d\n"
 		"showLegacyStats=%d\n"
-		"hdTextureOverrides=%d\n",
+		"hdTextureOverrides=%d\n"
+		"organizeTextureExports=%d\n"
+		"exportBaseColours=%d\n",
 		settings.bilinearFiltering, settings.pgxpTextureMapping, settings.pgxpZBuffer,
 		settings.vsync, settings.drawDistance, settings.fieldOfView, settings.showLegacyStats,
-		settings.hdTextureOverrides);
+		settings.hdTextureOverrides, settings.organizeTextureExports, settings.exportBaseColours);
 
 	bool writeOk = written > 0 && FlushAndSync(file);
 	const int closeResult = fclose(file);
@@ -203,5 +211,7 @@ void DeveloperGraphicsSettings_RestoreDefaults()
 	defaults.fieldOfView = 256;
 	defaults.showLegacyStats = 0;
 	defaults.hdTextureOverrides = 1;
+	defaults.organizeTextureExports = 0;
+	defaults.exportBaseColours = 1;
 	DeveloperGraphicsSettings_Apply(defaults);
 }

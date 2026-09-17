@@ -10,6 +10,26 @@ where release policy permits it.
 
 ### Added
 
+- Whole-object selection across renderer categories (roadmap item 06,
+  complete): the 3D Debug inspector now resolves a clicked primitive to the
+  source that produced it and reads it at four scopes - **Face**, **Material**,
+  **Component** and **Logical object** - with game-owned identity for buildings,
+  tiles, animated props, car bodies, wheels and pedestrian parts. Keys are
+  resource-based and LOD-independent, retained selections carry a catalog
+  generation plus a model handle (and a car slot for vehicles) and report
+  `valid` / `stale` / `not model-backed` instead of retargeting silently.
+  Picking is visibility-aware: ordering-table arrival order is the depth test, a
+  registered source is preferred over unidentified overlays so screen-space
+  effects no longer shadow the scene, the cursor is projected into the split's
+  emulated display area, PGXP is honoured with texture mapping and the Z-buffer
+  either way, and override cutout coverage is mirrored on the CPU so transparent
+  texels are skipped and the geometry behind resolves. New diagnostics report
+  the frame-local pick index, sources that are registered but unreachable,
+  masked and cut-out override texels, a   locator for any reachable source or
+  component, and the measured pick cost. The identity and picking paths are
+  platform-neutral; the diagnostics UI follows the existing developer-panel
+  guards (Windows and Linux), and the renderer changes are carried by
+  `patches/psycross/developer-overlay.patch`.
 - A resident procedural playground scene (roadmap item 13, milestones P1-P5)
   that reuses the existing renderer and original vehicle simulation: a
   generated flat drivable surface, collidable box obstacles, disabled donor
@@ -97,6 +117,27 @@ where release policy permits it.
   deterministic debug-start workflow, the standalone export tests, screenshots
   in `docs/images/`, and troubleshooting. The README now links to it instead of
   inlining the build steps.
+- Inspector exports record what they belong to: every manifest entry now carries
+  a `type` (`buildings`, `sprites`, `cars`, `pedestrians`, `tiles`, `props`)
+  and the `level` it is used on, and the developer panel gained an opt-in
+  **Organize exports by type and level** setting that writes textures under
+  `assets/inspector/<type>/<level>/`. The flag is off by default; the manifest
+  always stores the real relative path.
+- The developer panel can export textures in **base colours** (enabled by
+  default). Cars and pedestrians are drawn through runtime palettes, so the
+  choice is explicit at export time: enabled, the PNG uses the palette the level
+  registered for the texture - the original artwork colours that keep working
+  with CLUT recolouring; disabled, it uses the palette of the clicked primitive,
+  so each instance exports the colours it currently shows. The tooltip explains
+  both cases.
+- `scripts/run_inspector_tests.ps1` builds and runs `AssetCatalogTests` and
+  `InspectorExportTests` in fresh directories, so the export-path verification
+  is reproducible. `InspectorExportTests` is not idempotent and must never run
+  twice in the same directory; `AGENTS.md` records the command.
+- Double-clicking in pick mode selects the whole object instead of the part: the
+  selection keeps the parent instance of the clicked component (a car, a
+  pedestrian) and highlights and exports every part together. A single click
+  keeps selecting the individual part.
 
 ### Changed
 
@@ -144,9 +185,44 @@ where release policy permits it.
   SDL F11 identifiers.
 - Project-owned PsyCross changes are distributed as an idempotent patch applied
   after submodule initialisation, avoiding a fork solely for this integration.
+- The panel's texture-lookup explanation (`Explain texture lookup`) refreshes
+  automatically when the selection changes, instead of describing the previous
+  pick until the button is pressed again.
 
 ### Fixed
 
+- Inspector model names are sanitized. Some name-table entries, notably
+  sprite-only models, are not text; those characters used to reach inspector
+  labels, catalog records and export file names and are now reported as an
+  unnamed model.
+- Car and pedestrian textures are now nameable in the inspector, so their
+  textures export normally, through the batch export and in the catalog. The
+  lookup required an exact texture-page/CLUT match against the level's named
+  textures, but cars and pedestrians are drawn with runtime palettes that are
+  never registered (measured: the car page holds 30 named textures and the
+  player car's CLUT matched none of them). A named texture on the same page
+  whose VRAM region contains the selection is now used as a fallback; the PNG
+  still resolves from VRAM with the primitive's own CLUT, so the palette is
+  preserved.
+- Sprite scenery (trees and other billboards) now carries identity. It is drawn
+  by `DrawSprites` as a subdivided mesh, which registered nothing, so a click
+  resolved a single mesh triangle, reported an unsupported source and left the
+  trunk unselectable. Sprites are registered as resource-backed objects
+  (`sprite:` keys) with their model slot and placement, and the ground shadow
+  stays outside the range.
+- Buildings drawn from a streamed texture page now resolve a texture name. Only
+  the level texture loaders registered page names, so a page assigned by the
+  texture spool had none and every primitive from it reported an unregistered
+  texture (measured: a facade on page 8 matched nothing at all, and the named
+  texture count rose from 300 to 363 once the spool registered its pages).
+- Clicking a source no producer registered no longer selects whatever is behind
+  it. The registered-source preference that stops the atmospheric haze from
+  shadowing the scene only outranks the nearest candidate when that candidate is
+  a screen-space overlay, that is, carries no depth; real geometry keeps
+  draw-order priority.
+- The developer panel's Export section reports why a texture lookup succeeded or
+  failed (`Explain texture lookup`), separating a page/CLUT mismatch, a region
+  mismatch and the palette fallback.
 - Debug-start snapshots now honour the saved `gameType` instead of forcing
   `GAME_TAKEADRIVE`, and a snapshot captured during a replay is not applied at
   startup (reproduce it with the generated `-replay` command).

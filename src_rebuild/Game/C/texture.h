@@ -56,6 +56,11 @@ void LoadPermanentTPagesFromTIM();
 
 // Asset catalog adapter: links a model's textured materials to its record.
 void RegisterCatalogModelTextures(MODEL* model, int modelRecord);
+
+// Registers the texture names of one page from the level texture set metadata.
+// Called by the page loaders and by the texture spool once it has assigned the
+// page's VRAM slot, so streamed pages are nameable too.
+void RegisterHdTextureOverridesForPage(int tpage2send);
 #endif
 
 #endif

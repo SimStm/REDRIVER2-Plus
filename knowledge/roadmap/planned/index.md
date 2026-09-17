@@ -23,13 +23,20 @@ precedence over the simple reading order.
 1. **04 — [Source-aware asset catalog and material identity](../done/asset-catalog-identity.md)**:
    implemented 2026-09-15.
 2. **05 — [Batch texture export with model references](object-texture-batch-export.md)**
-3. **06 — [Whole-object selection across renderer categories](inspector-selection-coverage.md)**
+3. **06 — [Whole-object selection across renderer categories](../done/inspector-selection-coverage.md)**:
+   implemented 2026-09-16.
 4. **07 — [Inspector navigation and independent previews](inspector-camera-preview.md)**
 5. **08 — [OpenDriver2Tools interoperability and legacy overrides](modding-toolchain-integration.md)**
 6. **09 — [Model export and validated re-import](model-export-import-roundtrip.md)**
 7. **10 — [Runtime settings GUI and safe persistence](runtime-settings-gui.md)**
 8. **11 — [Draw distance, LOD and streaming budgets](draw-distance-streaming.md)**
 9. **12 — [Measured graphics improvements and quality profiles](graphics-quality-profiles.md)**
+10. **15 — [Texture export alpha fidelity](texture-export-alpha-fidelity.md)**:
+    corrects the export convention that turned black texels into transparency,
+    which punched holes in opaque textures and made their texels unpickable.
+11. **16 — [Semi-transparent texture overrides](semi-transparent-texture-overrides.md)**:
+    interpret imported alpha as opacity on `BM_AVERAGE` draws instead of a
+    binary cutout. Depends on 15.
 
 ## Playground and renderer modernization track
 
@@ -70,9 +77,12 @@ discussions inside both records for the reasoning and adopted decision.
 - **03 — [Append-only texture registration and safe manifest merging](../done/texture-manifest-merge.md)**:
   implemented 2026-09-15; see
   [`knowledge/product/texture-manifest-merge.md`](../../product/texture-manifest-merge.md).
+- **06 — [Whole-object selection across renderer categories](../done/inspector-selection-coverage.md)**:
+  implemented 2026-09-16; see
+  [`knowledge/product/inspector-selection-coverage.md`](../../product/inspector-selection-coverage.md).
 
 The order labels of the remaining entries are unchanged, so the sequence has
-intentional gaps at 01, 02 and 03.
+intentional gaps at 01, 02, 03 and 06.
 
 ## Current-branch merge boundary
 

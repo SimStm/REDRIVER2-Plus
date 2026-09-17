@@ -173,8 +173,15 @@ void IncrementTPageNum(RECT16 *tpage)
 }
 
 #ifndef PSX
-static void RegisterHdTextureOverridesForPage(int tpage2send)
+// Not static: the texture spool assigns the VRAM slot of a streamed page and
+// would otherwise leave that page without any registered texture names, so
+// everything drawn from a streamed page reported "texture name not registered"
+// and could not be exported.
+void RegisterHdTextureOverridesForPage(int tpage2send)
 {
+	if (tpage2send < 0 || tpage2send >= 128)
+		return;
+
 	HdTextureOverrides_BeginPage(tpage2send);
 
 	for (int i = 0; i < tpage_texamts[tpage2send]; ++i)

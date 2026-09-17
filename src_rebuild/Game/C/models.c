@@ -455,6 +455,24 @@ void Models_SetInspectorNameBuffer(char* buffer, int size)
 const char* GetModelNameByIndex(int modelIndex)
 {
 	if (modelIndex < 0 || modelIndex >= inspectorModelNameCount || modelIndex >= num_models_in_pack) return NULL;
-	return inspectorModelNames[modelIndex];
+
+	// Only text is a name. Some indices - notably sprite-only models reached
+	// through the packed cell object's model number - point at name-table bytes
+	// that are not text, and those characters used to reach inspector labels,
+	// catalog records and sanitized export file names. Report them as unnamed.
+	const char* name = inspectorModelNames[modelIndex];
+
+	if (name == NULL || name[0] == '\0')
+		return NULL;
+
+	for (const char* cursor = name; *cursor; ++cursor)
+	{
+		const unsigned char character = (unsigned char)*cursor;
+
+		if (character < 0x20 || character > 0x7E)
+			return NULL;
+	}
+
+	return name;
 }
 #endif

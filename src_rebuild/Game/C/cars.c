@@ -33,6 +33,12 @@
 #endif
 #endif
 
+#ifndef PSX
+// Shared by DrawCarObject and DrawCarWheels so a wheel component's logical
+// parent is exactly the car instance key its body uses.
+static void Cars_BuildInspectorKey(const CAR_DATA* cp, char* out, int capacity);
+#endif
+
 struct plotCarGlobals
 {
 	u_char* primptr;
@@ -811,6 +817,11 @@ void DrawCarWheels(CAR_DATA *cp, MATRIX *RearMatrix, VECTOR *pos, int zclip)
 	wheel = cp->hd.wheel;
 	wheelnum = 0;
 
+#ifndef PSX
+	char carInspectorKey[ASSET_CATALOG_ID_CAPACITY] = {};
+	Cars_BuildInspectorKey(cp, carInspectorKey, sizeof(carInspectorKey));
+#endif
+
 	do {
 		if ((wheelnum & 1) != 0)
 			model = WheelModelBack;
@@ -850,7 +861,29 @@ void DrawCarWheels(CAR_DATA *cp, MATRIX *RearMatrix, VECTOR *pos, int zclip)
 			gte_SetRotMatrix(&FrontMatrix);
 		}
 
+#ifndef PSX
+		const void* wheelBegin = current->primptr;
+#endif
 		DrawWheelObject(model, VertPtr, TransparentObject, wheelnum);
+#ifndef PSX
+		{
+			// A wheel is a component of the car instance, not a level model slot.
+			char wheelKey[ASSET_CATALOG_ID_CAPACITY];
+			if (AssetCatalog_MakeComponentKey(carInspectorKey, "wheel", wheelnum, wheelKey, sizeof(wheelKey)))
+			{
+				char inspectorLabel[PSYX_INSPECTOR_LABEL_LENGTH];
+				PsyXInspectorObject inspectorObject = {};
+				snprintf(inspectorObject.key, sizeof(inspectorObject.key), "%s", wheelKey);
+				snprintf(inspectorObject.modelName, sizeof(inspectorObject.modelName), "Wheel %d", wheelnum);
+				inspectorObject.modelIndex = -1;
+				inspectorObject.position[0] = cp->hd.where.t[0];
+				inspectorObject.position[1] = cp->hd.where.t[1];
+				inspectorObject.position[2] = cp->hd.where.t[2];
+				snprintf(inspectorLabel, sizeof(inspectorLabel), "Wheel %d of Car #%d", wheelnum, cp->id);
+				PsyX_Inspector_RegisterObjectRange(wheelBegin, current->primptr, inspectorLabel, &inspectorObject);
+			}
+		}
+#endif
 
 		wheelDisp++;
 		wheel++;
@@ -1371,6 +1404,25 @@ void ProcessPalletLump(char *lump_ptr, int lump_size)
 	}
 }
 
+#ifndef PSX
+// Source identity (model number) is distinct from the live car slot; the key
+// keeps both and the city variant, so a reused slot cannot alias a key.
+static void Cars_BuildInspectorKey(const CAR_DATA* cp, char* out, int capacity)
+{
+	AssetCatalogContext catalogContext;
+	const int cityVariant = AssetCatalog_GetContext(&catalogContext) ? catalogContext.variant : (int)GetCityType();
+	int carModelNumber = -1;
+	const int carRecord = AssetCatalog_FindCar(cp->ap.model);
+	if (carRecord >= 0)
+		AssetCatalog_GetCar(carRecord, NULL, &carModelNumber, NULL, 0, NULL);
+	else if (cp->ap.model >= 0 && cp->ap.model < MAX_CAR_RESIDENT_MODELS)
+		carModelNumber = residentCarModels[cp->ap.model];
+
+	snprintf(out, capacity, "car:%d:%d:%d:%d:%d",
+		GameLevel, cityVariant, cp->id, cp->ap.model, carModelNumber);
+}
+#endif
+
 // [D] [T]
 void DrawCarObject(CAR_MODEL* car, MATRIX* matrix, VECTOR* pos, int palette, CAR_DATA* cp, int detail)
 {
@@ -1410,19 +1462,7 @@ void DrawCarObject(CAR_MODEL* car, MATRIX* matrix, VECTOR* pos, int palette, CAR
 		cp->id, cp->ap.model, detail ? "high" : "low", palette);
 	PsyXInspectorObject inspectorObject = {};
 
-	// Source identity (model number) is distinct from the live car slot; keep
-	// both, and add the city variant, so a reused slot cannot aliase keys.
-	AssetCatalogContext catalogContext;
-	const int cityVariant = AssetCatalog_GetContext(&catalogContext) ? catalogContext.variant : (int)GetCityType();
-	int carModelNumber = -1;
-	const int carRecord = AssetCatalog_FindCar(cp->ap.model);
-	if (carRecord >= 0)
-		AssetCatalog_GetCar(carRecord, NULL, &carModelNumber, NULL, 0, NULL);
-	else if (cp->ap.model >= 0 && cp->ap.model < MAX_CAR_RESIDENT_MODELS)
-		carModelNumber = residentCarModels[cp->ap.model];
-
-	snprintf(inspectorObject.key, sizeof(inspectorObject.key), "car:%d:%d:%d:%d:%d",
-		GameLevel, cityVariant, cp->id, cp->ap.model, carModelNumber);
+	Cars_BuildInspectorKey(cp, inspectorObject.key, sizeof(inspectorObject.key));
 	snprintf(inspectorObject.modelName, sizeof(inspectorObject.modelName), "Resident car %d", cp->ap.model);
 	inspectorObject.modelIndex = cp->ap.model;
 	inspectorObject.polygonCount = car->numFT3 + car->numGT3 + car->numB3;

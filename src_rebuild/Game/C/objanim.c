@@ -16,6 +16,11 @@
 #include "pause.h"
 #include "draw.h"
 
+#ifndef PSX
+#include "assetcatalog.h"
+#include "PsyX/PsyX_public.h"
+#endif
+
 struct ANIMATED_OBJECT
 {
 	int internal_id;
@@ -445,8 +450,38 @@ void DrawAllAnimatingObjects(CELL_OBJECT** objects, int num_animated)
 		type = cop->type;
 		model = modelpointers[type];
 
+#ifndef PSX
+		const void* animatedBegin = current->primptr;
+#endif
+
 		// [A] optimized
 		animate_object(cop, aop[model->tri_verts & 31].internal_id);
+
+#ifndef PSX
+		// An animated prop is a world placement: reuse the stable model id and
+		// cell placement the building/tile inspector uses, so the effects it
+		// submits resolve to this object instead of an unlabelled draw source.
+		if (animatedBegin != current->primptr)
+		{
+			char animatedModelId[ASSET_CATALOG_ID_CAPACITY];
+			PsyXInspectorObject inspectorObject = {};
+			if (AssetCatalog_MakeModelId(type, animatedModelId, sizeof(animatedModelId)))
+				snprintf(inspectorObject.key, sizeof(inspectorObject.key), "anim:%s:%d:%d:%d:%d",
+					animatedModelId, cop->pos.vx, cop->pos.vy, cop->pos.vz, cop->yang);
+			else
+				snprintf(inspectorObject.key, sizeof(inspectorObject.key), "anim:%d:%d:%d:%d:%d:%d",
+					GameLevel, type, cop->pos.vx, cop->pos.vy, cop->pos.vz, cop->yang);
+			const char* animatedName = GetModelNameByIndex(type);
+			snprintf(inspectorObject.modelName, sizeof(inspectorObject.modelName), "%s", animatedName ? animatedName : "Animated object");
+			inspectorObject.modelIndex = type;
+			inspectorObject.position[0] = cop->pos.vx;
+			inspectorObject.position[1] = cop->pos.vy;
+			inspectorObject.position[2] = cop->pos.vz;
+			char animatedLabel[PSYX_INSPECTOR_LABEL_LENGTH];
+			snprintf(animatedLabel, sizeof(animatedLabel), "Animated prop | %s | model %d", inspectorObject.modelName, type);
+			PsyX_Inspector_RegisterObjectRange(animatedBegin, current->primptr, animatedLabel, &inspectorObject);
+		}
+#endif
 	}
 }
 

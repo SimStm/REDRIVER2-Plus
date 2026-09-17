@@ -220,6 +220,124 @@ static void TestCarsAndPalettes()
 	CHECK(TextIs(name, "limo"));
 }
 
+static void TestComponentIdentity()
+{
+	char key[ASSET_CATALOG_ID_CAPACITY] = {};
+	const char* carKey = "car:0:0:3:2:12";
+
+	// A component key is the parent instance key plus a stable component suffix.
+	CHECK(AssetCatalog_MakeComponentKey(carKey, "wheel", 0, key, sizeof(key)));
+	CHECK(TextIs(key, "car:0:0:3:2:12/component:wheel:0"));
+	CHECK(AssetCatalog_IsComponentKey(key));
+	CHECK(!AssetCatalog_IsComponentKey(carKey));
+
+	// It round-trips into the same parent, kind and index.
+	char parent[ASSET_CATALOG_ID_CAPACITY] = {};
+	char kind[ASSET_CATALOG_NAME_CAPACITY] = {};
+	int index = -1;
+	CHECK(AssetCatalog_ParseComponentKey(key, parent, sizeof(parent), kind, sizeof(kind), &index));
+	CHECK(TextIs(parent, carKey));
+	CHECK(TextIs(kind, "wheel"));
+	CHECK(index == 0);
+	CHECK(AssetCatalog_ParseComponentKey(key, NULL, 0, NULL, 0, NULL));
+
+	// Pedestrian parts use the same encoding with a different kind.
+	CHECK(AssetCatalog_MakeComponentKey("ped:0:0:7:2", "bone", 11, key, sizeof(key)));
+	CHECK(TextIs(key, "ped:0:0:7:2/component:bone:11"));
+	CHECK(AssetCatalog_ParseComponentKey(key, parent, sizeof(parent), kind, sizeof(kind), &index));
+	CHECK(TextIs(parent, "ped:0:0:7:2") && TextIs(kind, "bone") && index == 11);
+
+	// A parent may not itself be a component, and the kind may not contain the
+	// separators, so a key can never be ambiguous.
+	CHECK(!AssetCatalog_MakeComponentKey("car:0:0:3:2:12/component:wheel:0", "wheel", 1, key, sizeof(key)));
+	CHECK(!AssetCatalog_MakeComponentKey(carKey, "bad:kind", 0, key, sizeof(key)));
+	CHECK(!AssetCatalog_MakeComponentKey(carKey, "bad/kind", 0, key, sizeof(key)));
+	CHECK(!AssetCatalog_MakeComponentKey(carKey, "", 0, key, sizeof(key)));
+	CHECK(!AssetCatalog_MakeComponentKey("", "wheel", 0, key, sizeof(key)));
+	CHECK(!AssetCatalog_MakeComponentKey(carKey, "wheel", -1, key, sizeof(key)));
+	CHECK(!AssetCatalog_MakeComponentKey(NULL, "wheel", 0, key, sizeof(key)));
+	CHECK(!AssetCatalog_MakeComponentKey(carKey, NULL, 0, key, sizeof(key)));
+	CHECK(!AssetCatalog_MakeComponentKey(carKey, "wheel", 0, NULL, 0));
+
+	// Parsing rejects plain, malformed and unsupported keys.
+	CHECK(!AssetCatalog_ParseComponentKey(carKey, parent, sizeof(parent), kind, sizeof(kind), &index));
+	CHECK(!AssetCatalog_ParseComponentKey(NULL, parent, sizeof(parent), kind, sizeof(kind), &index));
+	CHECK(!AssetCatalog_ParseComponentKey("/component:wheel:0", parent, sizeof(parent), kind, sizeof(kind), &index));
+	CHECK(!AssetCatalog_ParseComponentKey("car:1/component::0", parent, sizeof(parent), kind, sizeof(kind), &index));
+	CHECK(!AssetCatalog_ParseComponentKey("car:1/component:wheel:0x", parent, sizeof(parent), kind, sizeof(kind), &index));
+	CHECK(!AssetCatalog_ParseComponentKey("car:1/component:wheel:", parent, sizeof(parent), kind, sizeof(kind), &index));
+	CHECK(!AssetCatalog_ParseComponentKey("car:1/component:wheel:-2", parent, sizeof(parent), kind, sizeof(kind), &index));
+	CHECK(!AssetCatalog_ParseComponentKey("car:1/component:wheel:2junk", parent, sizeof(parent), kind, sizeof(kind), &index));
+
+	// A buffer too small for the parent or kind fails instead of truncating.
+	CHECK(AssetCatalog_MakeComponentKey(carKey, "wheel", 0, key, sizeof(key)));
+	char tinyParent[4] = {};
+	char tinyKind[4] = {};
+	CHECK(!AssetCatalog_ParseComponentKey(key, tinyParent, sizeof(tinyParent), tinyKind, sizeof(tinyKind), &index));
+
+	// A resource key (not an instance slot) is a valid parent too.
+	CHECK(AssetCatalog_MakeComponentKey("model:0:0:37", "material", 3, key, sizeof(key)));
+	CHECK(TextIs(key, "model:0:0:37/component:material:3"));
+}
+
+static void TestSelectionAnchors()
+{
+	AssetCatalog_Reset();
+	AssetCatalog_BeginContext(0, 0, 0);
+
+	// A building/tile key embeds the model id, so the anchor resolves a model
+	// handle and stays valid while that slot is live.
+	CHECK(AssetCatalog_RegisterModel(37, "ROAD", ASSET_CATALOG_SOURCE_DECLARED, -1, -1) >= 0);
+
+	AssetCatalogAnchor anchor = {};
+	CHECK(AssetCatalog_CaptureAnchor("building:model:0:0:37:12000:0:8000:0", &anchor));
+	CHECK(anchor.valid && anchor.hasModel);
+	CHECK(TextIs(anchor.key, "building:model:0:0:37:12000:0:8000:0"));
+	CHECK(AssetCatalog_CheckAnchor(&anchor) == ASSET_CATALOG_SELECTION_VALID);
+
+	// Streaming frees the slot: the retained selection must go stale, and stay
+	// stale even after the slot is reused by a different model.
+	CHECK(AssetCatalog_InvalidateModel(37));
+	CHECK(AssetCatalog_CheckAnchor(&anchor) == ASSET_CATALOG_SELECTION_STALE);
+	CHECK(AssetCatalog_RegisterModel(37, "OTHER", ASSET_CATALOG_SOURCE_DECLARED, -1, -1) >= 0);
+	CHECK(AssetCatalog_CheckAnchor(&anchor) == ASSET_CATALOG_SELECTION_STALE);
+
+	// A fresh pick re-anchors to the live slot.
+	AssetCatalogAnchor fresh = {};
+	CHECK(AssetCatalog_CaptureAnchor("tile:model:0:0:37:1:2:3:4", &fresh));
+	CHECK(AssetCatalog_CheckAnchor(&fresh) == ASSET_CATALOG_SELECTION_VALID);
+
+	// A level/variant change invalidates every retained anchor.
+	AssetCatalog_BeginContext(1, 0, 0);
+	CHECK(AssetCatalog_CheckAnchor(&fresh) == ASSET_CATALOG_SELECTION_STALE);
+
+	// A component of an instance (a wheel of a car) has no model part; the
+	// caller validates the instance separately.
+	AssetCatalog_BeginContext(0, 0, 0);
+	AssetCatalogAnchor wheel = {};
+	CHECK(AssetCatalog_CaptureAnchor("car:0:0:3:2:12/component:wheel:0", &wheel));
+	CHECK(!wheel.hasModel && AssetCatalog_CheckAnchor(&wheel) == ASSET_CATALOG_SELECTION_UNKNOWN);
+
+	// A component of a model resource still anchors the model.
+	CHECK(AssetCatalog_RegisterModel(11, "SEDAN", ASSET_CATALOG_SOURCE_DECLARED, -1, -1) >= 0);
+	AssetCatalogAnchor material = {};
+	CHECK(AssetCatalog_CaptureAnchor("model:0:0:11/component:material:3", &material));
+	CHECK(material.hasModel && AssetCatalog_CheckAnchor(&material) == ASSET_CATALOG_SELECTION_VALID);
+
+	// A key naming a different level never resolves a handle here.
+	AssetCatalogAnchor foreign = {};
+	CHECK(AssetCatalog_CaptureAnchor("building:model:2:0:11:0:0:0:0", &foreign));
+	CHECK(!foreign.hasModel && AssetCatalog_CheckAnchor(&foreign) == ASSET_CATALOG_SELECTION_UNKNOWN);
+
+	// Bounds: no anchor for an empty key; a cleared anchor reports NONE.
+	CHECK(!AssetCatalog_CaptureAnchor("", &anchor));
+	CHECK(!AssetCatalog_CaptureAnchor(NULL, &anchor));
+	CHECK(!AssetCatalog_CaptureAnchor("building:x", NULL));
+	CHECK(AssetCatalog_CheckAnchor(NULL) == ASSET_CATALOG_SELECTION_NONE);
+	AssetCatalogAnchor none = {};
+	CHECK(AssetCatalog_CheckAnchor(&none) == ASSET_CATALOG_SELECTION_NONE);
+}
+
 static void TestDiagnostics()
 {
 	int modelCap = 0, textureCap = 0, carCap = 0, refCap = 0;
@@ -262,6 +380,8 @@ int main()
 	TestModelIdentityAndInstances();
 	TestSlotInvalidation();
 	TestTextureDedupAndMaterials();
+	TestComponentIdentity();
+	TestSelectionAnchors();
 	TestCarsAndPalettes();
 	TestDiagnostics();
 	TestBoundsAreGraceful();

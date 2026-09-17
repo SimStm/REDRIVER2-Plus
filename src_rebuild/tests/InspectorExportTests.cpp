@@ -69,6 +69,25 @@ int main()
 	Check(LoadPngRgba("mods/regression/assets/inspector/SEMI_p1_i5.png", &decoded, &width, &height) &&
 		decoded[3] == 128, "PSX STP colours export as half alpha");
 	free(decoded);
+	// Base-colour export (the default) substitutes the palette registered for the
+	// region, so a car or pedestrian exports its original artwork colours rather
+	// than the runtime palette of the clicked instance.
+	HdTextureOverrides_RegisterTexture(9, 9, "PAL9", 1, 1, 0, 0, 4, 4);
+	Check(HdTextureOverrides_IsBaseColourExportEnabled() == 1, "base-colour export defaults to enabled");
+	Check(HdTextureOverrides_ExportTexture(1, 0, 0, 0, 4, 4, "PAL9", 9, 9, "regression", status, sizeof(status)),
+		"export with a runtime palette succeeds");
+	decoded = NULL;
+	Check(LoadPngRgba("mods/regression/assets/inspector/PAL9_p9_i9.png", &decoded, &width, &height) &&
+		decoded[3] == 128, "base-colour export uses the registered palette");
+	free(decoded);
+	HdTextureOverrides_SetBaseColourExport(0);
+	Check(HdTextureOverrides_ExportTexture(1, 0, 0, 0, 4, 4, "PAL9", 9, 9, "regression", status, sizeof(status)),
+		"re-export with the primitive palette succeeds");
+	decoded = NULL;
+	Check(LoadPngRgba("mods/regression/assets/inspector/PAL9_p9_i9.png", &decoded, &width, &height) &&
+		decoded[3] == 255, "primitive-palette export keeps the drawn colours");
+	free(decoded);
+	HdTextureOverrides_SetBaseColourExport(1);
 	Check(!HdTextureOverrides_ExportTexture(256, 0, 255, 0, 4, 4, "RED", 1, 1, "regression", status, sizeof(status)), "out-of-range source rejected");
 	Check(!HdTextureOverrides_ExportInspectorReport("../outside", "invalid", status, sizeof(status)), "unsafe mod id rejected");
 
@@ -132,6 +151,8 @@ int main()
 		snprintf(batchItems[i].modelReferences[0], HD_TEXTURE_MODEL_REFERENCE_CAPACITY, "model:0:0:7");
 		snprintf(batchItems[i].modelReferences[1], HD_TEXTURE_MODEL_REFERENCE_CAPACITY, "model:0:0:9");
 		batchItems[i].modelReferenceCount = 2;
+		snprintf(batchItems[i].objectType, sizeof(batchItems[i].objectType), "cars");
+		snprintf(batchItems[i].levelName, sizeof(batchItems[i].levelName), "CHICAGO");
 	}
 	HdTextureOverrideBatchResult batch = {};
 	Check(HdTextureOverrides_ExportTextureBatch("batchtest", batchItems, 2, &batch), "batch export request succeeds");
@@ -150,6 +171,8 @@ int main()
 	if (batchManifest)
 		for (char* scan = batchManifest; (scan = strstr(scan, "\"SHARED\"")) != NULL; ++scan) ++sharedCount;
 	Check(sharedCount == 1, "a shared texture is registered exactly once");
+	Check(batchManifest && strstr(batchManifest, "\"type\": \"cars\"") && strstr(batchManifest, "\"level\": \"chicago\""),
+		"manifest records the object type and level as metadata");
 	free(batchManifest);
 
 	// References are not the override key: a second export with different
@@ -163,6 +186,40 @@ int main()
 		for (char* scan = batchManifest; (scan = strstr(scan, "\"SHARED\"")) != NULL; ++scan) ++sharedCount;
 	Check(sharedCount == 1, "changing model references does not change the override identity");
 	free(batchManifest);
+
+	// Object type mapping drives both the manifest metadata and the organized
+	// directory, so the key prefixes must map to stable tokens.
+	Check(strcmp(HdTextureOverrides_ObjectTypeFromKey("ped:0:0:0:3/component:bone:1"), "pedestrians") == 0,
+		"pedestrian component keys map to the pedestrians type");
+	Check(strcmp(HdTextureOverrides_ObjectTypeFromKey("sprite:model:0:0:7:1:2:3"), "sprites") == 0,
+		"sprite keys map to the sprites type");
+	Check(strcmp(HdTextureOverrides_ObjectTypeFromKey("unlabelled"), "other") == 0,
+		"an unknown key maps to the other type");
+
+	// Organized export: the opt-in flag moves files under <type>/<level> and the
+	// manifest records that relative path. Metadata stays descriptive either way.
+	HdTextureOverrides_SetOrganizedExport(1);
+	Check(HdTextureOverrides_IsOrganizedExportEnabled() == 1, "organized export flag is readable");
+	HdTextureOverrideBatchItem organizedItem = {};
+	organizedItem.tpage = 256; organizedItem.clut = 0;
+	organizedItem.u = 0; organizedItem.v = 0; organizedItem.width = 4; organizedItem.height = 4;
+	snprintf(organizedItem.textureName, sizeof(organizedItem.textureName), "ORGANIZED");
+	organizedItem.texturePage = 3; organizedItem.textureIndex = 3;
+	snprintf(organizedItem.objectType, sizeof(organizedItem.objectType), "buildings");
+	snprintf(organizedItem.levelName, sizeof(organizedItem.levelName), "Havana");
+	Check(HdTextureOverrides_ExportTextureBatch("organizedtest", &organizedItem, 1, &batch), "organized export succeeds");
+	decoded = NULL;
+	Check(LoadPngRgba("mods/organizedtest/assets/inspector/buildings/havana/ORGANIZED_p3_i3.png", &decoded, &width, &height) && width == 4,
+		"organized export groups the PNG by type and level");
+	free(decoded);
+	char* organizedManifest = ReadTextFile("mods/organizedtest/manifest.json", &batchBytes);
+	Check(organizedManifest && strstr(organizedManifest, "\"file\": \"assets/inspector/buildings/havana/ORGANIZED_p3_i3.png\""),
+		"organized manifest points at the grouped path");
+	Check(organizedManifest && strstr(organizedManifest, "\"type\": \"buildings\"") &&
+		strstr(organizedManifest, "\"level\": \"havana\""),
+		"organized manifest keeps lowercased type and level metadata");
+	free(organizedManifest);
+	HdTextureOverrides_SetOrganizedExport(0);
 
 	HdTextureOverrideBatchItem failing = {};
 	failing.tpage = 256; failing.clut = 0; failing.u = 0; failing.v = 255; failing.width = 4; failing.height = 4;

@@ -11,6 +11,8 @@ struct DeveloperGraphicsSettings
 	int fieldOfView;
 	int showLegacyStats;
 	int hdTextureOverrides;
+	int organizeTextureExports;
+	int exportBaseColours;
 };
 
 DeveloperGraphicsSettings DeveloperGraphicsSettings_ReadRuntime();

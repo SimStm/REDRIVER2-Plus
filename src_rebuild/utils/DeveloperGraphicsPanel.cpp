@@ -139,6 +139,16 @@ void FillBatchTextureItem(HdTextureOverrideBatchItem* item, int selectedModelInd
 	}
 }
 
+// Stamps the selection's object type and the current level onto an item, so the
+// manifest describes what each exported texture belongs to.
+void StampBatchItemContext(HdTextureOverrideBatchItem& item, const char* objectKey)
+{
+	snprintf(item.objectType, sizeof(item.objectType), "%s", HdTextureOverrides_ObjectTypeFromKey(objectKey));
+	snprintf(item.levelName, sizeof(item.levelName), "%s", LevelNames[GameLevel]);
+}
+
+
+
 // Cooperative export state. The item array and job are static so a batch can
 // keep running across frames while the panel shows progress and a cancel
 // control. Files are published one at a time; cancelling keeps what was written.
@@ -445,6 +455,15 @@ void DrawThreeDDebugTab()
 	static bool showLabel = true;
 	static float highlightColour[4] = { 0.1f, 0.85f, 1.0f, 0.25f };
 
+	// Logical scopes the same pick can be read at. The picker is unchanged; the
+	// scope only decides which identity the panel presents and how it is named.
+	enum SelectionScope { SCOPE_FACE = 0, SCOPE_MATERIAL, SCOPE_COMPONENT, SCOPE_OBJECT };
+	static int selectionScope = SCOPE_COMPONENT;
+	static AssetCatalogAnchor selectionAnchor = {};
+	static char lastPickSignature[256] = {};
+	static int anchorCarSlot = -1;
+	static int anchorCarModel = -1;
+
 	ImGui::TextUnformatted("Render inspector");
 	ImGui::SameLine();
 	HelpMarker("Click picking resolves the visible PSX primitive, its page, CLUT, UV region, and render provenance. Texture mod manifests, active mods and the declared override list live in the Mods tab.");
@@ -488,6 +507,18 @@ void DrawThreeDDebugTab()
 		HdTextureOverrides_Reload();
 	ImGui::SameLine();
 	HelpMarker("Reloads JSON manifests and PNG files, then re-registers texture regions already loaded by the current level. It never reloads or edits original game data.");
+
+	ImGui::SeparatorText("Selection scope");
+	ImGui::RadioButton("Face", &selectionScope, SCOPE_FACE);
+	ImGui::SameLine();
+	ImGui::RadioButton("Material", &selectionScope, SCOPE_MATERIAL);
+	ImGui::SameLine();
+	ImGui::RadioButton("Component", &selectionScope, SCOPE_COMPONENT);
+	ImGui::SameLine();
+	ImGui::RadioButton("Logical object", &selectionScope, SCOPE_OBJECT);
+	ImGui::SameLine();
+	HelpMarker("Every scope comes from the same pick: Face = the clicked primitive, Material = its texture, Component = a wheel/bone part, Logical object = the parent instance or model the part belongs to. No geometry or packet changes.");
+
 	PsyXInspectorSelection selection = {};
 	const bool hasSelection = PsyX_Inspector_GetSelection(&selection) != 0;
 	HdTextureInspectorInfo textureInfo = {};
@@ -496,6 +527,49 @@ void DrawThreeDDebugTab()
 	int selectedCarId = -1;
 	const bool hasCar = hasSelection && sscanf(selection.provenance, "Car #%d", &selectedCarId) == 1 &&
 		selectedCarId >= 0 && selectedCarId < MAX_CARS;
+
+	// A new pick captures a retained anchor. Model-backed keys get a catalog
+	// handle; car keys additionally record the live slot so a reused car is
+	// detected. Nothing is re-anchored while the same primitive stays selected.
+	if (!hasSelection)
+	{
+		lastPickSignature[0] = '\0';
+		selectionAnchor = AssetCatalogAnchor();
+		anchorCarSlot = -1;
+		anchorCarModel = -1;
+	}
+	else
+	{
+		char pickSignature[256];
+		snprintf(pickSignature, sizeof(pickSignature), "%d|%s|%s", selection.primitiveIndex,
+			selection.object.key, selection.provenance);
+		if (strcmp(pickSignature, lastPickSignature) != 0)
+		{
+			snprintf(lastPickSignature, sizeof(lastPickSignature), "%s", pickSignature);
+			AssetCatalog_CaptureAnchor(selection.object.key, &selectionAnchor);
+
+			// Refresh the lookup explanation with the new selection, so its numbers
+			// never describe a previous pick. The button stays for manual refresh.
+			HdTextureOverrides_DebugRegion(selection.tpage, selection.clut, selection.sourceU,
+				selection.sourceV, selection.sourceWidth, selection.sourceHeight);
+
+			anchorCarSlot = -1;
+			anchorCarModel = -1;
+			char carKey[ASSET_CATALOG_ID_CAPACITY] = {};
+			if (AssetCatalog_IsComponentKey(selection.object.key))
+				AssetCatalog_ParseComponentKey(selection.object.key, carKey, sizeof(carKey), NULL, 0, NULL);
+			else
+				snprintf(carKey, sizeof(carKey), "%s", selection.object.key);
+			int carLevel = -1, carVariant = -1, carSlot = -1, carModel = -1, carModelNumber = -1;
+			if (sscanf(carKey, "car:%d:%d:%d:%d:%d", &carLevel, &carVariant, &carSlot, &carModel, &carModelNumber) == 5 &&
+				carSlot >= 0 && carSlot < MAX_CARS)
+			{
+				anchorCarSlot = carSlot;
+				anchorCarModel = carModel;
+			}
+		}
+	}
+
 	if (hasSelection)
 	{
 		ImGui::Text("Selected primitive: %d", selection.primitiveIndex);
@@ -523,12 +597,23 @@ void DrawThreeDDebugTab()
 			ImGui::TextDisabled("Texture name is not registered by the current level texture set.");
 		}
 		ImGui::TextWrapped("Object: %s", selection.provenance[0] ? selection.provenance : "Unlabelled draw source");
+		if (selection.wholeObject)
+			ImGui::TextDisabled("Whole object: double-click expanded the pick to the parent instance; every part is highlighted and exports together.");
 		if (selection.object.key[0])
 		{
 			ImGui::Text("Object key: %s", selection.object.key);
 			ImGui::Text("Model name: %s | source slot: %d", selection.object.modelName, selection.object.modelIndex);
 			ImGui::Text("Rendered model: %d polygons | %d vertices (0 = not reported)", selection.object.polygonCount, selection.object.vertexCount);
 			ImGui::Text("World position: %d, %d, %d", selection.object.position[0], selection.object.position[1], selection.object.position[2]);
+			if (AssetCatalog_IsComponentKey(selection.object.key))
+			{
+				char parentKey[ASSET_CATALOG_ID_CAPACITY] = {};
+				char componentKind[ASSET_CATALOG_NAME_CAPACITY] = {};
+				int componentIndex = -1;
+				if (AssetCatalog_ParseComponentKey(selection.object.key, parentKey, sizeof(parentKey),
+					componentKind, sizeof(componentKind), &componentIndex))
+					ImGui::Text("Component: %s #%d of %s", componentKind, componentIndex, parentKey);
+			}
 			ImGui::TextDisabled("Object highlighting groups submitted triangles across textures and LOD changes. The texture above belongs to the clicked face.");
 		}
 		if (hasCar)
@@ -538,13 +623,99 @@ void DrawThreeDDebugTab()
 			ImGui::Text("Live model slot: %d | speed: %d", car_data[selectedCarId].ap.model, car_data[selectedCarId].hd.speed);
 			ImGui::TextDisabled("Tracking uses the current car slot; reselect after changing mission or spawning cars.");
 		}
+
+		const AssetCatalogSelectionState anchorState = AssetCatalog_CheckAnchor(&selectionAnchor);
+		ImGui::SeparatorText("Selected scope");
+		switch (selectionScope)
+		{
+		case SCOPE_FACE:
+			ImGui::Text("Face: primitive %d", selection.primitiveIndex);
+			break;
+		case SCOPE_MATERIAL:
+			if (hasTexture)
+				ImGui::Text("Material: %s | page %d / index %d", textureInfo.textureName,
+					textureInfo.texturePage, textureInfo.textureIndex);
+			else
+				ImGui::TextDisabled("Material: no registered texture for this primitive.");
+			break;
+		case SCOPE_COMPONENT:
+			if (AssetCatalog_IsComponentKey(selection.object.key))
+			{
+				char parentKey[ASSET_CATALOG_ID_CAPACITY] = {};
+				char componentKind[ASSET_CATALOG_NAME_CAPACITY] = {};
+				int componentIndex = -1;
+				AssetCatalog_ParseComponentKey(selection.object.key, parentKey, sizeof(parentKey),
+					componentKind, sizeof(componentKind), &componentIndex);
+				ImGui::Text("Component: %s #%d of %s", componentKind, componentIndex, parentKey);
+			}
+			else
+			{
+				ImGui::TextDisabled("Component: this primitive has no component identity.");
+			}
+			break;
+		case SCOPE_OBJECT:
+		default:
+			{
+				char objectKey[ASSET_CATALOG_ID_CAPACITY] = {};
+				if (AssetCatalog_IsComponentKey(selection.object.key))
+					AssetCatalog_ParseComponentKey(selection.object.key, objectKey, sizeof(objectKey), NULL, 0, NULL);
+				else
+					snprintf(objectKey, sizeof(objectKey), "%s",
+						selection.object.key[0] ? selection.object.key : selection.provenance);
+				ImGui::Text("Logical object: %s", objectKey[0] ? objectKey : "(none)");
+			}
+			break;
+		}
+
+		const char* anchorLabel = "none";
+		if (anchorState == ASSET_CATALOG_SELECTION_VALID) anchorLabel = "valid";
+		else if (anchorState == ASSET_CATALOG_SELECTION_STALE) anchorLabel = "stale";
+		else if (anchorState == ASSET_CATALOG_SELECTION_UNKNOWN) anchorLabel = "not model-backed";
+		ImGui::Text("Lifetime: %s (anchor generation %u)", anchorLabel, selectionAnchor.generation);
+		if (anchorState == ASSET_CATALOG_SELECTION_STALE)
+			ImGui::TextDisabled("The anchored resource was reused or the level changed; re-pick to refresh.");
+		if (anchorCarSlot >= 0)
+		{
+			if (car_data[anchorCarSlot].ap.model != anchorCarModel)
+				ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.2f, 1.0f),
+					"Car slot %d now holds model %d (anchor %d): stale",
+					anchorCarSlot, car_data[anchorCarSlot].ap.model, anchorCarModel);
+			else
+				ImGui::Text("Car instance: slot %d | model %d (live)", anchorCarSlot, anchorCarModel);
+		}
+
+		const int selectionRange = PsyX_Inspector_GetSelectionRangeIndex();
+		if (selectionRange >= 0)
+		{
+			PsyX_Inspector_GetRangeBounds(selectionRange);
+			if (g_inspectorRangeBoundsValid)
+				ImGui::Text("Source range %d screen bounds: (%.3f, %.3f) - (%.3f, %.3f)",
+					selectionRange, g_inspectorRangeBounds[0], g_inspectorRangeBounds[1],
+					g_inspectorRangeBounds[2], g_inspectorRangeBounds[3]);
+		}
+
+		if (!selection.object.key[0])
+		{
+			ImGui::SeparatorText("Diagnostics");
+			ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.2f, 1.0f),
+				"Unsupported source: no producer registered a draw-source range for this primitive.");
+			ImGui::TextDisabled("Only the render label is available; identity, lifecycle checks and export are not.");
+		}
+		else if (selection.textureOverridden)
+		{
+			ImGui::SeparatorText("Diagnostics");
+			if (selection.cutoutSampled)
+				ImGui::TextDisabled("Cutout alpha sampled: texels the override discards are skipped when picking.");
+			else
+				ImGui::TextDisabled("Cutout alpha not sampled for this primitive (no CPU mask retained); the selection is geometric.");
+		}
 	}
 	else
 	{
 		ImGui::TextDisabled("No primitive selected. Enable picking and click a visible element outside this panel.");
 	}
 
-	if (hasSelection && selection.object.key[0] && !hasCar)
+	if (hasSelection && selection.object.key[0] && !hasCar && !AssetCatalog_IsComponentKey(selection.object.key))
 	{
 		const int modelRecord = AssetCatalog_FindModel(selection.object.modelIndex);
 		if (modelRecord >= 0)
@@ -586,12 +757,146 @@ void DrawThreeDDebugTab()
 		}
 	}
 
+	if (ImGui::CollapsingHeader("Pick index (frame-local registered sources)"))
+	{
+		int rangeCount = 0;
+		for (int i = 0; i < 4096; ++i)
+		{
+			char rangeLabel[PSYX_INSPECTOR_LABEL_LENGTH] = {};
+			int rangeVertices = 0;
+			if (!PsyX_Inspector_GetRangeInfo(i, rangeLabel, sizeof(rangeLabel), &rangeVertices))
+				break;
+			++rangeCount;
+		}
+
+		int unreachable = 0;
+		for (int i = 0; i < rangeCount; ++i)
+		{
+			char rangeLabel[PSYX_INSPECTOR_LABEL_LENGTH] = {};
+			int rangeVertices = 0;
+			PsyX_Inspector_GetRangeInfo(i, rangeLabel, sizeof(rangeLabel), &rangeVertices);
+			if (rangeVertices == 0)
+				++unreachable;
+		}
+
+		ImGui::Text("Ranges: %d | registered but unreachable: %d", rangeCount, unreachable);
+		ImGui::SameLine();
+		HelpMarker("A range with zero vertices was registered by a producer but no parsed primitive mapped to it this frame, so it cannot be picked. This is the diagnostic fallback for sources that would otherwise fail silently.");
+		ImGui::Text("Last pick cost: %.3f ms (CPU)", PsyX_Inspector_GetPickCostMicros() / 1000.0f);
+		if (ImGui::Button("Pick first reachable component"))
+		{
+			PsyX_Inspector_FindComponentPixel();
+			if (g_inspectorComponentRange >= 0)
+				PsyX_Inspector_RequestPick(g_inspectorComponentPixel[0], g_inspectorComponentPixel[1]);
+		}
+		ImGui::SameLine();
+		if (g_inspectorComponentRange >= 0)
+			ImGui::Text("range %d at (%d, %d)", g_inspectorComponentRange,
+				g_inspectorComponentPixel[0], g_inspectorComponentPixel[1]);
+		else
+			ImGui::TextDisabled("No component is reachable in this frame.");
+		if (ImGui::Button("Locate pickable pixel"))
+		{
+			const int locateRange = PsyX_Inspector_GetSelectionRangeIndex();
+			if (locateRange >= 0)
+			{
+				PsyX_Inspector_FindRangePixel(locateRange);
+				if (g_inspectorRangePixelValid)
+					PsyX_Inspector_RequestPick(g_inspectorRangePixel[0], g_inspectorRangePixel[1]);
+			}
+		}
+		ImGui::SameLine();
+		if (ImGui::Button("Pick first reachable wheel"))
+		{
+			PsyX_Inspector_FindComponentPixelMatching("/component:wheel:");
+			if (g_inspectorComponentRange >= 0)
+				PsyX_Inspector_RequestPick(g_inspectorComponentPixel[0], g_inspectorComponentPixel[1]);
+		}
+		ImGui::SameLine();
+		ImGui::TextDisabled("Find a pixel that resolves to the selected range and pick it.");
+		ImGui::Checkbox("Skip cut-out texels when picking", (bool*)&g_inspectorCutoutPickingEnabled);
+		ImGui::SameLine();
+		if (ImGui::Button("Locate a cut-out texel"))
+			PsyX_Inspector_FindCutoutSample();
+		ImGui::SameLine();
+		if (ImGui::Button("Locate a cut-out fall-through"))
+			PsyX_Inspector_FindCutoutFallThrough();
+		ImGui::SameLine();
+		if (g_inspectorCutoutFallThroughValid)
+			ImGui::Text("fall-through at (%.3f, %.3f)", g_inspectorCutoutFallThrough[0], g_inspectorCutoutFallThrough[1]);
+		else
+			ImGui::TextDisabled("none");
+		ImGui::SameLine();
+		if (g_inspectorCutoutCount > 0)
+			ImGui::Text("%d cut-out point(s); first at (%.3f, %.3f) owned by range %d",
+				g_inspectorCutoutCount, g_inspectorCutoutPoint[0], g_inspectorCutoutPoint[1], g_inspectorCutoutRange);
+		else
+			ImGui::Text("%d masked override primitive(s); no cut-out texel on screen.", g_inspectorCutoutMaskedCount);
+		ImGui::TextDisabled("Picking accounts for ordering-table depth, the display/viewport area, PGXP projection and override cutout coverage; the PSX clip rect is not modelled.");
+		if (ImGui::BeginChild("inspector_ranges", ImVec2(0, 150)))
+		{
+			for (int i = 0; i < rangeCount; ++i)
+			{
+				char rangeLabel[PSYX_INSPECTOR_LABEL_LENGTH] = {};
+				int rangeVertices = 0;
+				PsyX_Inspector_GetRangeInfo(i, rangeLabel, sizeof(rangeLabel), &rangeVertices);
+				if (rangeVertices == 0)
+					ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.2f, 1.0f), "%d: unreachable | %s", i, rangeLabel);
+				else
+					ImGui::Text("%d: %d verts | %s", i, rangeVertices, rangeLabel);
+			}
+		}
+		ImGui::EndChild();
+	}
+
 	ImGui::SeparatorText("Export");
+	if (ImGui::Button("Explain texture lookup") && hasSelection)
+		HdTextureOverrides_DebugRegion(selection.tpage, selection.clut, selection.sourceU,
+			selection.sourceV, selection.sourceWidth, selection.sourceHeight);
+	ImGui::SameLine();
+	ImGui::TextDisabled("page/CLUT matches: %d | containing the region: %d | best entry: %d",
+		g_hdDebugPageClutMatches, g_hdDebugRegionMatches, g_hdDebugBestIndex);
+	if (g_hdDebugBestIndex >= 0)
+		ImGui::TextDisabled("Resolved name: %s", g_hdDebugBestName);
+	else if (g_hdDebugPageMatches > 0)
+		ImGui::TextDisabled("Resolved by palette fallback: %d entries on the page contain the region but with another CLUT (first %s, CLUT %d)",
+			g_hdDebugPaletteFallbackMatches, g_hdDebugPageFirstName, g_hdDebugPageFirstClut);
+	else if (g_hdDebugXYMatches > 0)
+		ImGui::TextDisabled("Same page position, different depth: %d entries, first %s (CLUT %d)",
+			g_hdDebugXYMatches, g_hdDebugXYFirstName, g_hdDebugXYFirstClut);
+	else
+		ImGui::TextDisabled("No named texture shares this page at all.");
 	ImGui::InputText("Export mod id", g_inspectorExportModId, sizeof(g_inspectorExportModId));
 	char modsDirectory[512];
 	HdTextureOverrides_GetModsDirectory(modsDirectory, sizeof(modsDirectory));
 	ImGui::TextWrapped("Mods root: %s", modsDirectory);
 	ImGui::TextWrapped("Texture destination: %s/assets/inspector/\nModel destination: %s/assets/models/", g_inspectorExportModId, g_inspectorExportModId);
+
+	// Export organization is a developer preference, persisted with the panel.
+	bool organizedExport = HdTextureOverrides_IsOrganizedExportEnabled() != 0;
+	if (ImGui::Checkbox("Organize exports by type and level", &organizedExport))
+	{
+		HdTextureOverrides_SetOrganizedExport(organizedExport ? 1 : 0);
+		DeveloperGraphicsSettings_SaveRuntime();
+	}
+	ImGui::TextDisabled(organizedExport
+		? "Textures go to assets/inspector/<type>/<level>/; the manifest records that path."
+		: "Textures go to assets/inspector/; the manifest records type and level as metadata.");
+
+	// Palette choice at export time. Cars and pedestrians are drawn through
+	// runtime palettes, so this decides which colours the PNG carries.
+	bool baseColourExport = HdTextureOverrides_IsBaseColourExportEnabled() != 0;
+	if (ImGui::Checkbox("Export textures in base colours", &baseColourExport))
+	{
+		HdTextureOverrides_SetBaseColourExport(baseColourExport ? 1 : 0);
+		DeveloperGraphicsSettings_SaveRuntime();
+	}
+	ImGui::SameLine();
+	HelpMarker("Enabled: the PNG uses the palette the level registered for the texture, the original artwork colours. This is the right choice for recolouring mods, because the game still selects a runtime palette (CLUT) for cars and pedestrians, and the modded image is re-mapped through it.\n\nDisabled: the PNG uses the palette of the clicked primitive, so a car or pedestrian is exported with the colours that instance currently shows. The same texture can then produce a different PNG per instance.");
+	ImGui::TextDisabled(baseColourExport
+		? "Base palette: original colours, keeps CLUT recolouring working."
+		: "Primitive palette: the colours this instance currently shows.");
+
 #ifdef _WIN32
 	const bool exportSupported = true;
 #else
@@ -600,9 +905,13 @@ void DrawThreeDDebugTab()
 #endif
 	ImGui::BeginDisabled(!hasTexture || !exportSupported);
 	if (ImGui::Button("Export original full texture (PNG)"))
-		HdTextureOverrides_ExportTexture(selection.tpage, selection.clut, textureInfo.u, textureInfo.v,
+	{
+		const HdTextureExportContext context = { HdTextureOverrides_ObjectTypeFromKey(selection.object.key),
+			LevelNames[GameLevel] };
+		HdTextureOverrides_ExportTextureWithContext(selection.tpage, selection.clut, textureInfo.u, textureInfo.v,
 			textureInfo.width, textureInfo.height, textureInfo.textureName, textureInfo.texturePage,
-			textureInfo.textureIndex, g_inspectorExportModId, g_inspectorExportStatus, sizeof(g_inspectorExportStatus));
+			textureInfo.textureIndex, g_inspectorExportModId, &context, g_inspectorExportStatus, sizeof(g_inspectorExportStatus));
+	}
 	ImGui::EndDisabled();
 	if (!hasTexture) ImGui::TextDisabled("PNG unavailable: select a primitive inside a registered texture region.");
 	ImGui::BeginDisabled(!hasCar || !exportSupported);
@@ -701,6 +1010,7 @@ void DrawThreeDDebugTab()
 				FillBatchTextureItem(&g_batchItems[batchCount], selection.object.modelIndex,
 					item.info.textureName, item.info.texturePage, item.info.textureIndex,
 					item.page, item.clut, item.info.u, item.info.v, item.info.width, item.info.height);
+				StampBatchItemContext(g_batchItems[batchCount], selection.object.key);
 				++batchCount;
 			}
 			StartBatchJob(g_inspectorExportModId, batchCount, "Identified visible textures (submitted geometry).");
@@ -719,6 +1029,8 @@ void DrawThreeDDebugTab()
 		{
 			char scope[192] = {};
 			const int batchCount = BuildSourceModelBatchItems(selection.object.modelIndex, scope, sizeof(scope));
+			for (int i = 0; i < batchCount && i < HD_TEXTURE_BATCH_MAX_ITEMS; ++i)
+				StampBatchItemContext(g_batchItems[i], selection.object.key);
 			if (batchCount > 0)
 			{
 				StartBatchJob(g_inspectorExportModId, batchCount, scope);
@@ -874,6 +1186,10 @@ int HandleSDLEvent(const SDL_Event* event)
 	if (g_visible && g_inspectorPickMode && event->type == SDL_MOUSEBUTTONDOWN &&
 		event->button.button == SDL_BUTTON_LEFT && !ImGui::IsWindowHovered(ImGuiHoveredFlags_AnyWindow))
 	{
+		// A single click selects the part under the cursor; a double click keeps
+		// the parent instance instead, so every part of it highlights and exports
+		// together. SDL reports the click count on the event itself.
+		PsyX_Inspector_SetWholeObjectPick(event->button.clicks >= 2);
 		PsyX_Inspector_RequestPick(event->button.x, event->button.y);
 		return 1;
 	}

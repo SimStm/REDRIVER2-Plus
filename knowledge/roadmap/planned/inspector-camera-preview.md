@@ -26,7 +26,7 @@ Do not change ordinary driving controls or require a second game simulation. An 
 
 ## Dependencies and risks
 
-Order 07 after the handle contract in [04](asset-catalog-identity.md) and enough coverage in [06](inspector-selection-coverage.md). Source model adapters can be delivered with [09](model-export-import-roundtrip.md).
+Order 07 after the handle contract in [04](../done/asset-catalog-identity.md) and enough coverage in [06](../done/inspector-selection-coverage.md). Source model adapters can be delivered with [09](model-export-import-roundtrip.md).
 
 ## Suggested execution order
 
