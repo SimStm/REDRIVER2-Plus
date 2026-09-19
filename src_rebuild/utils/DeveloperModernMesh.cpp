@@ -612,31 +612,8 @@ void ApplyLightSet()
 	PsyX_ModernMesh_SetLights(&set);
 }
 
-/* The modern-mesh renderer owns OpenGL programs, framebuffers and buffers, and
-   it builds them lazily from this module. On the Vulkan backend those GL entry
-   points were never loaded, so the module stays off instead of crashing; the
-   Vulkan modern-mesh path is a separate later milestone. */
-static int ModernMeshVulkanDisabled(void)
-{
-	static int warned = 0;
-
-	if (PsyX_GetRenderBackend() != PSYX_BACKEND_VULKAN)
-		return 0;
-
-	if (!warned)
-	{
-		warned = 1;
-		printWarning("ModernMesh: disabled on the Vulkan backend (OpenGL-only for now)\n");
-	}
-
-	return 1;
-}
-
 void DeveloperModernMesh_Initialise(void)
 {
-	if (ModernMeshVulkanDisabled())
-		return;
-
 	ReadEnabledState();
 	ApplyLightSet();
 	PsyX_ModernMesh_SetShadowDebug(s_shadowDebug);
@@ -645,9 +622,6 @@ void DeveloperModernMesh_Initialise(void)
 
 void DeveloperModernMesh_Shutdown(void)
 {
-	if (ModernMeshVulkanDisabled())
-		return;
-
 	for (int i = 0; i < s_fixtureCount; i++)
 	{
 		Fixture* f = &s_fixtures[i];
@@ -706,9 +680,6 @@ int DeveloperModernMesh_GetAmbientOcclusion(void)
 
 void DeveloperModernMesh_Update(void)
 {
-	if (ModernMeshVulkanDisabled())
-		return;
-
 	// Edge-detected F10 toggle; avoids synthetic click injection entirely.
 	const Uint8* keys = SDL_GetKeyboardState(NULL);
 	if (keys && keys[SDL_SCANCODE_F10])
@@ -824,9 +795,6 @@ void DeveloperModernMesh_Update(void)
 
 int DeveloperModernMesh_IsVisible(void)
 {
-	if (ModernMeshVulkanDisabled())
-		return 0;
-
 	if (!s_enabled || s_fixtureCount == 0 || !s_positioned)
 		return 0;
 

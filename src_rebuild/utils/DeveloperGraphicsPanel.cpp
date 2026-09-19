@@ -589,8 +589,30 @@ void DrawThreeDDebugTab()
 			if (textureInfo.previewTextureId)
 			{
 				ImGui::TextUnformatted("Loaded override preview (not the original VRAM texture)");
-				const float size = ImGui::GetContentRegionAvail().x < 192.0f ? ImGui::GetContentRegionAvail().x : 192.0f;
-				ImGui::Image((ImTextureID)textureInfo.previewTextureId, ImVec2(size, size));
+				const unsigned long long overlayTexture = PsyX_GetOverlayTextureId(textureInfo.previewTextureId);
+				if (overlayTexture)
+				{
+					int previewWidth = 0, previewHeight = 0;
+					PsyX_GetRGBATextureSize(textureInfo.previewTextureId, &previewWidth, &previewHeight);
+
+					const float maxWidth = ImGui::GetContentRegionAvail().x < 192.0f ? ImGui::GetContentRegionAvail().x : 192.0f;
+					float width = maxWidth;
+					float height = maxWidth;
+					if (previewWidth > 0 && previewHeight > 0)
+					{
+						height = width * (float)previewHeight / (float)previewWidth;
+						if (height > 256.0f)
+						{
+							height = 256.0f;
+							width = height * (float)previewWidth / (float)previewHeight;
+						}
+					}
+					ImGui::Image((ImTextureID)overlayTexture, ImVec2(width, height));
+				}
+				else
+				{
+					ImGui::TextDisabled("Preview is unavailable on this backend.");
+				}
 			}
 		}
 		else if (selection.textured)

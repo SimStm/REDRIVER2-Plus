@@ -32,6 +32,10 @@ $shaders = @(
 	@{ Name = 'fixture_frag'; File = 'fixture.frag' },
 	@{ Name = 'shadow_vert';  File = 'shadow.vert'  },
 	@{ Name = 'shadow_frag';  File = 'shadow.frag'  },
+	@{ Name = 'fullscreen_vert';    File = 'fullscreen.vert'    },
+	@{ Name = 'psx_modern_vert';    File = 'psx_modern.vert'    },
+	@{ Name = 'psx_modern_frag';    File = 'psx_modern.frag'    },
+	@{ Name = 'psx_composite_frag'; File = 'psx_composite.frag' },
 	@{ Name = 'psx_vert';     File = 'psx.vert'     },
 	# vulkan1.1 keeps `discard` as OpKill instead of OpDemoteToHelperInvocation,
 	# so the PSX shader runs on any Vulkan 1.1 device without enabling the
