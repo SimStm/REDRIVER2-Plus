@@ -27,6 +27,14 @@
 - Still to capture with the reported state: the police direction cone /
   police-colour blinking (item 1.3, needs a wanted state) and the clapperboard
   transition (item 1.5).
+- Verified on Vulkan per reported item: 1.1 the boot load shows the progress bar;
+  1.2 the fullscreen map matches the OpenGL reference; 1.3 with
+  `CopsCanSeePlayer = 1` and `car_data[0].felonyRating = 5000` the map draws the
+  police flame marker and its white direction cone; 1.4 the Felony bar draws as a
+  solid police-yellow bar over the scene; 1.5 `CloseShutters` runs at level start
+  (breakpoint) with `h` advancing 16 -> 32 -> 80 and the captured frame shows the
+  loading art, bar and closing bands. -vkpsxtest PASS; all four fixes are
+  Vulkan-only.
 - Earlier objective (complete): renderer modernization item 14 phase 2 (R7b),
   the Vulkan game renderer, including post-flip defects 1-5. See
   `knowledge/roadmap/done/vulkan-game-renderer.md` and

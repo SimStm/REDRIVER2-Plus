@@ -123,13 +123,28 @@ Before the fixes it did not draw at all (vertex overwrite), then drew scattered
 garbage (VRAM ordering), then drew correctly but was painted over by the world
 (depth store).
 
+## Verification
+
+Captured on the Vulkan build (`Release_dev`, 2026-09-19) against the reported
+items:
+
+| Item | Result | Evidence |
+| --- | --- | --- |
+| 1.1 loading progress bar | passes | The frontend boot load (`ShowLoadingScreen("GFX\\FELOAD.TIM", 1, 12)` + `ShowLoading`) shows the loading art, "Is Loading" and the bar with `fastLoadingScreens=0`. |
+| 1.2 map screen and icons | passes | The fullscreen map matches the OpenGL reference: tiles, roads, the compass, the district labels and the "Rotation / Move / Skip cutscene" icon row. |
+| 1.3 minimap police elements | passes | With `CopsCanSeePlayer = 1` and `car_data[0].felonyRating = 5000`, the map draws the police indicator: the flame marker with its white direction cone. |
+| 1.4 Damage/Felony colour | passes | With the same wanted state the Felony bar draws as a solid police-yellow bar over the 3D scene instead of taking the colour of what is behind it; in normal play the HUD matches OpenGL. |
+| 1.5 animated transition | passes | `CloseShutters` runs at level start (breakpoint confirms the call) and `h` advances 16 -> 32 -> 80 through the loop; the captured frame during `h = 80` shows the loading art with the bar and the closing black bands. The loading bar accumulating across `ShowLoading` frames uses the same cross-frame persistence the shutters need. |
+
+Regression checks: normal gameplay, the minimap and the frontend render as
+before; `REDRIVER2_dev.exe -vkpsxtest` passes (`16-bit worst=0`, `4-bit CLUT
+worst=0`, offscreen samples ok, `vram export 1048594/1048594`). All four fixes
+are Vulkan-only, so the OpenGL, Emscripten, Android and PSX paths are unchanged.
+
 ## Remaining verification
 
 - The minimap and the Damage/Felony HUD render as on OpenGL in normal play.
-- Still to capture with the reported state: the police direction cone and
-  police-colour blinking (item 1.3, needs a wanted state) and the clapperboard
-  level transition (item 1.5). Both use the same 2D-over-3D path that the depth
-  fix repaired, but the objective asks for before/after evidence per item.
-- The loading progress bar is verified: the frontend boot load
-  (`ShowLoadingScreen("GFX\\FELOAD.TIM", 1, 12)` + `ShowLoading`) draws the bar on
-  Vulkan with `fastLoadingScreens=0`.
+- Before/after image pairs exist for the map screen and the HUD; items 1.1, 1.3
+  and 1.5 were confirmed by an after capture plus runtime state (the debugger
+  showing the loading bar accumulation and the shutter height) rather than a
+  paired before image.
