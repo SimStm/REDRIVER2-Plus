@@ -287,6 +287,13 @@ where release policy permits it.
 
 ### Changed
 
+- Project status is now tracked in two complementary files under `knowledge/`:
+  [`CURRENT_STATUS.md`](knowledge/CURRENT_STATUS.md) is the cumulative source of
+  truth for everything implemented in this fork and is updated whenever a change
+  lands, and [`RECENT_CONTEXT.md`](knowledge/RECENT_CONTEXT.md) is the
+  session-to-session handoff (moved from `docs/ai/RECENT_CONTEXT.md`, which no
+  longer exists). `AGENTS.md` documents both and requires the status update as
+  part of finishing a change.
 - The native Vulkan backend is now the default renderer for the game (renderer
   roadmap item 14/R7b). It had been opt-in behind `-vulkan` while OpenGL stayed
   the default "until parity is proven"; that condition now holds - same image,

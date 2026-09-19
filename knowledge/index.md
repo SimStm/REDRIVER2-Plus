@@ -11,6 +11,8 @@ This directory follows the [Open Knowledge Format](https://github.com/GoogleClou
 
 | Path | What belongs here |
 | --- | --- |
+| [`CURRENT_STATUS.md`](CURRENT_STATUS.md) | The cumulative source of truth for what has been implemented in this fork. Add a short factual entry when a change lands. |
+| [`RECENT_CONTEXT.md`](RECENT_CONTEXT.md) | Session-to-session handoff: what the last interactions changed, the techniques and environment notes that mattered, and the next recommended action. |
 | [`rules/`](rules/index.md) | Repeatable constraints (“when X, do Y”). If you discover a pattern that will come up again, add a rule here instead of leaving it in a PR comment. |
 | [`product/`](product/index.md) | How a product surface works and what must be configured. |
 | [`discussions/`](discussions/index.md) | Evolving technical discussions, evidence, alternatives, diagrams, and unresolved decisions before roadmap adoption. |

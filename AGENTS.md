@@ -4,6 +4,20 @@
 
 Canonical project knowledge lives in [`knowledge/`](knowledge/index.md). Read `knowledge/index.md` and `knowledge/rules/` before changing lint, tokens, or booking naming. When you learn a repeating constraint, add a rule under `knowledge/rules/` (see `knowledge/rules/self-learning.md`).
 
+Two status documents complement each other:
+
+- [`knowledge/CURRENT_STATUS.md`](knowledge/CURRENT_STATUS.md) is the **source of
+  truth for everything implemented in this fork** - a detailed, cumulative
+  summary with a short comment on each surface (renderer, textures/mods,
+  inspector, playground, tooling). **Update it every time you finish
+  implementing something**, before ending the turn: add or amend the entry for
+  the affected surface so a new session can see the whole current state without
+  reading every change record. Keep it a summary, not a chat log.
+- [`knowledge/RECENT_CONTEXT.md`](knowledge/RECENT_CONTEXT.md) is the
+  **session-to-session handoff** - what the last interactions changed, the
+  evidence gathered, techniques that worked, environment notes, and the next
+  recommended action.
+
 Roadmap records live in [`knowledge/roadmap/`](knowledge/roadmap/index.md). Read
 them when planning work, but do not treat them as implementation evidence:
 `planned/` documents intent only, while `done/` is a completion record that must
@@ -19,13 +33,19 @@ a discussion does not authorize implementation or establish shipped behaviour.
 
 ## Persistent Engineering Context
 
-- Read [`docs/ai/RECENT_CONTEXT.md`](docs/ai/RECENT_CONTEXT.md) at the start
-  of any non-trivial task, session continuation, bug investigation, refactor,
-  or multi-file feature, before editing code.
-- Treat it as auxiliary context only. Confirm the real state from the current
+- Read [`knowledge/CURRENT_STATUS.md`](knowledge/CURRENT_STATUS.md) and
+  [`knowledge/RECENT_CONTEXT.md`](knowledge/RECENT_CONTEXT.md) at the start of
+  any non-trivial task, session continuation, bug investigation, refactor, or
+  multi-file feature, before editing code. `CURRENT_STATUS.md` answers "what
+  exists today"; `RECENT_CONTEXT.md` answers "what just happened and what is
+  next".
+- Treat them as auxiliary context only. Confirm the real state from the current
   source, `git status`, `git diff`, build configuration, and tests.
-- Update it before ending a long session or after a substantial milestone:
-  multiple changed files, an architectural refactor, an API/ABI change, an
+- Update `knowledge/CURRENT_STATUS.md` **whenever you finish implementing
+  something** - a feature, a fix, a backend change, a tooling or documentation
+  surface - before ending the turn. Update `knowledge/RECENT_CONTEXT.md` before
+  ending a long session or after a substantial milestone: multiple changed
+  files, an architectural refactor, an API/ABI change, an
   ownership/lifetime or concurrency/synchronization decision, a change to
   error/exception guarantees, a meaningful performance change, an
   inconclusive investigation, a known blocker, or a significant build, test,
@@ -35,8 +55,8 @@ a discussion does not authorize implementation or establish shipped behaviour.
   work, risks or blockers, the next concrete step, and validation commands
   actually executed with their real results.
 - Never claim validation that was not executed.
-- Keep the file under 350 lines. Consolidate or remove obsolete entries
-  instead of turning it into a chat log.
+- Keep each file under 350 lines. Consolidate or remove obsolete entries
+  instead of turning them into a chat log.
 - Never record secrets, credentials, tokens, `.env` contents, or long logs.
 
 ## Project purpose
@@ -164,6 +184,9 @@ point math, timing, or rendering can affect compatibility.
 - All new documentation and developer-facing prose must be written in English.
 - Capture durable conventions in `knowledge/rules/` at the time they are
   learned; use `knowledge/changes/` for the context of shipped changes.
+- Every finished implementation also updates
+  [`knowledge/CURRENT_STATUS.md`](knowledge/CURRENT_STATUS.md) in the same
+  change, so the cumulative status never lags behind the source.
 
 ## Changelog
 

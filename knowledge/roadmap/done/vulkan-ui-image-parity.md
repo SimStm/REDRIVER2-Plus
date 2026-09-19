@@ -1,7 +1,8 @@
 ---
 type: Roadmap
 title: Vulkan UI and image parity
-status: planned
+status: implemented
+implemented: 2026-09-19
 tags: [roadmap, rendering, vulkan, ui, psycross, parity]
 ---
 
@@ -22,14 +23,14 @@ defects around UI and image-drawing elements:
 5. animated effects such as the clapperboard loading-to-gameplay transition do
    not play correctly.
 
-Root cause direction (partly confirmed): the Vulkan backend records the entire
-frame's PSX draws at present time, while the OpenGL renderer executes every
-`DrawSync` flush immediately. Two consequences are already fixed on the fork
-(commit `8510b31`): the vertex upload used to overwrite the previous flush's
-vertices, and every draw sampled the frame's final VRAM state instead of the
-state at its own flush. The overhead map now draws its tiles and labels, but its
-tile sampling still does not match OpenGL: line-work is scattered across the
-screen and the map's background reaches only part of it.
+Root cause: the Vulkan backend records the entire frame's PSX draws at present
+time, while the OpenGL renderer executes every `DrawSync` flush immediately. Four
+defects followed - vertex uploads overwrote the previous flush, every draw
+sampled the frame's final VRAM state instead of the state at its own flush, the
+depth write was tied to the depth test, and the depth/stencil attachment used
+`DONT_CARE` so a mid-frame pass split lost them. All four are fixed (see the
+delivery progress below and
+[`knowledge/product/vulkan-ui-image-parity.md`](../../product/vulkan-ui-image-parity.md)).
 
 ## Intended behaviour
 

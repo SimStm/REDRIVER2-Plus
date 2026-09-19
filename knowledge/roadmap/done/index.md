@@ -47,3 +47,6 @@ completed, as described in the [roadmap catalog](../index.md).
 - **14 — [Vulkan game renderer](vulkan-game-renderer.md)**:
   implemented 2026-09-19; product document
   [`knowledge/product/vulkan-game-renderer.md`](../../product/vulkan-game-renderer.md).
+- **[Vulkan UI and image parity](vulkan-ui-image-parity.md)**: implemented
+  2026-09-19 (follow-up to renderer item 14); product document
+  [`knowledge/product/vulkan-ui-image-parity.md`](../../product/vulkan-ui-image-parity.md).
