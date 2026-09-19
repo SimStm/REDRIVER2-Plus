@@ -1,6 +1,6 @@
 # Recent Engineering Context
 
-> Updated: 2026-09-18
+> Updated: 2026-09-19
 > Status: active
 > Source of truth: current repository state, Git history and Git diff.
 > This file preserves durable engineering context across long OpenCode sessions.
@@ -11,10 +11,15 @@
   modern fixture, validation-clean) is done. Phase 2 (R7b) is done: the *game*
   renders through Vulkan, it is now the **default** backend, and OpenGL remains
   selectable with `-opengl`.
+- Post-flip defects: 1 (loading screen black), 2 (sRGB double-encode), 3 (modern
+  mesh system not on Vulkan), 5 (screenshots) are fixed and verified. Defect 4
+  (HD-texture preview accessor) is implemented; its interactive panel check was
+  not completed. See `knowledge/roadmap/planned/vulkan-game-renderer.md`.
 - Acceptance criteria: the game window presents through Vulkan with the same
   image as OpenGL (scene, HUD, minimap), zero Khronos validation errors,
   `-vkpsxtest` and the inspector suites pass, and no OpenGL/Emscripten/Android/
-  PSX regression. All met.
+  PSX regression. All met; validation layer is not installed on the current
+  machine, so the most recent runs relied on behaviour and the self-test.
 
 ## Architecture and invariants
 - Vulkan device/swapchain is owned by PsyCross (`PsyX_Vk.cpp`); the game maps
@@ -27,10 +32,40 @@
 - Public API / ABI: PsyCross keeps C-compatible declarations for mixed C/C++
   code, and project-specific PsyCross changes are committed to the project fork
   (`knowledge/rules/psycross-fork.md`); the parent records the gitlink.
+- Modern mesh on Vulkan: `PsyX_Vk_GameModernMesh*` mirrors the OpenGL
+  `PsyX_ModernMesh` contract. The `ModernUBO` (std140) is declared identically in
+  `psx_modern.vert`, `psx_modern.frag` and `psx_composite.frag`; the order is
+  proj, projInverse, shadowMatrix, cameraViewInverse, cameraRotation, xyScale,
+  shadowParams, lightInfo, ambientExposure, cameraPos, viewport, lights[8]. A
+  missing field silently shifts every later member onto the wrong offset.
+- The Vulkan main pass colour attachment preserves the previous frame
+  (`LOAD_OP_LOAD`, `PRESENT_SRC` initial layout) and clears with
+  `vkCmdClearAttachments` only when `GR_Clear` requested it; this matches
+  OpenGL's conditionally-cleared framebuffer that the loading screen relies on.
 - Toolchain: Premake 5 generates the projects, generated output is not tracked,
   dialect is C++11 (`knowledge/rules/generated-build-files.md`).
 
 ## Completed changes
+- 2026-09-19: Vulkan main pass preserves the framebuffer (defect 1). The PSX
+  loading path draws the art once and then only the progress bar; OpenGL keeps
+  the art because it clears only when `activeDrawEnv.isbg` is set, while the
+  Vulkan pass always used `LOAD_OP_CLEAR` and `clearRequested` was never read. The
+  colour attachment now uses `LOAD_OP_LOAD` with a `PRESENT_SRC` initial layout
+  and clears with `vkCmdClearAttachments` only when `GR_Clear` was called (or on
+  the first use of a swapchain image, which is first moved from `UNDEFINED` to
+  `PRESENT_SRC`). Validated: `-vkpsxtest` PASS unchanged, `-vkfixture` capture,
+  in-game render without smearing, loading art persists at a `ShowLoading`
+  breakpoint. Fork commit `41e74b1`, parent `b6e054f4`.
+- 2026-09-19: The in-game modern-mesh system runs on Vulkan (defect 3, Option A).
+  `PsyX_ModernMesh.cpp` dispatches to `PsyX_Vk_GameModernMesh*`; new shaders
+  `psx_modern.vert/.frag`, `fullscreen.vert`, `psx_composite.frag`; the developer
+  gallery no longer disables itself. The shared `ModernUBO` must be declared
+  identically in all three shaders (the vertex shader was missing
+  `ambientExposure`, which shifted `cameraPos` onto the wrong std140 slot and
+  made every mesh invisible). Verified in game: `modernCalls=8`,
+  `modernVerts=16143`, F10 toggle removes/restores the fixtures. Also adds the
+  backend-aware overlay texture accessor for the developer preview (defect 4).
+  Fork commit `f7a4a0f`, parent `11648d3a`.
 - 2026-09-18: Vulkan is now the default game renderer. Parity was proven (image,
   resize, readback, stencil, offscreen, VRAM export, 0 validation errors, 30 FPS
   equality), so `redriver2_psxpc.cpp` defaults `useVulkan = 1` on desktop, adds
@@ -106,29 +141,38 @@
   `396dd20`, `9281fb7`; parent gitlink at `9281fb7`.
 
 ## Current state
-- Implemented: Vulkan game rendering (phase 2 complete, now the default backend),
+- Implemented: Vulkan game rendering (the default backend), the in-game modern
+  mesh system on Vulkan, framebuffer persistence matching OpenGL, the
   framebuffer-to-VRAM mirror, offscreen render-to-VRAM target, PSX primitive mask
   bit (stencil), minimap scissor fix, fork migration, SDL3 deferral recorded.
-- Pending for phase 3: none blocking. The Tanner shadow was confirmed working in
-  an on-foot test by the user (renders correctly, a little smooth at the edges);
-  the earlier "no capture" note came from the debug start spawning the player in
-  the car, not from a defect. The both-backend performance comparison is done.
-  The VRAM export is fixed and the FMV item was dropped as non-existent on the
-  desktop path.
+- Pending: defect 4's interactive preview check (pick an overridden texture in
+  the 3D Debug tab and confirm the image renders) was not completed - the panel's
+  synthetic clicks did not toggle the pick checkbox in the capture tooling. R8
+  profiling (frame-time distribution, peak memory, Linux/web/Android) is still
+  missing, and no fresh OpenGL (`-opengl`) comparison was run this session.
 - Risks / open questions: the Vulkan frame mirror samples the whole window
   (including the dev overlay) and scales it onto the PSX display rect; the GL
   legacy path's `GR_CopyRGBAFramebufferToVRAM` R/B extraction is suspect, but the
   only consumer (lens flare) is colour-insensitive. `GR_UseVulkan` guards must
-  keep Emscripten/Android/PSX untouched.
+  keep Emscripten/Android/PSX untouched. The main pass now depends on the
+  swapchain image being in `PRESENT_SRC` at entry; any new path that renders to
+  the swapchain must keep that layout contract.
 
 ## Relevant files
-- `src_rebuild/PsyCross/src/render/PsyX_Vk.cpp`: Vulkan backend; `RecordPsxDraws`
-  scissor fix, `PsyX_Vk_TakeStoredFrameBuffer`, `PsyX_Vk_GameStoreFrameBuffer`.
+- `src_rebuild/PsyCross/src/render/PsyX_Vk.cpp`: Vulkan backend; modern-mesh
+  module, main-pass clear semantics, `RecordPsxDraws`, the frame mirror.
+- `src_rebuild/PsyCross/src/render/vk_shaders/psx_modern.vert`,
+  `psx_modern.frag`, `fullscreen.vert`, `psx_composite.frag`: the game modern
+  pass; regenerate `PsyX_Vk_Shaders.h` with `scripts/compile_vk_shaders.ps1`.
+- `src_rebuild/PsyCross/src/render/PsyX_ModernMesh.cpp`: backend dispatch.
 - `src_rebuild/PsyCross/src/render/PsyX_render.cpp`: `GR_*` dispatch;
-  `GR_VkMirrorFrameToVRAM`, `GR_BeginScene`/`GR_StoreFrameBuffer` guards.
+  `GR_VkMirrorFrameToVRAM`, `PsyX_GetOverlayTextureId`, `GR_BeginScene`.
+- `src_rebuild/utils/DeveloperModernMesh.cpp`, `DeveloperGraphicsPanel.cpp`:
+  gallery parity and the overlay preview.
 - `src_rebuild/PsyCross/include/PsyX/PsyX_vk.h`,
-  `include/PsyX/PsyX_render.h`: the new declarations.
-- `src_rebuild/Game/C/overmap.c`, `Game/C/sky.c`: minimap draw and lens flare.
+  `include/PsyX/PsyX_render.h`, `PsyX_public.h`: the new declarations.
+- `src_rebuild/Game/C/overmap.c`, `Game/C/sky.c`, `Game/C/loadview.c`: minimap,
+  lens flare and the loading screen.
 - `knowledge/roadmap/planned/vulkan-game-renderer.md`,
   `knowledge/discussions/renderer-modernization/index.md`,
   `knowledge/discussions/sdl-version-migration/index.md`: records.
@@ -163,30 +207,36 @@
   `AssetCatalogTests: 145 checks, 0 failures`;
   `InspectorExportTests: 104 checks passed`.
 - Executed: `git diff --check`. Result: exit code 0.
-- Still required: macOS/MoltenVK build was never produced (objectives are
-  Windows/Linux; MoltenVK code paths exist but are unbuilt). The `D32_SFLOAT`
-  stencil-less fallback in `PickDepthStencilFormat` is compiled but never
-  exercised, because the RTX 3060 Ti always exposes a combined depth-stencil
-  format; it can only be confirmed on a driver that refuses one. Raw uncapped
-  GPU throughput was not measured: both backends present at the game's fixed
-  30 Hz PSX timestep (30.0 FPS / 33.4 ms), so the equality shows neither is
-  struggling, not their maximum frame rate. The Tanner shadow is confirmed
-  working in an on-foot test (see Current state).
+- 2026-09-19: `REDRIVER2_dev.exe -vkpsxtest` after the main-pass clear change.
+  Result: PASS, unchanged numbers (16-bit/4-bit worst=0, offscreen ok,
+  `vram export 1048594/1048594 bytes: ok`).
+- 2026-09-19: `REDRIVER2_dev.exe -vkfixture -vkcapture 10 -vkshot
+  fixture_check.bmp`. Result: exit 0, 1280x720 frame with the 8 GLBs + analytic
+  spheres.
+- 2026-09-19: VS debugger + screenshots on `Release_dev` (Vulkan). Result: the
+  modern fixtures render in game (`modernCalls=8 modernVerts=16143`) and F10
+  toggles them; at a `ShowLoading` breakpoint (`activeDrawEnv.isbg == 0`) the
+  loading art stays on screen after the clear-semantics fix. The Khronos
+  validation layer is not installed on this machine, so those runs have no
+  validation output.
+- Still required: defect 4's interactive preview check; a fresh `-opengl`
+  comparison; macOS/MoltenVK build; the `D32_SFLOAT` fallback; raw uncapped GPU
+  throughput.
 
 ## Next recommended action
-1. Commit the parent working tree (gitlink, docs, fork migration) when the user
-   asks; do not commit unprompted. The three open user decisions are: commit the
-   parent, confirm the fork contract replaces `patches/psycross/`, and pick the
-   next scope.
-2. Game-path parity now covers image, mipmapped textures, offscreen, stencil,
-   VRAM export, present, resize and readback, all with 0 validation errors and
-   measured 30 FPS parity with OpenGL. Remaining verification, none of which is
-   blocking: on-foot Tanner shadow capture (now confirmed working by the user),
-   macOS/MoltenVK build, the stencil-less `D32_SFLOAT` fallback (unexercised on
-   NVIDIA), and raw uncapped GPU throughput (the game is PSX-timestep-bound, so
-   both backends present at 30 FPS by design).
+1. Finish defect 4's interactive check: open the panel (F11), 3D Debug tab,
+   enable "Pick visible primitive", pick a texture that a mod overrides, and
+   confirm the preview image appears on Vulkan (and OpenGL). The accessor is
+   implemented; only the on-screen confirmation is missing.
+2. Optionally run a fresh `-opengl` comparison for R8 and re-check parity with
+   the new framebuffer-persistence behaviour.
+3. Then complete the roadmap handoff (product doc, move the record to `done/`,
+   catalogs, discussions, playground link) once the residual checks pass.
 
 ## Compact changelog
+- 2026-09-19: modern-mesh system delivered on Vulkan (defect 3) + overlay texture
+  accessor (defect 4); Vulkan main pass preserves the framebuffer so the loading
+  screen keeps its art (defect 1).
 - 2026-09-18: Vulkan game path - resize recreation fix (framebuffers/views/depth
   now rebuilt, verified over four live resizes at 0 validation errors).
 - 2026-09-18: Vulkan game path - PSX mip-chain barrier fix, backend-agnostic perf

@@ -10,6 +10,20 @@ where release policy permits it.
 
 ### Added
 
+- The in-game modern-mesh system now runs on the Vulkan backend (renderer
+  roadmap item 14, defect 3, Option A), so it is live in the default
+  configuration instead of OpenGL-only. `PsyX_ModernMesh.cpp` dispatches every
+  call to a new `PsyX_Vk_GameModernMesh*` module that owns its own load render
+  pass, UBO, descriptor sets and pipelines; `vk_shaders/psx_modern.vert/.frag`
+  reproduce the GTE-encoded vertex path (GL-to-Vulkan clip conversion, xyScale,
+  camera transform) and the GGX/Schlick PBR fragment path, and
+  `vk_shaders/fullscreen.vert` plus `psx_composite.frag` composite the modern
+  pass over the PSX main pass with the scene-depth shadow term. The developer
+  gallery no longer disables itself on Vulkan, so the F10 toggle and the eight
+  GLB fixtures behave as on OpenGL. The shared `ModernUBO` layout must be
+  declared identically in all three shaders; the vertex shader had been missing
+  `ambientExposure`, which shifted `cameraPos` onto the wrong std140 slot and
+  clipped every mesh away.
 - An experimental native-Vulkan backend for the modern scene and a standalone
   developer window (renderer roadmap item 14, milestone R7, partial):
   `PsyX_Vk_*` in PsyCross owns an SDL window, swapchain, depth buffer, shadow
@@ -365,6 +379,24 @@ where release policy permits it.
 
 ### Fixed
 
+- The loading screen was black on the Vulkan backend and its progress bar was
+  lost. The PSX loading path draws the art once (`ShowLoadingScreen`) and then
+  redraws only the bar (`ShowLoading`) while the level streams in; the OpenGL
+  renderer keeps the art because it only clears when the draw environment has
+  `isbg` set, but the Vulkan main pass always used `LOAD_OP_CLEAR` and the
+  `clearRequested` flag written by `GR_Clear` was never read. The main pass
+  colour attachment now uses `LOAD_OP_LOAD` with a `PRESENT_SRC` initial layout
+  and clears with `vkCmdClearAttachments` only when the game asked for it (or
+  when a swapchain image is used for the first time), so the loading art
+  persists exactly as on OpenGL. `-vkpsxtest` still passes with unchanged
+  pixel assertions.
+- The HD-texture override preview in the developer graphics panel showed
+  nothing on the Vulkan backend because the ImGui Vulkan backend needs a
+  `VkDescriptorSet`, while the texture id is a slot index there. A new
+  backend-aware accessor (`PsyX_GetOverlayTextureId`,
+  `PsyX_GetRGBATextureSize`) returns a cached
+  `ImGui_ImplVulkan_AddTexture` descriptor set on Vulkan and the `GLuint` on
+  OpenGL, and the panel uses it with the texture's real aspect ratio.
 - The Vulkan game path recreated only the swapchain handed to the compositor on a
   window resize; the framebuffers, swapchain image views and depth attachment
   built for the old extent were left alive and then shadowed by the new ones, so
