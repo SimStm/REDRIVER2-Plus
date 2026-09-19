@@ -2,6 +2,7 @@
 
 #include "DeveloperDebugStart.h"
 #include "DeveloperGraphicsSettings.h"
+#include "DeveloperModernMesh.h"
 #include "HdTextureOverrides.h"
 
 #if defined(_WIN32) || defined(__linux__)
@@ -1286,14 +1287,12 @@ int HandleSDLEvent(const SDL_Event* event)
 	}
 }
 
-void RenderOverlay()
+// Builds the panel's ImGui windows. The Vulkan backend owns the ImGui frame
+// and calls this between ImGui::NewFrame and ImGui::Render.
+void BuildOverlayWidgets()
 {
 	if (!g_visible)
 		return;
-
-	ImGui_ImplOpenGL3_NewFrame();
-	ImGui_ImplSDL2_NewFrame();
-	ImGui::NewFrame();
 
 	const ImVec2 displaySize = ImGui::GetIO().DisplaySize;
 	ImGui::SetNextWindowSizeConstraints(ImVec2(320.0f, 240.0f), ImVec2(displaySize.x, displaySize.y * 0.95f));
@@ -1318,6 +1317,22 @@ void RenderOverlay()
 				if (ImGui::Checkbox("PGXP texture mapping", &pgxpTextureMapping)) g_cfg_pgxpTextureCorrection = pgxpTextureMapping;
 				if (ImGui::Checkbox("PGXP Z-buffer", &pgxpZBuffer)) g_cfg_pgxpZBuffer = pgxpZBuffer;
 				if (ImGui::Checkbox("VSync", &vsync)) g_cfg_swapInterval = vsync;
+
+				ImGui::Separator();
+				bool enhancedRenderer = DeveloperModernMesh_GetEnabled() != 0;
+				if (ImGui::Checkbox("Enhanced renderer (modern meshes/PBR)", &enhancedRenderer))
+					DeveloperModernMesh_SetEnabled(enhancedRenderer);
+				HelpMarker("Switches between the classic PSX renderer and the experimental modern path (imported glTF meshes, PBR materials, dynamic lights). F10 toggles it at any time. Requires developer_modern_mesh.ini.");
+
+				bool modernShadows = DeveloperModernMesh_GetShadows() != 0;
+				if (ImGui::Checkbox("Modern shadows", &modernShadows))
+					DeveloperModernMesh_SetShadows(modernShadows);
+				HelpMarker("Directional shadow map. Coverage is modern meshes only: legacy geometry neither casts nor receives.");
+
+				bool modernAO = DeveloperModernMesh_GetAmbientOcclusion() != 0;
+				if (ImGui::Checkbox("Modern ambient occlusion", &modernAO))
+					DeveloperModernMesh_SetAmbientOcclusion(modernAO);
+				HelpMarker("Normal-based ambient-occlusion approximation on the modern path; a true depth-based screen-space AO is a follow-up.");
 
 				ImGui::SliderInt("Draw distance", &gDrawDistance, 441, 1800);
 				int fieldOfView = gCameraDefaultScrZ;
@@ -1379,7 +1394,22 @@ void RenderOverlay()
 
 	if (!g_visible)
 		SetVisible(false);
+}
 
+void RenderOverlay()
+{
+	if (PsyX_GetRenderBackend() == PSYX_BACKEND_VULKAN)
+	{
+		// The Vulkan backend drives the frame and its renderer; only the
+		// widgets are contributed here.
+		BuildOverlayWidgets();
+		return;
+	}
+
+	ImGui_ImplOpenGL3_NewFrame();
+	ImGui_ImplSDL2_NewFrame();
+	ImGui::NewFrame();
+	BuildOverlayWidgets();
 	ImGui::Render();
 	ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 }
@@ -1389,6 +1419,17 @@ void DeveloperGraphicsPanel_Initialise()
 {
 	if (g_initialised || !PsyX_GetSDLWindow())
 		return;
+
+	if (PsyX_GetRenderBackend() == PSYX_BACKEND_VULKAN)
+	{
+		// The Vulkan backend already created the ImGui context and its SDL2 and
+		// Vulkan backends; the panel only adds its windows and input handling.
+		g_initialised = true;
+		DeveloperGraphicsSettings_LoadAndApply();
+		PsyX_SetSDLEventHandler(HandleSDLEvent);
+		PsyX_SetRenderOverlayHandler(RenderOverlay);
+		return;
+	}
 
 	IMGUI_CHECKVERSION();
 	ImGui::CreateContext();
@@ -1415,9 +1456,15 @@ void DeveloperGraphicsPanel_Shutdown()
 	PsyX_SetInputCapture(0);
 	PsyX_SetSDLEventHandler(NULL);
 	PsyX_SetRenderOverlayHandler(NULL);
-	ImGui_ImplOpenGL3_Shutdown();
-	ImGui_ImplSDL2_Shutdown();
-	ImGui::DestroyContext();
+
+	if (PsyX_GetRenderBackend() != PSYX_BACKEND_VULKAN)
+	{
+		// The Vulkan backend tears its ImGui backends down in PsyX_Vk_Shutdown.
+		ImGui_ImplOpenGL3_Shutdown();
+		ImGui_ImplSDL2_Shutdown();
+		ImGui::DestroyContext();
+	}
+
 	g_initialised = false;
 }
 

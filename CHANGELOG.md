@@ -10,6 +10,111 @@ where release policy permits it.
 
 ### Added
 
+- An experimental native-Vulkan backend for the modern scene and a standalone
+  developer window (renderer roadmap item 14, milestone R7, partial):
+  `PsyX_Vk_*` in PsyCross owns an SDL window, swapchain, depth buffer, shadow
+  map, PBR/depth pipelines and descriptor sets, with texture uploads, resize
+  handling, RGBA readback and an ImGui overlay. It negotiates the newest API
+  the loader supports (Vulkan 1.4.0 here) and resolves the loader at runtime
+  through SDL, so the build needs the Vulkan headers only - no SDK, import
+  library or validation layers. Run it with `-vkfixture` (add `-vkcapture N`,
+  `-vkshot <path>` or `-vknogui`); it renders the same eight Meshy GLBs plus
+  four analytic spheres as the OpenGL fixture. SPIR-V is embedded and
+  regenerated with `scripts/compile_vk_shaders.ps1`. The fixture renders
+  correctly with zero Khronos validation errors, and `-vkshot` writes an
+  upright BMP, and the main render pass is created only after the surface
+  format is negotiated (before that fix every draw in the pass was silently
+  discarded). Work in progress towards rendering the game itself with Vulkan:
+  the emulated PSX path is ported (`vk_shaders/psx.vert`, `vk_shaders/psx.frag`
+  with the in-shader CLUT, texture window, dither and bilinear filter), the
+  `R32G32_SFLOAT` VRAM image, the RG8 decode table and the five PSX blend
+  pipelines are created, and `REDRIVER2_dev.exe -vkpsxtest` renders synthetic
+  PSX quads and asserts the readback pixels (`(252,0,0,255)` for a 16-bit
+  `0x001F` word, `(0,0,252,255)` for a 4-bit texture resolving to CLUT entry 5)
+  with zero validation errors. The game still renders through OpenGL; the GR_*
+  contract is mapped onto this path in the next phase.
+  On macOS SDL resolves MoltenVK, so the same source is the portability path,
+  but no macOS build has been produced or verified.
+- The game window can now render through the Vulkan backend (renderer roadmap
+  item 14/R7b, partial): `REDRIVER2_dev.exe -vulkan` maps the `GR_*` contract
+  onto the native backend, so the in-game scene, HUD and minimap are presented
+  by Vulkan while OpenGL stays the default and is run without the flag
+  (`Release_dev_gl`). The PSX vertex capacity was raised to 65536 vertices (the
+  previous 256 KiB buffer truncated roughly 11500 vertices per frame), the game
+  texture-slot limit went from 64 to 512, and `GR_StoreFrameBuffer` now mirrors
+  the presented frame into the PSX VRAM mirror so framebuffer-reading effects
+  such as the sky lens flare sample it. Verified in an original Chicago launch
+  under the Khronos validation layer with zero validation errors and a
+  screenshot matching the OpenGL image; the `-playground` fixture and the
+  `-vkpsxtest` PSX self-test still pass.
+- A fixed fixture gallery for the experimental modern path (renderer roadmap
+  item 14): all eight owned Meshy GLBs (six base-colour, two PBR) plus the four
+  analytic material spheres are now placed in the same scene, each grounded on
+  its own bounding box at the terrain height and laid out once from the spawn
+  pose. The update now runs with the frame's final scene camera, which removes
+  the slight swimming the imported mesh showed while the camera moved, and
+  `PsyX_ModernMesh_SetInstanceWorld` gives the shadow pass the instance world
+  transform so casters are rendered where they stand.
+- Modern shadows now reach the existing scenery (renderer roadmap item 14,
+  milestone R5 completion of the receiver side): the modern shadow map is
+  projected over the already rendered legacy frame, so modern objects cast onto
+  the road, walls and trees as well as onto themselves. The pass copies the
+  scene depth (`GL_DEPTH24_STENCIL8`), reconstructs world positions through the
+  inverse `Projection3D` and the inverse camera view, applies a 3x3 PCF term,
+  and is gated by the existing shadow toggle. Diagnostic modes for the pass are
+  selectable with the `7` key or `shadowdebug=` in `developer_modern_mesh.ini`
+  (`1` depth, `2` shadow-volume membership, `3` shadow map, `4` receiver vs
+  caster depth). The sun default now faces the follow camera so cast shadows are
+  visible without rotating the light.
+- A classic/enhanced renderer switch and the R6 Forward-path decision (renderer
+  roadmap item 14): the developer Graphics panel gains an **Enhanced renderer
+  (modern meshes/PBR)** checkbox plus **Modern shadows** and **Modern ambient
+  occlusion** toggles, persisted in `developer_graphics.ini` (schema 6) and also
+  reachable with the F10 key live without reloading. The reference Forward path
+  is retained as the initial production choice with the recorded rationale.
+- Lighting effects for the experimental modern path (renderer roadmap item 14,
+  milestone R5, partial): a light set of up to eight directional/point lights
+  with colour, intensity and range, ambient and exposure; a 2048x2048
+  directional shadow map whose casters are the modern meshes and whose receivers
+  are both the modern meshes and the legacy scene (see the shadow-projection
+  entry above); glTF emissive factors and maps; and a normal-based
+  ambient-occlusion approximation as its own toggle.
+  In game `[`/`]` rotate the sun, `;`/`'` change elevation, `-`/`=` change
+  exposure, `0` toggles shadows and `9` toggles ambient occlusion; values are
+  persisted to `developer_modern_mesh.ini`.
+- A reference Forward PBR path for the experimental modern meshes (renderer
+  roadmap item 14, milestone R4, partial): the new shader shades
+  metallic/roughness with GGX + Schlick Fresnel, one directional light, an
+  ambient term and an exposure multiplier, decoding base colour sRGB->linear and
+  re-encoding on output. It binds the imported normal map (tangent frame
+  reconstructed from screen-space derivatives) and the metallic/roughness map
+  (G/B). Two Meshy PBR fixtures (`bollard_pbr.glb`, `oil_barrel_pbr.glb`, 20
+  credits) plus four procedural analytic material spheres render with visible
+  metal/dielectric response; light direction, intensity, ambient and exposure
+  are set from `developer_modern_mesh.ini`. Real-time light control and
+  shadows/AO remain R5.
+- A bounded glTF 2.0 / GLB static-asset import path (renderer roadmap item 14,
+  milestone R3, partial): `utils/GltfLoader.*` reads one mesh primitive
+  (float positions/normals/UVs, 16/32-bit indices) and one
+  `pbrMetallicRoughness` material with an embedded base-colour image decoded
+  through WIC, and the new `PsyX_ModernMesh_CreateEx` draws it through the
+  shared-depth modern path. `DeveloperModernMesh` selects a fixture from
+  `developer_modern_mesh.ini` (`asset=...`) and keeps the synthetic cube as the
+  fallback. Six owned Meshy fixtures (Meshy 6 preview + texture, 180 credits)
+  are retained under `assets/modern_fixtures/` with `provenance.md`; verified in
+  the playground with `bollard.glb` (2220 verts) and `wooden_crate.glb`
+  (1822 verts). PBR maps and lighting remain R4.
+- An experimental hybrid modern-mesh path (renderer roadmap item 14, milestones
+  R1/R2, partial): PsyCross now exposes a small C-compatible persistent
+  VAO/VBO mesh API (`PsyX_ModernMesh_*`) that draws unlit vertex-coloured
+  geometry through the legacy `Projection3D` in the shared colour/depth buffer,
+  and the game owns a synthetic static fixture
+  (  `utils/DeveloperModernMesh.*`). In the playground and in an original Chicago
+  launch the fixture mutually occludes with the legacy scene (car, floor,
+  skyline and street geometry); a persisted `developer_modern_mesh.ini` flag
+  (toggle with `F10`) restores the exact legacy-only baseline. The path is a
+  no-op on non-OpenGL targets and is carried by the project PsyCross fork. R3/R4
+  asset/PBR work and the initial hardware budgets remain open.
 - Palette variant texture exports: a manifest entry may now carry a `"clut"`
   that is part of the override identity, so a car or pedestrian texture drawn
   through several runtime palettes gets one PNG and one registration per
@@ -55,8 +160,8 @@ where release policy permits it.
   masked and cut-out override texels, a   locator for any reachable source or
   component, and the measured pick cost. The identity and picking paths are
   platform-neutral; the diagnostics UI follows the existing developer-panel
-  guards (Windows and Linux), and the renderer changes are carried by
-  `patches/psycross/developer-overlay.patch`.
+  guards (Windows and Linux), and the renderer changes live in the project
+  PsyCross fork.
 - A resident procedural playground scene (roadmap item 13, milestones P1-P5)
   that reuses the existing renderer and original vehicle simulation: a
   generated flat drivable surface, collidable box obstacles, disabled donor
@@ -168,6 +273,42 @@ where release policy permits it.
 
 ### Changed
 
+- The native Vulkan backend is now the default renderer for the game (renderer
+  roadmap item 14/R7b). It had been opt-in behind `-vulkan` while OpenGL stayed
+  the default "until parity is proven"; that condition now holds - same image,
+  resize, readback, primitive-mask stencil, offscreen render-to-VRAM and VRAM
+  export, zero validation errors, and measured 30 FPS equality with OpenGL - so
+  the default is flipped. OpenGL remains fully selectable as the fallback with
+  the new `-opengl` flag, `-vulkan` is still accepted, and a machine whose
+  driver exposes no usable Vulkan device falls back to OpenGL automatically at
+  startup. PSX, Android and Emscripten builds keep OpenGL as their default
+  because the backend is compiled out there.
+- The emulated-PSX primitive mask bit is now implemented on the Vulkan backend
+  (renderer roadmap item 14/R7b): the main pass depth attachment prefers a
+  stencil-capable `D24_UNORM_S8_UINT` format, cleared to zero every frame, and
+  each PSX blend mode gains a mask-set pipeline variant. `GR_SetStencilMode`'s
+  OpenGL semantics are reproduced exactly: the mask-bit draw (`DrawPrim`,
+  `overmap.c` map tiles, `loadview.c`) always passes and writes stencil bit 4,
+  while every other draw only passes where that bit is clear. On a driver
+  without a combined depth-stencil format the mask degrades to a no-op, as
+  before. Verified in an original-city Vulkan launch with zero validation
+  errors and the minimap/map overlay drawn correctly.
+- The emulated-PSX offscreen render-to-VRAM target is now implemented on the
+  Vulkan backend (renderer roadmap item 14/R7b): `PsyX_Vk_GameSetOffscreen` /
+  `PsyX_Vk_GameResolveOffscreen` render the draws queued by
+  `GR_SetOffscreenState(enable)` into a colour-only target, read them back and
+  pack them into the PSX VRAM mirror before the frame is submitted, so effects
+  that sample a `dfe=0` region in the same frame (the Tanner pedestrian shadow)
+  see it. Groups are bound to the double-buffered frame index, matching the
+  game's one-frame-ahead display-list build. The `-vkpsxtest` PSX self-test now
+  also covers the offscreen path (a 32x32 quad rendered offscreen and resolved
+  into VRAM at (64,64)).
+- The PsyCross submodule now tracks this project's own fork
+  (`git@github.com:SimStm/PsyCross.git`) instead of the upstream repository, so
+  project-specific changes are committed and reviewed there and recorded by the
+  parent gitlink. The `patches/psycross/` delta and
+  `scripts/apply_psycross_patches.ps1` were removed, and the Windows and Linux
+  prepare scripts now initialise the submodule instead of applying a patch.
 - Reorganised the developer panel: modding information (override toggle, mod
   diagnostics, mods root, reload, enabled mod order, declared override list)
   moved from the Graphics and 3D Debug tabs into a dedicated **Mods** tab, and
@@ -224,6 +365,44 @@ where release policy permits it.
 
 ### Fixed
 
+- The Vulkan game path recreated only the swapchain handed to the compositor on a
+  window resize; the framebuffers, swapchain image views and depth attachment
+  built for the old extent were left alive and then shadowed by the new ones, so
+  every resize leaked them and left the newly created framebuffers referencing
+  stale depth/colour attachments. Resize and out-of-date acquire now run a single
+  `RecreateSwapchain()` that waits idle, tears down the framebuffer/view/depth
+  resources before the swapchain, and rebuilds at the new extent; the readback
+  buffer and the new extent are logged (`swapchain recreated WxH images=N`). A
+  live session resized through 1024x768, 800x600, 1600x900 and 1280x720 keeps
+  presenting at ~30 FPS with zero validation errors.
+- The Vulkan game path generated mip chains for PSX `GR_CreateRGBATextureMipmapped`
+  textures with whole-image layout barriers. Uploading left mip 0 as
+  `TRANSFER_DST`, then a single image-wide barrier forced every level to
+  `TRANSFER_SRC` before the next level was written as `TRANSFER_DST`; the
+  generated mips were also never moved to `SHADER_READ_ONLY`. Validation
+  reported `VUID-VkImageMemoryBarrier-oldLayout-01197`,
+  `VUID-vkCmdBlitImage-srcImageLayout-00221` and `VUID-vkCmdDraw-None-09600`
+  (30 messages, capped by the duplicate limit) on every run that loaded such a
+  texture. Barriers are now per mip level and the final transition covers every
+  level; a Vulkan game run reports zero validation errors.
+- The VRAM TGA export (`GR_SaveVRAM`, bound to F10 and used by the debug VRAM
+  dump) wrote a 18-byte header-only file on the Vulkan build: the pixel loop was
+  compiled out unless `USE_OPENGL`, and the Vulkan build reports that as 0. The
+  writer only reads the CPU VRAM mirror, which both backends keep current, so it
+  is now backend-agnostic (18 + 1024x512x2 = 1,048,594 bytes). The `-vkpsxtest`
+  self-test exports the image and asserts the exact byte count so this cannot
+  silently regress.
+- The Vulkan game path used the PSX clip rectangle as-is for its scissor, but
+  `GR_SetupClipMode` hands over GL's bottom-left convention. Every clipped HUD
+  element therefore tested against a vertically mirrored region; the minimap
+  (a 63x60 clip in the bottom-right corner) was dropped entirely. The scissor Y
+  is now mapped to Vulkan's top-left origin like the viewport.
+- The experimental Vulkan backend drew nothing: the main render pass was
+  created before the swapchain negotiated its surface format, so its colour
+  attachment format was `VK_FORMAT_UNDEFINED` and every recorded draw was
+  silently discarded. The surface format is now negotiated before the render
+  passes. `PsyX_Vk_ReadbackRgba` also flipped rows despite documenting a
+  top-left origin, which made `-vkshot` screenshots upside down.
 - Inspector model names are sanitized. Some name-table entries, notably
   sprite-only models, are not text; those characters used to reach inspector
   labels, catalog records and export file names and are now reported as an

@@ -331,8 +331,6 @@ window:
 | Symptom | Cause and fix |
 | --- | --- |
 | `PsyCross is not initialised` | Submodule missing: `git submodule update --init --recursive`. |
-| Patch fails to apply | The submodule is not at the pinned revision, or the patch file was line-ending converted. Re-check `git -C src_rebuild/PsyCross status` and re-apply `scripts/apply_psycross_patches.ps1` (Windows) / `git -C src_rebuild/PsyCross apply <patch>` (Linux). |
-| `git diff header lacks filename information` | The patch was checked out with CRLF; `.gitattributes` keeps it LF. Re-checkout `patches/**`. |
 | Visual Studio cannot find SDL2/OpenAL headers | Re-run `windows_dev_prepare.ps1` so `SDL2_DIR`/`OPENAL_DIR` are set before Premake runs. |
 | Mission arguments do nothing | You are running `Release`; start arguments exist only in `Debug`/`Release_dev`. |
 | Black or wrong textures | HD override mods may be mapped to the wrong texture; toggle **Enable HD texture overrides** off in the panel. |

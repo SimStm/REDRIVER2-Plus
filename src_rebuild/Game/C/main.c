@@ -62,6 +62,7 @@
 #include "playground.h"
 #include "assetcatalog_game.h"
 #include "../utils/DeveloperDebugStart.h"
+#include "../utils/DeveloperModernMesh.h"
 
 int levelstartpos[8][4] = {
 	{ 4785, -1024, -223340, 0},
@@ -1654,6 +1655,10 @@ void DrawGame(void)
 	// was just rendered, not the undefined back buffer after the swap.
 	DeveloperDebugStart_Tick();
 
+	// The modern fixtures must use the camera the scene was actually rendered
+	// with, which is only final after RenderGame2 has run.
+	DeveloperModernMesh_Update();
+
 	if (!FadingScreen)
 		PsyX_EndScene();
 #endif
@@ -1950,6 +1955,10 @@ int redriver2_main(int argc, char** argv)
 		else if (!strcmp(argv[i], "-nointro"))
 		{
 			// do nothing. All command line features use it
+		}
+		else if (!strcmp(argv[i], "-vulkan") || !strcmp(argv[i], "-opengl"))
+		{
+			// Do nothing in this step, only avoids command line popup. The renderer will be initialized later in the startup process.
 		}
 #ifdef DEBUG_OPTIONS
 		else if (!strcmp(argv[i], "-exportxasubtitles"))

@@ -197,6 +197,132 @@ Repository-relative source: `src_rebuild/Game/C/draw.c`, `Game/engine/mdl.h`,
 `utils/DeveloperGraphicsSettings.*` and the implemented playground contract.
 These paths after the first share the `src_rebuild/` prefix. Recheck live code.
 
+## Delivery progress
+
+Partial milestone evidence lives here until R1-R8 and all acceptance criteria
+pass. This record stays `planned`.
+
+### 2026-09-18 - R1 and R2 delivered (partial acceptance)
+
+- **R1 - Baseline and contracts.** Traced the static-object path
+  (`MODEL`/cell placement -> `draw.c` -> GTE/PGXP -> `PsyX_GPU` -> `GR_*`);
+  normals/material intent are absent from the final stream but the clip-space
+  and depth encoding is fully specified. Recorded the minimal contract
+  (camera/view-projection/units/winding/depth, persistent indexed mesh,
+  instance identity/lifetime, unlit material policy, pass/resource ownership)
+  in the [discussion](../../discussions/renderer-modernization/index.md#r1r2-implementation-evidence-2026-09-18).
+  Measured playground baseline at a fixed spawn camera (frame 90): scene
+  `playground.flatpad.v1`, legacy 2040 vertices / 33 draw splits; enabling the
+  modern path leaves those counts unchanged and adds 1 mesh, 8 vertices,
+  1 draw call and about 1 us of CPU submission time. GPU frame time and peak
+  memory were not profiled.
+- **R2 - Unlit hybrid mesh.** Added a generic PsyCross modern-mesh path
+  (`PsyX_ModernMesh.cpp`, public API in `PsyX_public.h`) and a project-owned
+  fixture (`utils/DeveloperModernMesh.cpp`). The synthetic static cube shares
+  `Projection3D`, the game camera basis and the legacy depth buffer; in the
+  playground the legacy car/floor occlude it while it occludes distant legacy
+  skyline geometry, and an original Chicago launch shows the same partial
+  occlusion against legacy street geometry. Toggle
+  (`developer_modern_mesh.ini` / F10) restores the exact legacy-only baseline.
+- **R3 - Static asset path (partial).** glTF 2.0 / GLB selected. A bounded
+  importer (`utils/GltfLoader.cpp`) reads one mesh primitive (positions,
+  normals, UVs, 16/32-bit indices) and one pbrMetallicRoughness material with
+  an embedded base-colour image (WIC-decoded), and `PsyX_ModernMesh_CreateEx`
+  renders it. Six owned Meshy fixtures (Meshy 6, 180 credits) live in
+  `assets/modern_fixtures/` with `provenance.md`; `bollard.glb` and
+  `wooden_crate.glb` were imported and drawn in the playground with the legacy
+  floor occluding them. Base colour only so far; PBR maps and lighting are R4.
+- **R4 - Reference PBR (partial).** The modern path now shades
+  metallic/roughness with GGX + Schlick, one directional light and exposure,
+  decoding base colour sRGB->linear and re-encoding on output. It binds the
+  imported normal map (derivative tangent frame) and metallic/roughness map.
+  Meshy PBR fixtures (`bollard_pbr.glb`, `oil_barrel_pbr.glb`) and four
+  procedural analytic spheres render with visible metal/dielectric response;
+  light direction/intensity/ambient/exposure come from the ini. Real-time light
+  add/remove and shadows/AO are R5.
+ - **R5 - Lighting effects (partial).** The modern path consumes a light set
+   (directional + point up to eight, colour/intensity/range), ambient and
+   exposure; a 2048x2048 directional shadow map with an orthographic volume
+   covers modern casters and receivers; glTF emissive is added; a normal-based
+   ambient-occlusion approximation is a separate toggle. Runtime keys
+   rotate/tilt the sun, change exposure and toggle shadows/AO, and the values
+   persist. Legacy geometry now *receives* the modern shadows as well: the
+   scene depth is copied to a texture, world positions are reconstructed through
+   the inverse projection and camera view, and a 3x3 PCF term multiplies the
+   legacy framebuffer, so modern objects cast onto the road, walls and trees.
+   Legacy geometry still does not *cast* into the modern shadow map, and it does
+   not react to the modern *lighting* (only to its shadows); the lighting
+   receive is a separate planned record.
+ - **R5b - Gallery fixture (delivered 2026-09-18).** The single barrel became a
+   fixed gallery of all eight owned Meshy GLBs plus the four analytic spheres.
+   Each glTF is grounded on its own bounding box at `MapHeight(x,z)` and laid
+   out once from the spawn pose; the update runs with the frame's final camera
+   in `DrawGame` after `RenderGame2`, which removed the camera-lag swimming.
+   Baseline: 12 meshes / 18 915 vertices / 12 draw calls, ~110 us submission.
+- **R6 - Pipeline decision (recorded).** Retain the reference Forward path for
+  the initial production choice: small light budget (<=8), ~5 us modern CPU
+  submission, ample headroom on the stated base GPU; Forward+/Deferred add cost
+  without a demonstrated need at these light counts and stay candidates if the
+  budget grows. Classic/enhanced is a persisted developer Graphics-panel
+  setting plus F10 and switches live; shadows/AO are independent toggles.
+ - **R7 - Backend portability (Vulkan slice in progress).** The user selected
+   **native Vulkan** as the second API, implemented against the latest Vulkan
+   feature level, followed by **MoltenVK** so a macOS build is possible.
+   Delivered so far:
+   - `PsyCross/include/PsyX/PsyX_vk.h` + `PsyCross/src/render/PsyX_Vk.cpp`: a
+     self-contained Vulkan backend for the modern scene (dynamic loader through
+     SDL, instance/device/swapchain, main and shadow render passes, PBR and
+     depth pipelines, per-mesh descriptor sets, UBO, textures, resize, RGBA
+     readback, ImGui overlay through `imgui_impl_vulkan`).
+   - `PsyCross/src/render/vk_shaders/*.glsl` + generated
+     `PsyX_Vk_Shaders.h` (embedded SPIR-V), regenerated with
+     `scripts/compile_vk_shaders.ps1`.
+   - `utils/DeveloperVkFixture.*` and the `-vkfixture` / `-vkcapture N` /
+     `-vkshot <path>` / `-vknogui` developer entry points: a standalone window
+     that loads the same eight Meshy GLBs plus four analytic spheres.
+   - Verified on Windows/NVIDIA: initialisation completes on Vulkan **1.4.0**
+     (the newest API the loader reports), 12 meshes created, 40 frames
+     rendered, ImGui active, screenshot read back and written.
+   - **Resolved:** the recorded draws did not rasterise because
+     `CreateRenderPasses()` ran before the swapchain format was negotiated, so
+     the main pass had `VK_FORMAT_UNDEFINED` as its colour attachment format and
+     discarded every draw. The Khronos validation layer identified it;
+     `QuerySwapchainFormat()` now runs first. `PsyX_Vk_ReadbackRgba` also had a
+     stray row flip that made `-vkshot` images upside down. Both fixed and
+     verified (12 meshes / 12 draws, zero validation errors, correct gallery
+     screenshot).
+   - **Next (R7b):** render the *game* through Vulkan instead of OpenGL. The
+     game seam is the `GR_*` API in `PsyX_render.h`: geometry arrives through
+     `GR_UpdateVertexBuffer`/`GR_DrawTriangles`, with state from
+     `GR_SetTexture`/`GR_SetBlendMode`/`GR_EnableDepth`/`GR_SetScissorState`/
+     `GR_SetStencilMode`/`GR_SetOffscreenState`/`GR_Perspective3D`/`GR_Ortho2D`,
+     textures from a 16-bit VRAM mirror (`GR_CopyVRAM`/`GR_UpdateVRAM`), and the
+     PSX fragment shader samples that VRAM (RG32F 1024x512) doing CLUT and
+     texture-window lookups in-shader. Plan: reuse the existing `PsyX_Vk`
+     device/swapchain, add a PSX vertex format + pipelines (4/8/16-bit CLUT,
+     RGBA) and a VRAM image updated from the CPU mirror, then implement the
+     `GR_*` entry points in a Vulkan game module selected at runtime, keeping
+     the OpenGL renderer as the default until parity is proven.
+   - MoltenVK/macOS: the code uses only portable Vulkan (SDL resolves the
+     loader, which is MoltenVK on macOS) and the premake integration is
+     platform-generic, but no macOS build has been produced or verified yet.
+   The full game renderer (PSX GPU emulation) stays on OpenGL for this slice.
+- **R8 - Regression and handoff (partial).** Validation run on Windows
+  `Release_dev` x64: solution build with 0 failed projects;
+  `scripts/run_inspector_tests.ps1` (AssetCatalogTests 145 checks,
+  InspectorExportTests 104 checks) passed; `git diff --check` clean; the
+  PsyCross changes are committed in the project fork and recorded by the
+  gitlink (`49f9578`). Playground and one original city were exercised with the
+  modern path on and off. CPU/GPU frame-time distribution, peak memory and the
+  other build targets (Linux/web/Android) were not profiled.
+- Platform limits: only Windows `Release_dev` x64 was exercised at runtime;
+  the new path is inert/no-op on non-OpenGL targets and the public API stays
+  C-compatible. The PsyCross changes were committed to the project fork and the
+  parent gitlink was bumped to record them.
+- Still open before R2 acceptance is complete and R3 begins: define the initial
+  hardware/frame-time/memory budgets and verify HUD/clipping/cutout explicitly
+  (cutout is not exercised yet because the unlit slice has no texture stage).
+
 ## Handoff and completion
 
 Keep partial milestones and their evidence in this planned record. Once R1-R8

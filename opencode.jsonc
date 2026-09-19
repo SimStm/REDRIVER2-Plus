@@ -1,0 +1,42 @@
+{
+  // OpenCode project configuration for REDRIVER2-Plus.
+  // The global config and the gitignored .opencode/opencode.json still apply;
+  // this file only adds the model default and the context policy for this checkout.
+
+  "$schema": "https://opencode.ai/config.json",
+
+  // Verified with `opencode models opencode-go` on OpenCode 1.18.31:
+  // provider id `opencode-go`, model id `deepseek-v4.1-flash`.
+  "model": "opencode-go/deepseek-v4.1-flash",
+
+  "provider": {
+    "opencode-go": {
+      "models": {
+        "deepseek-v4.1-flash": {
+          // The provider announces context 1000000 / output 384000.
+          // These are local operating limits, not provider capabilities:
+          // - context/input 300000: desired working window for long C++ sessions.
+          // - output 16000: bounds a single response and keeps room for tool use.
+          // `limit.input` is the budget that drives auto-compaction, see below.
+          "limit": {
+            "context": 300000,
+            "input": 300000,
+            "output": 16000
+          }
+        }
+      }
+    }
+  },
+
+  "compaction": {
+    "auto": true,
+    // Auto-compaction triggers once used tokens reach
+    // `limit.input - reserved` = 300000 - 100000 = 200000 tokens.
+    // Note: this version's canonical keys are `reserved` and
+    // `preserve_recent_tokens`; `compaction.buffer` / `compaction.keep.tokens`
+    // are legacy aliases and are not part of the 1.18.31 schema.
+    "reserved": 100000,
+    // Keep roughly the last 40000 tokens verbatim after each compaction.
+    "preserve_recent_tokens": 40000
+  }
+}

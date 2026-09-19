@@ -24,6 +24,8 @@
 #include "utils/ini.h"
 #include "utils/DeveloperDebugStart.h"
 #include "utils/DeveloperGraphicsPanel.h"
+#include "utils/DeveloperModernMesh.h"
+#include "utils/DeveloperVkFixture.h"
 #include "utils/HdTextureOverrides.h"
 
 #include <SDL_scancode.h>
@@ -518,6 +520,18 @@ int main(int argc, char** argv)
 
 	const char* configFilename = "config.ini";
 	const char* cdImageFileName = NULL;
+	// Vulkan is the default game backend now that it has reached parity with
+	// OpenGL (same image, resize, readback, stencil, offscreen and VRAM paths,
+	// 0 validation errors, measured 30 FPS equality). OpenGL is kept as a
+	// selectable option with -opengl so the two paths can be compared, and
+	// -vulkan stays accepted for compatibility. Platforms without the native
+	// backend (PSX, Android, Emscripten) keep OpenGL as their default.
+#if !defined(PSX) && !defined(__ANDROID__) && !defined(__EMSCRIPTEN__)
+	int useVulkan = 1;
+#else
+	int useVulkan = 0;
+#endif
+	int useOpenGL = 0;
 
 	for (int i = 1; i < argc; i++)
 	{
@@ -531,7 +545,31 @@ int main(int argc, char** argv)
 			i++;
 			cdImageFileName = argv[i];
 		}
+		else if (!strcmp(argv[i], "-vulkan"))
+		{
+			// Kept for compatibility; Vulkan is already the default.
+			useVulkan = 1;
+			useOpenGL = 0;
+		}
+		else if (!strcmp(argv[i], "-opengl"))
+		{
+			// Force the original OpenGL renderer. Any driver without a usable
+			// Vulkan device also falls back to it automatically.
+			useOpenGL = 1;
+			useVulkan = 0;
+		}
 	}
+
+	if (useOpenGL)
+		PsyX_SetRenderBackend(PSYX_BACKEND_OPENGL);
+	else if (useVulkan)
+		PsyX_SetRenderBackend(PSYX_BACKEND_VULKAN);
+
+	// Developer Vulkan fixture (renderer roadmap R7): a standalone modern-scene
+	// window with its own swapchain. It must run before any OpenGL or game
+	// initialisation because it owns the SDL window for its lifetime.
+	if (DeveloperVkFixture_HandleCommandLine(argc, argv))
+		return 0;
 
 	config = ini_load(configFilename);
 
@@ -666,6 +704,9 @@ int main(int argc, char** argv)
 
 	// start with menu mapping
 	SwitchMappings(1);
+	// The modern-mesh module reads its asset/light config first; the developer
+	// Graphics settings then own the authoritative classic/enhanced toggle.
+	DeveloperModernMesh_Initialise();
 	DeveloperGraphicsPanel_Initialise();
 
 	// An explicit config.ini key is applied after the panel so it can force
@@ -678,6 +719,7 @@ int main(int argc, char** argv)
 	redriver2_main(argc, argv);
 
 	DeinitStringMng();
+	DeveloperModernMesh_Shutdown();
 	DeveloperGraphicsPanel_Shutdown();
 
 	PsyX_Shutdown();

@@ -1,4 +1,5 @@
 #include "DeveloperGraphicsSettings.h"
+#include "DeveloperModernMesh.h"
 #include "HdTextureOverrides.h"
 
 #include "driver2.h"
@@ -114,6 +115,7 @@ DeveloperGraphicsSettings DeveloperGraphicsSettings_ReadRuntime()
 	settings.organizeTextureExports = HdTextureOverrides_IsOrganizedExportEnabled();
 	settings.exportBaseColours = HdTextureOverrides_IsBaseColourExportEnabled();
 	settings.overrideProportionalAlpha = g_cfg_overrideProportionalAlpha != 0;
+	settings.modernRenderer = DeveloperModernMesh_GetEnabled();
 	return settings;
 }
 
@@ -131,6 +133,7 @@ void DeveloperGraphicsSettings_Apply(const DeveloperGraphicsSettings& settings)
 	HdTextureOverrides_SetOrganizedExport(settings.organizeTextureExports);
 	HdTextureOverrides_SetBaseColourExport(settings.exportBaseColours);
 	g_cfg_overrideProportionalAlpha = settings.overrideProportionalAlpha != 0;
+	DeveloperModernMesh_SetEnabled(settings.modernRenderer);
 }
 
 bool DeveloperGraphicsSettings_LoadAndApply()
@@ -160,6 +163,7 @@ bool DeveloperGraphicsSettings_LoadAndApply()
 		else if (!strcmp(key, "organizeTextureExports")) settings.organizeTextureExports = value;
 		else if (!strcmp(key, "exportBaseColours")) settings.exportBaseColours = value;
 		else if (!strcmp(key, "overrideProportionalAlpha")) settings.overrideProportionalAlpha = value;
+		else if (!strcmp(key, "modernRenderer")) settings.modernRenderer = value;
 	}
 
 	const bool readOk = ferror(file) == 0;
@@ -179,7 +183,7 @@ bool DeveloperGraphicsSettings_SaveRuntime()
 	const int written = fprintf(file,
 		"# REDRIVER2 developer graphics settings\n"
 		"# This file is managed separately and never modifies config.ini.\n"
-		"schemaVersion=5\n"
+		"schemaVersion=6\n"
 		"bilinearFiltering=%d\n"
 		"pgxpTextureMapping=%d\n"
 		"pgxpZBuffer=%d\n"
@@ -190,11 +194,12 @@ bool DeveloperGraphicsSettings_SaveRuntime()
 		"hdTextureOverrides=%d\n"
 		"organizeTextureExports=%d\n"
 		"exportBaseColours=%d\n"
-		"overrideProportionalAlpha=%d\n",
+		"overrideProportionalAlpha=%d\n"
+		"modernRenderer=%d\n",
 		settings.bilinearFiltering, settings.pgxpTextureMapping, settings.pgxpZBuffer,
 		settings.vsync, settings.drawDistance, settings.fieldOfView, settings.showLegacyStats,
 		settings.hdTextureOverrides, settings.organizeTextureExports, settings.exportBaseColours,
-		settings.overrideProportionalAlpha);
+		settings.overrideProportionalAlpha, settings.modernRenderer);
 
 	bool writeOk = written > 0 && FlushAndSync(file);
 	const int closeResult = fclose(file);
@@ -219,5 +224,6 @@ void DeveloperGraphicsSettings_RestoreDefaults()
 	defaults.organizeTextureExports = 0;
 	defaults.exportBaseColours = 1;
 	defaults.overrideProportionalAlpha = 0;
+	defaults.modernRenderer = 0;
 	DeveloperGraphicsSettings_Apply(defaults);
 }

@@ -20,6 +20,7 @@ project "PsyCross"
     includedirs { 
         SDL2_DIR.."/include",
         OPENAL_DIR.."/include",
+        VULKAN_DIR.."/include",
 		"PsyCross/include",
 		"PsyCross/third_party/imgui",
 		"PsyCross/third_party/imgui/backends"
@@ -39,8 +40,17 @@ project "PsyCross"
 			"PsyCross/third_party/imgui/imgui_widgets.cpp",
 			"PsyCross/third_party/imgui/backends/imgui_impl_sdl2.cpp",
 			"PsyCross/third_party/imgui/backends/imgui_impl_opengl3.cpp",
+			"PsyCross/third_party/imgui/backends/imgui_impl_vulkan.cpp",
 		}
 
+	filter {}
+
+	-- The Vulkan fixture resolves every Vulkan entry point at runtime through
+	-- SDL, so the ImGui Vulkan backend must not reference the global prototypes.
+	filter { "system:Windows", "files:PsyCross/third_party/imgui/backends/imgui_impl_vulkan.cpp" }
+		defines { "IMGUI_IMPL_VULKAN_NO_PROTOTYPES" }
+	filter { "system:linux", "files:PsyCross/third_party/imgui/backends/imgui_impl_vulkan.cpp" }
+		defines { "IMGUI_IMPL_VULKAN_NO_PROTOTYPES" }
 	filter {}
 
     filter "system:Windows"

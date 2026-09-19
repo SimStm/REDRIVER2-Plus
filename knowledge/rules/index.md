@@ -25,12 +25,12 @@ tags: [okf, rules]
   batch-export by identity, list shared models without duplicating the image,
   and preserve a mapped `file` on re-export.
 - [Build and run the Linux target (including via WSL)](linux-wsl-build.md):
-  install the system SDL2/OpenAL/GL/libjpeg packages, apply the PsyCross patch,
-  generate with Premake, and build in `src_rebuild/build`.
+  install the system SDL2/OpenAL/GL/libjpeg packages, check out the PsyCross
+  fork submodule, generate with Premake, and build in `src_rebuild/build`.
 - [Regenerate build files after source additions](generated-build-files.md):
   generated IDE projects do not discover newly added source files on their own.
-- [Keep PsyCross changes as patches](psycross-patches.md): project-specific
-  submodule changes must be reproducible without a private fork.
+- [Track project PsyCross changes in the fork](psycross-fork.md): commit
+  submodule changes to the project fork and bump the parent gitlink.
 - [Maintain roadmap records](roadmap-lifecycle.md): planned features remain
   separate from implementation evidence and require product documentation when
   completed.
@@ -40,6 +40,9 @@ tags: [okf, rules]
 - [Generate a coherent world for a playground or new map](world-scene-generation.md):
   replace surface, cell, collision, visibility and streaming data together when
   adding a generated scene, and avoid donor-world leakage.
+- [Share the legacy projection and depth when adding a modern mesh path](psyx-modern-mesh-bridge.md):
+  reuse `Projection3D` and the GTE vertex encoding, draw in `GR_EndScene`, and
+  restore the caller's VAO instead of binding 0.
 - [Keep asset identity and instance identity separate](asset-identity-lifetime.md):
   resource records are shared and stable while instances and runtime slots are
   not, and retained references must detect reuse.

@@ -14,6 +14,7 @@ struct DeveloperGraphicsSettings
 	int organizeTextureExports;
 	int exportBaseColours;
 	int overrideProportionalAlpha;
+	int modernRenderer;
 };
 
 DeveloperGraphicsSettings DeveloperGraphicsSettings_ReadRuntime();

@@ -30,6 +30,9 @@ Follow the [discussion maintenance rule](../rules/discussion-records.md).
   unlabelled car/pedestrian/building selections, and the debugger root cause
   (a late full-viewport unlabelled quad winning the depthless last-match pick).
   **Exploring; roadmap item 06 planned.**
+- [SDL2 to SDL3 migration](sdl-version-migration/index.md): the size of the
+  current SDL2 surface, what SDL3 changes, and a recommendation to defer the
+  migration until after Vulkan parity. **Exploring; no decision adopted.**
 
 ## Structure and lifecycle
 

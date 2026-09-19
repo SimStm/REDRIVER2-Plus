@@ -21,6 +21,10 @@ table.insert(premake.option.get("os").allowed, { "emscripten", "Emscripten" })
 SDL2_DIR = os.getenv("SDL2_DIR") or "dependencies/SDL2"
 OPENAL_DIR = os.getenv("OPENAL_DIR") or "dependencies/openal-soft"
 JPEG_DIR = os.getenv("JPEG_DIR") or "dependencies/jpeg"
+-- Vulkan headers only. The loader is resolved at runtime, so no import library
+-- or Vulkan SDK is required (see PsyX_Vk.cpp). Regenerate SPIR-V with
+-- scripts/compile_vk_shaders.ps1 after changing a shader.
+VULKAN_DIR = os.getenv("VULKAN_DIR") or "dependencies/vulkan"
 
 WEBDEMO_DIR = os.getenv("WEBDEMO_DIR") or "../../web_demo@/"	-- FIXME: make it better
 RED2_DIR = os.getenv("RED2_DIR") or "../../data@/"

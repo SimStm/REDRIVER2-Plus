@@ -50,8 +50,8 @@ if ((Test-Path -LiteralPath $jconfigVc) -and -not (Test-Path -LiteralPath $jconf
 	Rename-Item -LiteralPath $jconfigVc -NewName 'jconfig.h'
 }
 
-# The fork needs the project-owned PsyCross integration before building.
-& powershell -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'scripts\apply_psycross_patches.ps1')
+# The build uses the project PsyCross fork; make sure the submodule is present.
+git -C $PSScriptRoot submodule update --init --recursive
 
 $env:SDL2_DIR = 'dependencies\SDL2-' + $sdl2_ver
 $env:OPENAL_DIR = 'dependencies\openal-soft-' + $openal_ver + '-bin'

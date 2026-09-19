@@ -15,21 +15,10 @@ if [ ! -x ./premake5 ]; then
 fi
 PREMAKE="$(pwd)/premake5"
 
-# The project carries its PsyCross changes as a patch; apply it before building.
-REPO_ROOT="$(pwd)"
-PATCH="$REPO_ROOT/patches/psycross/developer-overlay.patch"
+# The project uses its own PsyCross fork, pinned by the submodule gitlink.
 if [ ! -e src_rebuild/PsyCross/.git ]; then
 	echo "PsyCross submodule is not initialised. Run: git submodule update --init --recursive" >&2
 	exit 1
-fi
-if [ ! -f "$PATCH" ]; then
-	echo "PsyCross patch not found: $PATCH" >&2
-	exit 1
-fi
-if git -C src_rebuild/PsyCross apply --reverse --check "$PATCH" >/dev/null 2>&1; then
-	echo "PsyCross developer-overlay patch is already applied."
-else
-	git -C src_rebuild/PsyCross apply "$PATCH"
 fi
 
 # Configure

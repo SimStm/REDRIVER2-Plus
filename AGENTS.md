@@ -17,6 +17,28 @@ history entry. Follow [`discussion-records.md`](knowledge/rules/discussion-recor
 Exploration belongs there until the user adopts a concrete roadmap scope;
 a discussion does not authorize implementation or establish shipped behaviour.
 
+## Persistent Engineering Context
+
+- Read [`docs/ai/RECENT_CONTEXT.md`](docs/ai/RECENT_CONTEXT.md) at the start
+  of any non-trivial task, session continuation, bug investigation, refactor,
+  or multi-file feature, before editing code.
+- Treat it as auxiliary context only. Confirm the real state from the current
+  source, `git status`, `git diff`, build configuration, and tests.
+- Update it before ending a long session or after a substantial milestone:
+  multiple changed files, an architectural refactor, an API/ABI change, an
+  ownership/lifetime or concurrency/synchronization decision, a change to
+  error/exception guarantees, a meaningful performance change, an
+  inconclusive investigation, a known blocker, or a significant build, test,
+  sanitizer, benchmark, or static-analysis result.
+- Record only verifiable facts: objective and acceptance criteria, decisions
+  and reasons, relevant C++ invariants, changed files, completed work, pending
+  work, risks or blockers, the next concrete step, and validation commands
+  actually executed with their real results.
+- Never claim validation that was not executed.
+- Keep the file under 350 lines. Consolidate or remove obsolete entries
+  instead of turning it into a chat log.
+- Never record secrets, credentials, tokens, `.env` contents, or long logs.
+
 ## Project purpose
 
 REDRIVER2 is a clean-room C/C++ reimplementation of the original PlayStation
@@ -87,14 +109,16 @@ point math, timing, or rendering can affect compatibility.
 
 - Initialise the PsyCross submodule before editing or building it:
   `git submodule update --init --recursive`.
-- Apply the project-owned PsyCross changes immediately after initialising the
-  submodule: `powershell -ExecutionPolicy Bypass -File
-  scripts/apply_psycross_patches.ps1`. The script is idempotent and verifies
-  the expected upstream base revision before modifying the submodule.
-- The parent repository deliberately keeps the PsyCross gitlink at its
-  upstream commit. Do not commit a local PsyCross gitlink or create a fork just
-  to carry project-specific changes; maintain them as focused patches under
-  `patches/psycross/` and update the application script when needed.
+- The PsyCross submodule is wired to the project fork
+  `git@github.com:SimStm/PsyCross.git` (`origin`) with upstream
+  `https://github.com/OpenDriver2/PsyCross.git` as `upstream`.
+- Commit project-specific PsyCross changes directly in the fork, push them to
+  `origin`, and record the commit by staging `src_rebuild/PsyCross` in the
+  parent. The parent gitlink intentionally tracks the fork, not the upstream
+  base commit.
+- Do not reintroduce `patches/psycross/` or
+  `scripts/apply_psycross_patches.ps1`; the fork is the single source of truth
+  for PsyCross changes. See `knowledge/rules/psycross-fork.md`.
 - PsyCross is a separate Git repository. Review its status independently with
   `git -C src_rebuild/PsyCross status`.
 - Keep generic hooks in PsyCross and game-specific UI or behaviour in

@@ -22,10 +22,10 @@ with Premake, and build in `src_rebuild/build`.
 - For a clone created from a Windows drive, run
   `git config --global --add safe.directory '*'` or git aborts with "detected
   dubious ownership".
-- Apply the patch before generating: the PowerShell applier is Windows-only, so
-  use `git -C src_rebuild/PsyCross apply "$PWD/patches/psycross/developer-overlay.patch"`.
-  `linux_dev_prepare.sh` does the download, patch and generation steps and is
-  idempotent.
+- The submodule points at the project fork, so initialise it normally
+  (`git submodule update --init --recursive`) and check out the recorded
+  gitlink; no patch step is needed. `linux_dev_prepare.sh` does the download and
+  generation steps and is idempotent.
 - Generate with `src_rebuild/premake5 gmake2` (output in `src_rebuild/build`)
   and build with `make -j"$(nproc)" config=release_dev_x64` (or `debug_x64`).
   The binaries are `src_rebuild/bin/<Configuration>/REDRIVER2_dev` and
@@ -37,6 +37,6 @@ with Premake, and build in `src_rebuild/build`.
 
 The user-facing version of these steps, with prerequisites and screenshots, is
 in [`BUILDING.md`](../../BUILDING.md). See
-[Keep PsyCross changes as patches](psycross-patches.md) for the patch lifecycle
-and [Regenerate build files after source additions](generated-build-files.md)
+[Track project PsyCross changes in the fork](psycross-fork.md) for the
+submodule lifecycle and [Regenerate build files after source additions](generated-build-files.md)
 for when to re-run Premake.

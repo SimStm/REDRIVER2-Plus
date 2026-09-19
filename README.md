@@ -144,13 +144,13 @@ While the panel is open, disable **Capture game input while panel is open** if y
 | Area | Upstream foundation | REDRIVER2-Plus additions |
 | --- | --- | --- |
 | Language | C and C++ (with C++11-compatible project code) | C++ developer-panel and diagnostics code |
-| Build | Premake 5 and Visual Studio 2022 / platform toolchains | Reproducible post-submodule patch script |
+| Build | Premake 5 and Visual Studio 2022 / platform toolchains | Project PsyCross fork pinned by the submodule gitlink |
 | Platform layer | PsyCross, SDL2, OpenGL | Dear ImGui 1.91.9b with SDL2/OpenGL3 backends |
 | Audio and assets | OpenAL Soft and libjpeg | No replacement for proprietary game data |
 | Game origin | Clean-room reconstruction of the PlayStation release | Graphics, QoL, and developer-experience work |
 | Documentation | Upstream wiki and source comments | `AGENTS.md`, `BUILDING.md`, OKF knowledge catalog, and Keep a Changelog history |
 
-PsyCross remains an upstream submodule. This fork carries only the small integration delta in [`patches/psycross/`](patches/psycross/), applied by [`scripts/apply_psycross_patches.ps1`](scripts/apply_psycross_patches.ps1).
+PsyCross is tracked as a submodule pinned to this project's own fork ([`SimStm/PsyCross`](https://github.com/SimStm/PsyCross)); project-specific changes are committed there and recorded by the parent gitlink. Upstream ([`OpenDriver2/PsyCross`](https://github.com/OpenDriver2/PsyCross)) is kept as the `upstream` remote.
 
 ## Project layout
 
@@ -159,8 +159,7 @@ PsyCross remains an upstream submodule. This fork carries only the small integra
 | [`src_rebuild/`](src_rebuild/) | Game source, Premake project definitions, generated build output, and PsyCross submodule |
 | [`src_rebuild/utils/`](src_rebuild/utils/) | Cross-cutting utilities, including the developer graphics panel |
 | [`data/`](data/) | Local game data prepared from legally owned media; do not commit proprietary files |
-| [`patches/psycross/`](patches/psycross/) | Versioned fork-specific PsyCross delta |
-| [`scripts/`](scripts/) | Repeatable development and patch-application scripts |
+| [`scripts/`](scripts/) | Repeatable development and dependency scripts |
 | [`docs/`](docs/) | Screenshots and images used by the documentation |
 | [`knowledge/`](knowledge/index.md) | Project rules, product notes, and shipped-change records in Open Knowledge Format |
 | [`BUILDING.md`](BUILDING.md) | Build, run and troubleshooting instructions |
@@ -168,7 +167,7 @@ PsyCross remains an upstream submodule. This fork carries only the small integra
 
 ## Contributing and AI agents
 
-Read [AGENTS.md](AGENTS.md) before making a change. It describes the architecture, build workflow, submodule patch flow, test expectations, and documentation rules used in this fork.
+Read [AGENTS.md](AGENTS.md) before making a change. It describes the architecture, build workflow, submodule fork flow, test expectations, and documentation rules used in this fork.
 
 Canonical project knowledge lives in [`knowledge/`](knowledge/index.md). Read [`knowledge/index.md`](knowledge/index.md) and [`knowledge/rules/`](knowledge/rules/index.md) before changing linting, tokens, or booking naming. When a verified constraint will recur, add a rule under [`knowledge/rules/`](knowledge/rules/index.md), following [`self-learning.md`](knowledge/rules/self-learning.md).
 
