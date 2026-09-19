@@ -379,6 +379,17 @@ where release policy permits it.
 
 ### Fixed
 
+- Image-streaming UI (the overhead map above all) drew from the wrong data on the
+  Vulkan backend. The backend records the whole frame's PSX draws at present
+  time while the OpenGL renderer executes each `DrawSync` flush immediately, so
+  (1) every `GR_UpdateVertexBuffer` wrote from offset 0 and overwrote the
+  previous flush's vertices, and (2) every draw sampled the frame's final VRAM
+  contents, making all sixteen recycled map tile slots hold the last batch.
+  Vertex uploads now append (the buffer keeps four flushes, each draw is offset
+  by its upload's base) and `GR_CopyVRAM` queues its rectangle with the pixels so
+  the writes are replayed in flush order while the draws are recorded. The map
+  screen now draws its tiles and labels; full parity with OpenGL is tracked in
+  `knowledge/roadmap/planned/vulkan-ui-image-parity.md`.
 - The loading screen was black on the Vulkan backend and its progress bar was
   lost. The PSX loading path draws the art once (`ShowLoadingScreen`) and then
   redraws only the bar (`ShowLoading`) while the level streams in; the OpenGL

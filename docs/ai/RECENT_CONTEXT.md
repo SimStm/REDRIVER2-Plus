@@ -7,20 +7,35 @@
 > It does not replace inspecting the relevant source code.
 
 ## Current objective
-- Goal: renderer modernization item 14. Phase 1 (native Vulkan backend for the
-  modern fixture, validation-clean) is done. Phase 2 (R7b) is done: the *game*
-  renders through Vulkan, it is now the **default** backend, and OpenGL remains
-  selectable with `-opengl`.
-- Post-flip defects 1 (loading screen black), 2 (sRGB double-encode), 3 (modern
-  mesh system not on Vulkan), 4 (HD-texture preview) and 5 (screenshots) are all
-  fixed and verified; the roadmap record is complete. See
+- Goal: fix the visual UI/image problems reported after the Vulkan default flip,
+  in this order of attention: the loading-screen progress bar missing, the map
+  screen and its navigation icons missing, minimap elements wrong (police
+  direction cone, police-colour blinking), the top-left Damage/Felony HUD
+  changing colour and tone with the player's position, and the clapperboard
+  loading-to-gameplay transition.
+- Root cause found for the image-streaming cases: the Vulkan backend records the
+  whole frame's PSX draws at present time, while OpenGL executes each `DrawSync`
+  flush immediately, so (a) every vertex upload overwrote the previous flush's
+  vertices and (b) every draw sampled the frame's final VRAM contents instead of
+  the contents at its own flush. Fixed on the fork (see below); the overhead map
+  now draws its tiles and labels, but it still does not match the OpenGL
+  reference exactly.
+- Open: the map's tile sampling is still wrong outside the left column (scattered
+  line-work, semi-transparent overlay over the world). The OpenGL reference is
+  captured; next step is to compare one map frame's per-draw tile slots between
+  backends, starting from `LoadMapTile` (8x32 rect at
+  `MapRect.x + (MapSegmentPos[slot].x >> 2)`, sampled through a 32x32 window
+  whose `u` is in units of four texels).
+- Earlier objective (complete): renderer modernization item 14 phase 2 (R7b),
+  the Vulkan game renderer, including post-flip defects 1-5. See
   `knowledge/roadmap/done/vulkan-game-renderer.md` and
   `knowledge/product/vulkan-game-renderer.md`.
-- Acceptance criteria: the game window presents through Vulkan with the same
-  image as OpenGL (scene, HUD, minimap), zero Khronos validation errors,
-  `-vkpsxtest` and the inspector suites pass, and no OpenGL/Emscripten/Android/
-  PSX regression. All met; validation layer is not installed on the current
-  machine, so the most recent runs relied on behaviour and the self-test.
+- Acceptance criteria for the renderer work: the game window presents through
+  Vulkan with the same image as OpenGL (scene, HUD, minimap), zero Khronos
+  validation errors, `-vkpsxtest` and the inspector suites pass, and no
+  OpenGL/Emscripten/Android/PSX regression. The validation layer is not installed
+  on the current machine, so recent runs relied on behaviour and the self-test.
+
 
 ## Architecture and invariants
 - Vulkan device/swapchain is owned by PsyCross (`PsyX_Vk.cpp`); the game maps
@@ -29,7 +44,17 @@
   GL's bottom-left origin to Vulkan's top-left (`height - (y + h)`).
 - VRAM is a `R32G32_SFLOAT` image (R = low byte / 255, G = high byte / 255) over
   the CPU `unsigned short vram[1024*512]` mirror; the PSX shader does the CLUT
-  and texture-window lookups. `GR_UpdateVRAM` re-uploads the whole mirror.
+  and texture-window lookups. `GR_UpdateVRAM` re-uploads the whole mirror for the
+  writers that still use the dirty flag (`GR_ClearVRAM`, the RGBA framebuffer
+  copy, the offscreen resolve, the presented-frame mirror).
+- The deferred draw list must preserve flush order, because the game rewrites
+  state between `DrawSync` flushes and OpenGL executes each flush immediately:
+  vertex uploads append (`PsyX_Vk_GameUpdateVertexBuffer` keeps four flushes and
+  each draw is offset by its upload's base) and `GR_CopyVRAM` queues its
+  rectangle with the pixels (`PsyX_Vk_GameCopyVRAM`), replayed in generation
+  order inside the draw list. A transfer cannot be recorded inside a render pass,
+  so the pass is closed and reopened with `modernRenderPass` (which loads the
+  same colour/depth attachments) around each replay.
 - Public API / ABI: PsyCross keeps C-compatible declarations for mixed C/C++
   code, and project-specific PsyCross changes are committed to the project fork
   (`knowledge/rules/psycross-fork.md`); the parent records the gitlink.
@@ -47,6 +72,21 @@
   dialect is C++11 (`knowledge/rules/generated-build-files.md`).
 
 ## Completed changes
+- 2026-09-19: Vulkan preserves flush order for the image-streaming UI (map-screen
+  work, in progress). Two defects in the deferred draw list: (1)
+  `PsyX_Vk_GameUpdateVertexBuffer` always wrote from offset 0, so a frame with
+  more than one `DrawAllSplits` (the overhead map flushes every 16 tiles)
+  overwrote every earlier flush's vertices - uploads now append, the buffer keeps
+  four flushes, and each draw is offset by its upload's base; (2) `GR_CopyVRAM`
+  only set a dirty flag that `GR_UpdateVRAM` turned into a whole-mirror upload at
+  the next scene, so every draw sampled the frame's final VRAM state and all
+  sixteen recycled map slots held the last batch - writes now queue their
+  rectangle and pixels (`PsyX_Vk_GameCopyVRAM`) and are replayed in generation
+  order during draw recording, closing and reopening the render pass around each
+  replay. Fork commit `8510b31`. Validated: `-vkpsxtest` PASS with exact
+  readbacks, and the overhead map now draws tiles/labels instead of scattered
+  garbage; it still does not match the OpenGL reference image (see Current
+  objective).
 - 2026-09-19: Vulkan main pass preserves the framebuffer (defect 1). The PSX
   loading path draws the art once and then only the progress bar; OpenGL keeps
   the art because it clears only when `activeDrawEnv.isbg` is set, while the
@@ -146,9 +186,9 @@
   mesh system on Vulkan, framebuffer persistence matching OpenGL, the
   framebuffer-to-VRAM mirror, offscreen render-to-VRAM target, PSX primitive mask
   bit (stencil), minimap scissor fix, fork migration, SDL3 deferral recorded.
-- Pending: R8 profiling (frame-time distribution, peak memory, Linux/web/Android)
-  is still missing, and no fresh OpenGL (`-opengl`) comparison was run this
-  session. R5 shadow-quality comparison against OpenGL is also not done.
+- Pending: the map-screen parity investigation above; R8 profiling (frame-time
+  distribution, peak memory, Linux/web/Android); a fresh OpenGL (`-opengl`)
+  comparison; and the R5 shadow-quality comparison.
 - Risks / open questions: the Vulkan frame mirror samples the whole window
   (including the dev overlay) and scales it onto the PSX display rect; the GL
   legacy path's `GR_CopyRGBAFramebufferToVRAM` R/B extraction is suspect, but the
@@ -159,13 +199,17 @@
 
 ## Relevant files
 - `src_rebuild/PsyCross/src/render/PsyX_Vk.cpp`: Vulkan backend; modern-mesh
-  module, main-pass clear semantics, `RecordPsxDraws`, the frame mirror.
+  module, main-pass clear semantics, `RecordPsxDraws` (+ `ApplyVramUploadsUpTo`,
+  `ResumeMainPass`), the VRAM upload staging, the frame mirror.
+- `src_rebuild/PsyCross/src/render/PsyX_render.cpp`: `GR_*` dispatch;
+  `GR_CopyVRAM` (queues a Vulkan VRAM rectangle), `GR_VkMirrorFrameToVRAM`,
+  `PsyX_GetOverlayTextureId`, `GR_BeginScene`, `GR_UpdateVertexBuffer`.
+- `src_rebuild/PsyCross/src/gpu/PsyX_GPU.cpp`: `DrawAllSplits` (the flush point),
+  `ClearSplits` (resets `g_vertexIndex`), `DrawSplit`.
 - `src_rebuild/PsyCross/src/render/vk_shaders/psx_modern.vert`,
   `psx_modern.frag`, `fullscreen.vert`, `psx_composite.frag`: the game modern
   pass; regenerate `PsyX_Vk_Shaders.h` with `scripts/compile_vk_shaders.ps1`.
 - `src_rebuild/PsyCross/src/render/PsyX_ModernMesh.cpp`: backend dispatch.
-- `src_rebuild/PsyCross/src/render/PsyX_render.cpp`: `GR_*` dispatch;
-  `GR_VkMirrorFrameToVRAM`, `PsyX_GetOverlayTextureId`, `GR_BeginScene`.
 - `src_rebuild/utils/DeveloperModernMesh.cpp`, `DeveloperGraphicsPanel.cpp`:
   gallery parity and the overlay preview.
 - `src_rebuild/PsyCross/include/PsyX/PsyX_vk.h`,
@@ -225,12 +269,19 @@
   comparison.
 
 ## Next recommended action
-1. Optionally run a fresh `-opengl` comparison for R8 (image + parity) and
-   re-check parity with the new framebuffer-persistence behaviour.
-2. Complete the roadmap handoff (product doc, move the record to `done/`,
-   catalogs, discussions, playground link) if R8 profiling stays out of scope.
+1. Finish the map-screen parity work: with the map forced open (`gShowMap = 1`
+   through the debugger while the game runs), compare one frame's per-draw tile
+   slots on Vulkan and OpenGL starting from `LoadMapTile`; the OpenGL reference
+   capture is the acceptance image. Then check the loading progress bar
+   (`ShowLoading`), the minimap police indicators and the clapperboard transition
+   for the same flush-order class of defect.
+2. Re-check the remaining renderer items when they are next in scope: a fresh
+   `-opengl` parity run and the R5 shadow-quality comparison.
 
 ## Compact changelog
+- 2026-09-19: Vulkan keeps every PSX vertex flush (uploads append) and replays
+  VRAM writes in flush order, so the streaming map-screen image draws instead of
+  showing scattered garbage (map parity still open).
 - 2026-09-19: modern-mesh system delivered on Vulkan (defect 3) + overlay texture
   accessor (defect 4); Vulkan main pass preserves the framebuffer so the loading
   screen keeps its art (defect 1).
