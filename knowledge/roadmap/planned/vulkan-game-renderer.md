@@ -20,9 +20,10 @@ the game window itself is presented by Vulkan.
 **Current state (2026-09-19):** R7b is implemented and Vulkan is the **desktop
 default**; OpenGL remains selectable at runtime with `-opengl`. The port is
 feature-complete against the `GR_*` seam except for the items listed under
-*Open work*. Four user-reported defects were reported after the default flip:
-1, 2, 3 and 5 are fixed and verified; 4 is implemented with its interactive
-preview check still pending (see [Reported defects](#reported-defects)).
+*Open work*. All four user-reported defects from the default flip are fixed and
+verified (1 loading screen, 2 sRGB, 3 modern meshes on Vulkan, 4 texture
+preview), plus defect 5 (screenshots) found during the work. See
+[Reported defects](#reported-defects).
 
 ## The seam
 
@@ -276,9 +277,9 @@ GPU throughput was not measured because the game is PSX-timestep-bound.
 
 Validation executed on Windows `Release_dev` x64 (see
 [Validation performed](#validation-performed)). Not profiled: CPU/GPU frame-time
-distribution, peak memory, and the Linux/web/Android builds. Defects 1, 2, 3 and
-5 are fixed and verified; defect 4 is implemented with its interactive preview
-check still pending (see [Reported defects](#reported-defects)).
+distribution, peak memory, and the Linux/web/Android builds. Defects 1, 2, 3, 4
+and 5 are fixed and verified; remaining verification is profiling and a fresh
+`-opengl` parity run (see [Reported defects](#reported-defects)).
 
 ### Items needing re-validation (consolidated)
 
@@ -403,7 +404,7 @@ Runtime confirmation (VS debugger + screenshots, Vulkan default): the eight
 fixtures import, `modernCalls=8 modernVerts=16143`, and toggling F10 removes and
 restores the wooden crate, barriers and panels in the in-game frame.
 
-### Defect 4 - Texture preview in the developer GUI panel not showing - FIXED (accessor), preview check pending
+### Defect 4 - Texture preview in the developer GUI panel not showing - FIXED
 
 Symptom: the HD-texture override preview in the developer graphics panel does
 not display the image on Vulkan.
@@ -431,11 +432,12 @@ Fix delivered (PsyCross fork `f7a4a0f`):
 - `DeveloperGraphicsPanel.cpp` uses the accessor and the real aspect ratio, and
   shows a disabled note when the backend has no bridge.
 
-Status: the accessor is implemented, builds and is reached with ImGui active on
-Vulkan. The interactive panel check (pick a texture that has an override and
-confirm the preview image appears) was **not completed in this session** - the
-panel's synthetic clicks did not toggle the pick checkbox in the capture tooling.
-That check remains the acceptance step for this defect.
+Verified on Vulkan: F11 -> 3D Debug -> "Pick visible primitive", then picking a
+ground primitive resolves `Texture: GRASS01C | level page 1 | index 5` with
+`Override: remaster-textures :: GRASS01C_p1_i5_upscayl_4x_ultrasharp-4x.png` and
+the panel renders the override image ("Loaded override preview"). The OpenGL
+path is unchanged - the accessor returns the same `GLuint` that
+`ImGui::Image` already accepted, so only the Vulkan bridge was new.
 
 ### Defect 5 - Screenshots broken on Vulkan - FIXED (found during this work)
 
@@ -530,10 +532,13 @@ machine - no SDK `Releases` layer present):
 - Loading screen: breakpoint in `ShowLoading` shows `activeDrawEnv.isbg == 0`;
   the presented frame keeps the loading art after the fix (black before it).
 - Present: ~29.6-30.2 FPS in game, consistent with the PSX timestep bound.
+- Defect 4 preview: on Vulkan, F11 -> 3D Debug -> pick a ground primitive
+  resolves a `GRASS01C` texture with a `remaster-textures` override and the panel
+  renders the override image.
 
 Not validated: MoltenVK/macOS, the `D32_SFLOAT` fallback, Linux/web/Android
-builds, peak memory, uncapped GPU throughput, the defect 4 interactive preview,
-and a fresh OpenGL (`-opengl`) comparison run for R8.
+builds, peak memory, uncapped GPU throughput, and a fresh OpenGL (`-opengl`)
+comparison run for R8.
 
 ## Risks
 

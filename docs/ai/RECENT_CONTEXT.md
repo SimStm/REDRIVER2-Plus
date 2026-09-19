@@ -145,11 +145,9 @@
   mesh system on Vulkan, framebuffer persistence matching OpenGL, the
   framebuffer-to-VRAM mirror, offscreen render-to-VRAM target, PSX primitive mask
   bit (stencil), minimap scissor fix, fork migration, SDL3 deferral recorded.
-- Pending: defect 4's interactive preview check (pick an overridden texture in
-  the 3D Debug tab and confirm the image renders) was not completed - the panel's
-  synthetic clicks did not toggle the pick checkbox in the capture tooling. R8
-  profiling (frame-time distribution, peak memory, Linux/web/Android) is still
-  missing, and no fresh OpenGL (`-opengl`) comparison was run this session.
+- Pending: R8 profiling (frame-time distribution, peak memory, Linux/web/Android)
+  is still missing, and no fresh OpenGL (`-opengl`) comparison was run this
+  session. R5 shadow-quality comparison against OpenGL is also not done.
 - Risks / open questions: the Vulkan frame mirror samples the whole window
   (including the dev overlay) and scales it onto the PSX display rect; the GL
   legacy path's `GR_CopyRGBAFramebufferToVRAM` R/B extraction is suspect, but the
@@ -216,22 +214,19 @@
 - 2026-09-19: VS debugger + screenshots on `Release_dev` (Vulkan). Result: the
   modern fixtures render in game (`modernCalls=8 modernVerts=16143`) and F10
   toggles them; at a `ShowLoading` breakpoint (`activeDrawEnv.isbg == 0`) the
-  loading art stays on screen after the clear-semantics fix. The Khronos
-  validation layer is not installed on this machine, so those runs have no
-  validation output.
-- Still required: defect 4's interactive preview check; a fresh `-opengl`
-  comparison; macOS/MoltenVK build; the `D32_SFLOAT` fallback; raw uncapped GPU
-  throughput.
+  loading art stays on screen after the clear-semantics fix. Picking a ground
+  primitive in the 3D Debug tab resolves a `GRASS01C` override and the panel
+  renders the preview image on Vulkan. The Khronos validation layer is not
+  installed on this machine, so those runs have no validation output.
+- Still required: a fresh `-opengl` comparison; macOS/MoltenVK build; the
+  `D32_SFLOAT` fallback; raw uncapped GPU throughput; R5 shadow-quality
+  comparison.
 
 ## Next recommended action
-1. Finish defect 4's interactive check: open the panel (F11), 3D Debug tab,
-   enable "Pick visible primitive", pick a texture that a mod overrides, and
-   confirm the preview image appears on Vulkan (and OpenGL). The accessor is
-   implemented; only the on-screen confirmation is missing.
-2. Optionally run a fresh `-opengl` comparison for R8 and re-check parity with
-   the new framebuffer-persistence behaviour.
-3. Then complete the roadmap handoff (product doc, move the record to `done/`,
-   catalogs, discussions, playground link) once the residual checks pass.
+1. Optionally run a fresh `-opengl` comparison for R8 (image + parity) and
+   re-check parity with the new framebuffer-persistence behaviour.
+2. Complete the roadmap handoff (product doc, move the record to `done/`,
+   catalogs, discussions, playground link) if R8 profiling stays out of scope.
 
 ## Compact changelog
 - 2026-09-19: modern-mesh system delivered on Vulkan (defect 3) + overlay texture
