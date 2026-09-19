@@ -21,11 +21,17 @@
   now draws its tiles and labels, but it still does not match the OpenGL
   reference exactly.
 - Open: the map's tile sampling is still wrong outside the left column (scattered
-  line-work, semi-transparent overlay over the world). The OpenGL reference is
-  captured; next step is to compare one map frame's per-draw tile slots between
-  backends, starting from `LoadMapTile` (8x32 rect at
-  `MapRect.x + (MapSegmentPos[slot].x >> 2)`, sampled through a 32x32 window
-  whose `u` is in units of four texels).
+  line-work, semi-transparent overlay over the world). Evidence: the **minimap
+  renders correctly** on Vulkan (it samples the whole map image loaded once at
+  init, so the tpage/CLUT/page/shader path is right) - only the fullscreen map's
+  per-tile `LoadMapTile` streaming differs. The slot layout is consistent
+  (`LoadMapTile` writes 8x32 at `MapRect.x + (MapSegmentPos[slot].x >> 2)`; the
+  tile's 32(u)x32(v) window resolves to the same 8x32 VRAM rect for the 4-bit
+  page), the captured uploads match, and the per-draw VRAM generations looked
+  right, so the remaining difference is not obviously order or generation. Next
+  step: dump one tile draw's `u`/`v`/`tpage`/`clut` plus the VRAM pixels its
+  window resolves to, on Vulkan and OpenGL. The OpenGL map capture is the
+  acceptance image.
 - Earlier objective (complete): renderer modernization item 14 phase 2 (R7b),
   the Vulkan game renderer, including post-flip defects 1-5. See
   `knowledge/roadmap/done/vulkan-game-renderer.md` and
@@ -87,6 +93,12 @@
   readbacks, and the overhead map now draws tiles/labels instead of scattered
   garbage; it still does not match the OpenGL reference image (see Current
   objective).
+- 2026-09-19: Vulkan PSX pipelines write depth whenever the render pass owns a
+  depth attachment, matching OpenGL (which only toggles `GL_DEPTH_TEST` and never
+  `glDepthMask`). The Vulkan pipelines had tied the depth write to the depth test,
+  so 2D UI drawn against the 3D scene did not occlude it. Fork commit `da6d693`;
+  the offscreen pass is depth-less and keeps depth state off. Verified: normal
+  gameplay and the minimap render as before, `-vkpsxtest` PASS.
 - 2026-09-19: Vulkan main pass preserves the framebuffer (defect 1). The PSX
   loading path draws the art once and then only the progress bar; OpenGL keeps
   the art because it clears only when `activeDrawEnv.isbg` is set, while the

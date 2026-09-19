@@ -390,6 +390,12 @@ where release policy permits it.
   the writes are replayed in flush order while the draws are recorded. The map
   screen now draws its tiles and labels; full parity with OpenGL is tracked in
   `knowledge/roadmap/planned/vulkan-ui-image-parity.md`.
+- The Vulkan PSX pipelines tied the depth write to the depth test, while OpenGL
+  only toggles `GL_DEPTH_TEST` and never `glDepthMask`, so a draw with the test
+  disabled still wrote depth. The 2D UI drawn against the depth-tested 3D scene
+  (the overhead map, the Damage/Felony bars) therefore stopped occluding it and
+  the scene showed through, shifting their apparent colour. Depth writes now
+  match OpenGL wherever the render pass owns a depth attachment.
 - The loading screen was black on the Vulkan backend and its progress bar was
   lost. The PSX loading path draws the art once (`ShowLoadingScreen`) and then
   redraws only the bar (`ShowLoading`) while the level streams in; the OpenGL
