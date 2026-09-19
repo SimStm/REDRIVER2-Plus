@@ -666,13 +666,15 @@ Verified: `-vkpsxtest` now renders a 32x32 quad offscreen and asserts the packed
 VRAM word at (64,64) (`0x801F` red, three sample points) - PASS with zero
 validation errors; the game still presents the OpenGL-matching image under
 `-vulkan`; `AssetCatalogTests` 145/0 and `InspectorExportTests` 104 still pass.
-Limitation to note honestly: an in-game screenshot of the shadow itself was not
-captured because the debug start leaves the player in the car (`DrawTanner` only
-runs for a visible `TANNER_MODEL` pedestrian, and `TannerShadow` also returns
-early for `gDemoLevel`); the game does call `GR_SetOffscreenState` every frame
-(observed on the `enable=0` restore path), and the identical offscreen code path
-is covered by the self-test. Next in phase 3: stencil masking, save/load VRAM
-export and the FMV shader.
+An in-game screenshot was not captured from the automated run because the debug
+start leaves the player in the car (`DrawTanner` only runs for a visible
+`TANNER_MODEL` pedestrian, and `TannerShadow` also returns early for
+`gDemoLevel`). Follow-up: an on-foot test by the user confirms the Tanner shadow
+renders correctly on the Vulkan path - it is slightly smooth at the edges but
+present. The game calls `GR_SetOffscreenState` every frame (observed on the
+`enable=0` restore path), and the identical offscreen code path is covered by
+the self-test. Next in phase 3: stencil masking, save/load VRAM export and the
+FMV shader.
 
 ### 2026-09-18 - PSX primitive mask bit on Vulkan
 

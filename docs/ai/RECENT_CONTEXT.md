@@ -106,13 +106,15 @@
   `396dd20`, `9281fb7`; parent gitlink at `9281fb7`.
 
 ## Current state
-- Implemented: Vulkan game rendering (phase 2, substantial), framebuffer-to-VRAM
-  mirror, offscreen render-to-VRAM target, PSX primitive mask bit (stencil),
-  minimap scissor fix, fork migration, SDL3 deferral recorded.
-- Pending for phase 3: an on-foot in-game screenshot of the Tanner shadow (the
-  debug start spawns the player in the car) and the documented
-  performance/limitation comparison on both backends. The VRAM export is fixed
-  and the FMV item was dropped as non-existent on the desktop path.
+- Implemented: Vulkan game rendering (phase 2 complete, now the default backend),
+  framebuffer-to-VRAM mirror, offscreen render-to-VRAM target, PSX primitive mask
+  bit (stencil), minimap scissor fix, fork migration, SDL3 deferral recorded.
+- Pending for phase 3: none blocking. The Tanner shadow was confirmed working in
+  an on-foot test by the user (renders correctly, a little smooth at the edges);
+  the earlier "no capture" note came from the debug start spawning the player in
+  the car, not from a defect. The both-backend performance comparison is done.
+  The VRAM export is fixed and the FMV item was dropped as non-existent on the
+  desktop path.
 - Risks / open questions: the Vulkan frame mirror samples the whole window
   (including the dev overlay) and scales it onto the PSX display rect; the GL
   legacy path's `GR_CopyRGBAFramebufferToVRAM` R/B extraction is suspect, but the
@@ -161,8 +163,15 @@
   `AssetCatalogTests: 145 checks, 0 failures`;
   `InspectorExportTests: 104 checks passed`.
 - Executed: `git diff --check`. Result: exit code 0.
-- Still required: macOS/MoltenVK build was never produced; on-foot Tanner shadow
-  capture; uncapped GPU throughput numbers if ever needed.
+- Still required: macOS/MoltenVK build was never produced (objectives are
+  Windows/Linux; MoltenVK code paths exist but are unbuilt). The `D32_SFLOAT`
+  stencil-less fallback in `PickDepthStencilFormat` is compiled but never
+  exercised, because the RTX 3060 Ti always exposes a combined depth-stencil
+  format; it can only be confirmed on a driver that refuses one. Raw uncapped
+  GPU throughput was not measured: both backends present at the game's fixed
+  30 Hz PSX timestep (30.0 FPS / 33.4 ms), so the equality shows neither is
+  struggling, not their maximum frame rate. The Tanner shadow is confirmed
+  working in an on-foot test (see Current state).
 
 ## Next recommended action
 1. Commit the parent working tree (gitlink, docs, fork migration) when the user
@@ -172,8 +181,10 @@
 2. Game-path parity now covers image, mipmapped textures, offscreen, stencil,
    VRAM export, present, resize and readback, all with 0 validation errors and
    measured 30 FPS parity with OpenGL. Remaining verification, none of which is
-   blocking: on-foot Tanner shadow capture, macOS/MoltenVK build, and uncapped
-   GPU throughput numbers if ever wanted.
+   blocking: on-foot Tanner shadow capture (now confirmed working by the user),
+   macOS/MoltenVK build, the stencil-less `D32_SFLOAT` fallback (unexercised on
+   NVIDIA), and raw uncapped GPU throughput (the game is PSX-timestep-bound, so
+   both backends present at 30 FPS by design).
 
 ## Compact changelog
 - 2026-09-18: Vulkan game path - resize recreation fix (framebuffers/views/depth
