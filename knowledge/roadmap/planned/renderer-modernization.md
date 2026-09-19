@@ -291,18 +291,16 @@ pass. This record stays `planned`.
      stray row flip that made `-vkshot` images upside down. Both fixed and
      verified (12 meshes / 12 draws, zero validation errors, correct gallery
      screenshot).
-   - **Next (R7b):** render the *game* through Vulkan instead of OpenGL. The
-     game seam is the `GR_*` API in `PsyX_render.h`: geometry arrives through
-     `GR_UpdateVertexBuffer`/`GR_DrawTriangles`, with state from
-     `GR_SetTexture`/`GR_SetBlendMode`/`GR_EnableDepth`/`GR_SetScissorState`/
-     `GR_SetStencilMode`/`GR_SetOffscreenState`/`GR_Perspective3D`/`GR_Ortho2D`,
-     textures from a 16-bit VRAM mirror (`GR_CopyVRAM`/`GR_UpdateVRAM`), and the
-     PSX fragment shader samples that VRAM (RG32F 1024x512) doing CLUT and
-     texture-window lookups in-shader. Plan: reuse the existing `PsyX_Vk`
-     device/swapchain, add a PSX vertex format + pipelines (4/8/16-bit CLUT,
-     RGBA) and a VRAM image updated from the CPU mirror, then implement the
-     `GR_*` entry points in a Vulkan game module selected at runtime, keeping
-     the OpenGL renderer as the default until parity is proven.
+   - **R7b delivered (2026-09-19):** the game renders through Vulkan instead of
+     OpenGL, and Vulkan is the desktop default with `-opengl` as the fallback.
+     The `GR_*` seam is mapped onto the backend (geometry, textures, depth,
+     blends, stencil, offscreen, VRAM save/load, framebuffer mirror,
+     presentation, resize, screenshots) and the in-game modern-mesh system runs
+     on it too. The four post-flip defects are fixed and verified, and R2-R6 are
+     restated for the Vulkan-default configuration. See the completed
+     [`vulkan-game-renderer.md`](../done/vulkan-game-renderer.md) record and its
+     product document
+     [`knowledge/product/vulkan-game-renderer.md`](../../product/vulkan-game-renderer.md).
    - MoltenVK/macOS: the code uses only portable Vulkan (SDL resolves the
      loader, which is MoltenVK on macOS) and the premake integration is
      platform-generic, but no macOS build has been produced or verified yet.

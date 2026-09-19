@@ -46,6 +46,8 @@ require completing every unrelated entry above before starting this track.
 2. **14 — [Renderer modernization](renderer-modernization.md)**:
    use that fixture for modern meshes, PBR, lighting and measured pipeline/backend
    work. R2 waits for verified playground P1-P4; R1 audits can happen earlier.
+   The backend port (R7b) is delivered - see the completed
+   [Vulkan game renderer](../done/vulkan-game-renderer.md) record.
 
 The playground has no dependency on modern rendering. JSON authoring, an editor
 and cross-city assets are outside its initial scope. Original-city regression
@@ -84,6 +86,9 @@ discussions inside both records for the reasoning and adopted decision.
 - **16 — [Semi-transparent texture overrides](../done/semi-transparent-texture-overrides.md)**:
   implemented 2026-09-17 (opt-in proportional alpha, compatibility default); see
   [`knowledge/product/semi-transparent-texture-overrides.md`](../../product/semi-transparent-texture-overrides.md).
+- **[Vulkan game renderer](../done/vulkan-game-renderer.md)** (renderer item 14,
+  R7b): implemented 2026-09-19; see
+  [`knowledge/product/vulkan-game-renderer.md`](../../product/vulkan-game-renderer.md).
 
 The order labels of the remaining entries are unchanged, so the sequence has
 intentional gaps at 01, 02, 03, 05, 06, 15 and 16.

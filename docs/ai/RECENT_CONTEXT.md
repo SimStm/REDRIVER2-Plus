@@ -11,10 +11,11 @@
   modern fixture, validation-clean) is done. Phase 2 (R7b) is done: the *game*
   renders through Vulkan, it is now the **default** backend, and OpenGL remains
   selectable with `-opengl`.
-- Post-flip defects: 1 (loading screen black), 2 (sRGB double-encode), 3 (modern
-  mesh system not on Vulkan), 5 (screenshots) are fixed and verified. Defect 4
-  (HD-texture preview accessor) is implemented; its interactive panel check was
-  not completed. See `knowledge/roadmap/planned/vulkan-game-renderer.md`.
+- Post-flip defects 1 (loading screen black), 2 (sRGB double-encode), 3 (modern
+  mesh system not on Vulkan), 4 (HD-texture preview) and 5 (screenshots) are all
+  fixed and verified; the roadmap record is complete. See
+  `knowledge/roadmap/done/vulkan-game-renderer.md` and
+  `knowledge/product/vulkan-game-renderer.md`.
 - Acceptance criteria: the game window presents through Vulkan with the same
   image as OpenGL (scene, HUD, minimap), zero Khronos validation errors,
   `-vkpsxtest` and the inspector suites pass, and no OpenGL/Emscripten/Android/
@@ -171,7 +172,8 @@
   `include/PsyX/PsyX_render.h`, `PsyX_public.h`: the new declarations.
 - `src_rebuild/Game/C/overmap.c`, `Game/C/sky.c`, `Game/C/loadview.c`: minimap,
   lens flare and the loading screen.
-- `knowledge/roadmap/planned/vulkan-game-renderer.md`,
+- `knowledge/roadmap/done/vulkan-game-renderer.md`,
+  `knowledge/product/vulkan-game-renderer.md`,
   `knowledge/discussions/renderer-modernization/index.md`,
   `knowledge/discussions/sdl-version-migration/index.md`: records.
 - `CHANGELOG.md`: `## [Unreleased]` entries.

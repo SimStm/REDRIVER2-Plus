@@ -15,7 +15,9 @@ Follow the [discussion maintenance rule](../rules/discussion-records.md).
 
 - [Renderer modernization](renderer-modernization/index.md): PsyCross's role,
   modern scene submission, PBR materials, lighting, graphics backends, custom
-  assets, and a staged sequence of experiments. **Roadmap adopted; not implemented.**
+  assets, and a staged sequence of experiments. **Implemented for the Vulkan
+  game renderer (roadmap item 14, R7b); remaining renderer milestones tracked in
+  the roadmap.**
 - [Playable testing playground](playable-testing-playground/index.md): a
   procedural or declarative driving test environment, world-data requirements,
   reusable city assets, and Take a Ride/debug/command-line entry points.

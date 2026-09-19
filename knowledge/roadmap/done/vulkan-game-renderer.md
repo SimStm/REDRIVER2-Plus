@@ -1,13 +1,17 @@
 ---
 type: Roadmap
 title: Vulkan game renderer (R7b)
-status: planned
+status: implemented
+completed: 2026-09-19
 tags: [roadmap, rendering, psycross, vulkan, backend]
 ---
 
 # Vulkan game renderer (R7b)
 
-Status: planned
+Status: implemented 2026-09-19. Product behaviour is documented in
+[`knowledge/product/vulkan-game-renderer.md`](../../product/vulkan-game-renderer.md).
+This record is the delivery history; the product document and the source are the
+authoritative evidence for current behaviour.
 
 ## Objective
 
@@ -557,18 +561,24 @@ comparison run for R8.
 - A second backend doubles the surface that must keep working for Emscripten,
   Android and the PSX toolchain; guard the Vulkan game path so those targets
   are untouched.
-- Default flip side effect: the R2-R6 modern-mesh/lighting features are inactive
-  in the default configuration because they are OpenGL-only. Treat "the modern
-  path works" statements as `-opengl`-only until defect 3 is resolved.
-- The `clearRequested` flag in `PsyX_Vk.cpp` is dead code; do not wire it up
-  speculatively before defect 1 is reproduced.
+- Default flip side effect (resolved): the R2-R6 modern-mesh/lighting features
+  were OpenGL-only because of defect 3; Option A ported them to Vulkan, so "the
+  modern path works" is now true in the default configuration.
+- The `clearRequested` flag in `PsyX_Vk.cpp` used to be dead code; defect 1 was
+  reproduced and the flag is now read to clear the main pass on demand.
 
 ## Handoff and completion
 
-Keep partial milestones and their evidence in this planned record. Once R1-R8
-and all acceptance criteria pass, add
-`knowledge/product/vulkan-game-renderer.md`, move this record to `done/`, set
-status/date, and update the catalogs, both discussions, the playground consumer
-link and the changelog. If a later decision defers R7 or another milestone,
-revise/split the adopted scope explicitly instead of claiming the original
-complete feature was delivered.
+Completed 2026-09-19. The matching product document is
+[`knowledge/product/vulkan-game-renderer.md`](../../product/vulkan-game-renderer.md);
+this record was moved from `planned/` and its catalogs updated. All four
+user-reported defects (1 loading screen, 2 sRGB, 3 modern meshes on Vulkan, 4
+texture preview) plus defect 5 are fixed and verified, and R2-R6 are restated
+for the Vulkan-default configuration.
+
+Remaining, explicitly non-blocking: R8 profiling (CPU/GPU frame-time
+distribution, peak memory, Linux/web/Android builds), a fresh OpenGL
+(`-opengl`) parity capture, R5 shadow-quality comparison against OpenGL, and the
+MoltenVK/`D32_SFLOAT` fallback paths. If a later decision defers any of these,
+revise or split the scope explicitly instead of re-opening this completed
+record.

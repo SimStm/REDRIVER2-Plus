@@ -29,6 +29,11 @@ defines the adopted bounded scope and the
 [renderer roadmap](../../roadmap/planned/renderer-modernization.md) consumes it.
 No implementation has started through this documentation task.
 
+The renderer backend port (item 14, R7b) that consumed this fixture is now
+delivered - see the completed
+[Vulkan game renderer record](../../roadmap/done/vulkan-game-renderer.md) and its
+[product document](../../product/vulkan-game-renderer.md).
+
 This is an adopted sequencing dependency, not a claim that rendering could
 never be prototyped in an original city. Playground P1-P4 now precede renderer
 R2; read-only renderer audits can happen earlier. Take a Ride is P5, while JSON

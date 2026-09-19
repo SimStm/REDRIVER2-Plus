@@ -44,3 +44,6 @@ completed, as described in the [roadmap catalog](../index.md).
 - **13 — [Playable testing playground](playable-testing-playground.md)**:
   implemented 2026-09-15; product document
   [`knowledge/product/playable-testing-playground.md`](../../product/playable-testing-playground.md).
+- **14 — [Vulkan game renderer](vulkan-game-renderer.md)**:
+  implemented 2026-09-19; product document
+  [`knowledge/product/vulkan-game-renderer.md`](../../product/vulkan-game-renderer.md).

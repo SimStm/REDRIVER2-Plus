@@ -3,7 +3,7 @@ type: Discussion
 title: Renderer modernization while retaining PsyCross compatibility
 status: roadmap-adopted
 created: 2026-09-15
-updated: 2026-09-18
+updated: 2026-09-19
 tags: [discussions, architecture, rendering, psycross, pbr, modding]
 ---
 
@@ -540,7 +540,7 @@ With the modern gallery rendering, work moved to the second half of the
 objective: the game image itself on Vulkan. Because the game drives the
 emulated PSX GPU through the `GR_*` seam in `PsyX_render.h`, the port is
 planned in three phases (recorded in
-[`vulkan-game-renderer.md`](../../roadmap/planned/vulkan-game-renderer.md)):
+[`vulkan-game-renderer.md`](../../roadmap/done/vulkan-game-renderer.md)):
 (1) VRAM, RG8 table, PSX shaders and pipelines validated by pixel assertions;
 (2) the `GR_*` state machine and the game window (geometry, textures, depth,
 blends, presentation); (3) parity work (offscreen render targets, the
@@ -831,3 +831,35 @@ at 29.4-30.7 FPS with zero validation errors, matching the OpenGL figures. With
 `-vulkan` still selects Vulkan. Both VS configurations were re-pointed:
 `Release_dev|x64` passes no arguments (Vulkan default) and `Release_dev_gl|x64`
 passes `-opengl`.
+
+### 2026-09-19 - Post-flip defects resolved; the record is complete
+
+After the default flip the user reported four defects. All are now fixed and
+verified, so the Vulkan game renderer record moved to
+[`roadmap/done/vulkan-game-renderer.md`](../../roadmap/done/vulkan-game-renderer.md)
+with its product document
+[`knowledge/product/vulkan-game-renderer.md`](../../product/vulkan-game-renderer.md):
+
+- **Defect 1 (loading screen black).** The main pass always used `LOAD_OP_CLEAR`
+  and the `clearRequested` flag was dead, so the loading art drawn once by
+  `ShowLoadingScreen` was wiped while `ShowLoading` redrew only the bar. The pass
+  now loads and preserves the previous frame (`PRESENT_SRC` initial layout) and
+  clears with `vkCmdClearAttachments` only when `GR_Clear` was requested,
+  matching OpenGL's conditionally-cleared framebuffer.
+- **Defect 2 (washed-out colours)** was the sRGB double-encode fixed earlier
+  (fork `837573a`).
+- **Defect 3 (modern meshes absent on Vulkan)** was ported under Option A: the
+  in-game modern-mesh system now dispatches to `PsyX_Vk_GameModernMesh*` with new
+  `psx_modern`/composite shaders, so R2-R4 are delivered in the default
+  configuration. The initial invisibility was a std140 mismatch: the vertex
+  shader's `ModernUBO` was missing `ambientExposure`, shifting `cameraPos`.
+- **Defect 4 (texture preview)** got a backend-aware accessor that returns a
+  cached `ImGui_ImplVulkan_AddTexture` descriptor set on Vulkan and the `GLuint`
+  on OpenGL; the preview is verified on Vulkan.
+- **Defect 5 (screenshots)** was fixed during the work (fork `55ded1f`).
+
+R5 and R6 were restated for the Vulkan-default configuration, and R8's profiling
+gaps (frame-time distribution, peak memory, Linux/web/Android builds) remain
+explicitly non-blocking. No decision here is reversed; the discussion's direction
+is delivered for the backend port.
+
