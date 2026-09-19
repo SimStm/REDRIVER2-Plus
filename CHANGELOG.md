@@ -379,6 +379,13 @@ where release policy permits it.
 
 ### Fixed
 
+- The overhead map, the loading progress bar and the rest of the 2D UI were
+  painted over by the 3D scene on the Vulkan backend. A replayed mid-frame VRAM
+  write closes and reopens the main render pass, and the depth/stencil attachment
+  used `VK_ATTACHMENT_STORE_OP_DONT_CARE`, so the reopened pass loaded undefined
+  depth and nothing drawn after the split was depth-tested against what came
+  before. The attachment now stores depth and stencil (still cleared each frame),
+  so the 2D UI occludes the scene again and the fullscreen map matches OpenGL.
 - Image-streaming UI (the overhead map above all) drew from the wrong data on the
   Vulkan backend. The backend records the whole frame's PSX draws at present
   time while the OpenGL renderer executes each `DrawSync` flush immediately, so

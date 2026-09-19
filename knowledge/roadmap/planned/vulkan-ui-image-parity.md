@@ -106,25 +106,30 @@ in order. Three defects were found and fixed in the PsyCross fork:
    `depthWriteEnable` is now on wherever the pass owns a depth attachment (the
    offscreen pass is depth-less and stays off).
 
-### Open - fullscreen map tile sampling
+4. **Depth and mask discarded at a pass split** (`bddec0c`). A replayed VRAM
+   write closes the main render pass, records the transfer and reopens the pass.
+   The depth/stencil attachment used `VK_ATTACHMENT_STORE_OP_DONT_CARE`, so the
+   reopened pass loaded undefined contents and everything drawn after the split
+   was no longer depth-tested against what came before: the world drew over the
+   overhead map and the 2D UI stopped occluding the 3D scene (which is why its
+   colour shifted with whatever was behind it). The attachment now stores depth
+   and stencil; both are still cleared at the start of every frame.
 
-The overhead map now draws its tiles and labels instead of scattered garbage, but
-it still does not match OpenGL: line-work appears across the screen and the
-background covers only part of it. Evidence gathered so far:
+### Resolved - fullscreen map
 
-- The **minimap renders correctly** on Vulkan. It samples the whole map image
-  loaded once at init, so the map's tpage, CLUT, VRAM page and shader path are
-  right; only the fullscreen map's per-tile streaming (`LoadMapTile`) differs.
-- The slot layout is consistent: `LoadMapTile` writes an 8x32 rect at
-  `MapRect.x + (MapSegmentPos[slot].x >> 2)`, and the tile poly's 32(u)x32(v)
-  window resolves to the same 8x32 VRAM rect for the 4-bit page
-  (`v_page_clut.x = fract(tpage/16)*1024`). Captured uploads match
-  (`960,0 8x32`, `968,0`, `976,0`, `984,0`, `960,32`, ...).
-- The Vulkan draw list places the map's 2D draws before the world's 3D draws, and
-  the per-draw VRAM generation looked correct (`gen=1` for the first tile,
-  `gen=126` for a later one), so the remaining difference is not obviously order
-  or generation.
+The overhead map now matches the OpenGL reference: tiles, roads, the compass and
+the district labels ("Downtown", "Greek Town", "Grant Park") render fully opaque.
+Before the fixes it did not draw at all (vertex overwrite), then drew scattered
+garbage (VRAM ordering), then drew correctly but was painted over by the world
+(depth store).
 
-Next step: dump a single tile draw's `u`/`v`/`tpage`/`clut` and the VRAM pixels
-its window resolves to on Vulkan, and compare with the same tile on OpenGL. The
-OpenGL capture of the map screen is the acceptance image.
+## Remaining verification
+
+- The minimap and the Damage/Felony HUD render as on OpenGL in normal play.
+- Still to capture with the reported state: the police direction cone and
+  police-colour blinking (item 1.3, needs a wanted state) and the clapperboard
+  level transition (item 1.5). Both use the same 2D-over-3D path that the depth
+  fix repaired, but the objective asks for before/after evidence per item.
+- The loading progress bar is verified: the frontend boot load
+  (`ShowLoadingScreen("GFX\\FELOAD.TIM", 1, 12)` + `ShowLoading`) draws the bar on
+  Vulkan with `fastLoadingScreens=0`.

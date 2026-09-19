@@ -7,31 +7,26 @@
 > It does not replace inspecting the relevant source code.
 
 ## Current objective
-- Goal: fix the visual UI/image problems reported after the Vulkan default flip,
-  in this order of attention: the loading-screen progress bar missing, the map
-  screen and its navigation icons missing, minimap elements wrong (police
-  direction cone, police-colour blinking), the top-left Damage/Felony HUD
-  changing colour and tone with the player's position, and the clapperboard
+- Goal: fix the visual UI/image problems reported after the Vulkan default flip:
+  the loading-screen progress bar, the map screen and its navigation icons, the
+  minimap elements (police direction cone and police-colour blinking), the
+  top-left Damage/Felony HUD colour and tone, and the clapperboard
   loading-to-gameplay transition.
-- Root cause found for the image-streaming cases: the Vulkan backend records the
-  whole frame's PSX draws at present time, while OpenGL executes each `DrawSync`
-  flush immediately, so (a) every vertex upload overwrote the previous flush's
-  vertices and (b) every draw sampled the frame's final VRAM contents instead of
-  the contents at its own flush. Fixed on the fork (see below); the overhead map
-  now draws its tiles and labels, but it still does not match the OpenGL
-  reference exactly.
-- Open: the map's tile sampling is still wrong outside the left column (scattered
-  line-work, semi-transparent overlay over the world). Evidence: the **minimap
-  renders correctly** on Vulkan (it samples the whole map image loaded once at
-  init, so the tpage/CLUT/page/shader path is right) - only the fullscreen map's
-  per-tile `LoadMapTile` streaming differs. The slot layout is consistent
-  (`LoadMapTile` writes 8x32 at `MapRect.x + (MapSegmentPos[slot].x >> 2)`; the
-  tile's 32(u)x32(v) window resolves to the same 8x32 VRAM rect for the 4-bit
-  page), the captured uploads match, and the per-draw VRAM generations looked
-  right, so the remaining difference is not obviously order or generation. Next
-  step: dump one tile draw's `u`/`v`/`tpage`/`clut` plus the VRAM pixels its
-  window resolves to, on Vulkan and OpenGL. The OpenGL map capture is the
-  acceptance image.
+- Root cause found and fixed: the Vulkan backend records the whole frame's PSX
+  draws at present time, while OpenGL executes each `DrawSync` flush immediately.
+  Four defects followed - vertex uploads overwrote the previous flush, every draw
+  sampled the frame's final VRAM contents, the depth write was tied to the depth
+  test (OpenGL keeps `glDepthMask` on), and the depth/stencil attachment used
+  `DONT_CARE` so a mid-frame pass split lost them. Fixed on the fork (see
+  Completed changes).
+- Verified on Vulkan: the fullscreen map matches the OpenGL reference (tiles,
+  roads, compass, district labels, opaque), the minimap and the Damage/Felony HUD
+  render as on OpenGL, the loading progress bar appears during the frontend boot
+  load, normal gameplay is unchanged, and `-vkpsxtest` passes with exact
+  readbacks.
+- Still to capture with the reported state: the police direction cone /
+  police-colour blinking (item 1.3, needs a wanted state) and the clapperboard
+  transition (item 1.5).
 - Earlier objective (complete): renderer modernization item 14 phase 2 (R7b),
   the Vulkan game renderer, including post-flip defects 1-5. See
   `knowledge/roadmap/done/vulkan-game-renderer.md` and
@@ -78,6 +73,18 @@
   dialect is C++11 (`knowledge/rules/generated-build-files.md`).
 
 ## Completed changes
+- 2026-09-19: Vulkan keeps depth and the PSX mask bit across a mid-frame pass
+  split (map-screen work). A replayed VRAM write closes the main render pass,
+  records the transfer and reopens it; the depth/stencil attachment used
+  `VK_ATTACHMENT_STORE_OP_DONT_CARE`, so the reopened pass loaded undefined
+  contents and everything drawn after the split was no longer depth-tested
+  against what came before - the world painted over the overhead map and the 2D
+  UI stopped occluding the 3D scene, which is why its colour shifted with the
+  background. The attachment now stores depth and stencil (still cleared every
+  frame). Fork commit `bddec0c`. Verified: the fullscreen map matches the OpenGL
+  reference, the minimap and HUD render as on OpenGL, the loading progress bar
+  appears during the frontend boot load, normal gameplay is unchanged,
+  `-vkpsxtest` PASS.
 - 2026-09-19: Vulkan preserves flush order for the image-streaming UI (map-screen
   work, in progress). Two defects in the deferred draw list: (1)
   `PsyX_Vk_GameUpdateVertexBuffer` always wrote from offset 0, so a frame with
