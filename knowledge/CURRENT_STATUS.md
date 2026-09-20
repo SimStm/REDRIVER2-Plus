@@ -7,7 +7,7 @@ tags: [okf, status]
 
 # Current status
 
-> Updated: 2026-09-19
+> Updated: 2026-09-20
 > Role: **source of truth for what has been implemented in this project.**
 > Add a short, factual entry here whenever you finish implementing something, so a
 > new session can see the whole surface without reading every change record.
@@ -55,13 +55,21 @@ Delivered in order, each verified on the game window:
   scissor Y mapped to Vulkan's top-left origin (restored the minimap).
 - Framebuffer persistence: the main pass colour attachment uses `LOAD_OP_LOAD`
   with a `PRESENT_SRC` initial layout and clears via `vkCmdClearAttachments`
-  only when `GR_Clear` asked for it, matching OpenGL's conditionally-cleared
-  framebuffer that the loading screen depends on.
+  only when `GR_Clear` asked for it. This preserves each acquired image; it
+  does not explicitly copy the immediately preceding presented image.
 - Depth/stencil: `D24_UNORM_S8_UINT` preferred; the PSX primitive mask bit is
   implemented as per-blend-mode stencil-write pipeline variants.
-- Depth writes follow the pass's depth attachment (OpenGL only toggles
-  `GL_DEPTH_TEST` and never `glDepthMask`) and the attachment now **stores**
-  depth/stencil so a mid-frame pass split does not lose them.
+- Depth writes require the depth test, matching OpenGL. Stencil capability now
+  survives PSX resource initialization; reference/write/compare masks and
+  operations match `GR_SetStencilMode`, including depth-disabled draws. Both
+  main and resumed passes store stencil, with compatible dependencies.
+- Untextured PSX primitives use an explicit white texture selector, reproducing
+  GL's decoded 0xffff colour/alpha independently of VRAM. Game rendering prefers
+  UNORM presentation for display-space blending and matches GL's constant alpha.
+- Expanded `-vkpsxtest` covers the white-texture bridge, all five blend modes,
+  stencil across two pass restarts and several partial presentations. The latest
+  Windows run passed; the partial test does not guarantee every swapchain image
+  was acquired, so it is not proof of general previous-frame persistence.
 - Offscreen render-to-VRAM (`GR_SetOffscreenState`) closes the Tanner shadow;
   `GR_StoreFrameBuffer`/`GR_VkMirrorFrameToVRAM` feed framebuffer-reading
   effects such as the sun lens flare; `GR_SaveVRAM` (F10) works on both backends.
@@ -75,6 +83,10 @@ Delivered in order, each verified on the game window:
   `psx_composite.frag` reproduce the GTE-encoded vertex path and the GGX/Schlick
   PBR path, composited over the PSX pass with the scene-depth shadow term. The
   shared `ModernUBO` (std140) layout must match in all three shaders.
+- Modern scene-depth copies transition both depth/stencil aspects and prepare
+  the destination transfer layout. A later enhanced-path run exposed VUIDs
+  03320/09600; commit `647ea0b` corrects the missing transitions. The subsequent
+  inspected enhanced run had the validation layer enabled and no error/VUID.
 - Resize: both the resize and out-of-date paths go through
   `RecreateSwapchain()` (framebuffers, views and the depth image are rebuilt).
 - Backend-agnostic opt-in perf log (`PSYX_PERF_LOG` -> `psyx_perf.log`) measured
@@ -99,15 +111,17 @@ Delivered in order, each verified on the game window:
 
 ### Unresolved renderer items
 
-- **UI image parity (done, 2026-09-19)**: the reported loading-bar / map /
-  minimap / HUD / transition defects were traced to the deferred flush order and
-  depth handling and fixed on the fork; see
-  [`roadmap/done/vulkan-ui-image-parity.md`](roadmap/done/vulkan-ui-image-parity.md)
-  and the behaviour rules in
+- **UI follow-up (2026-09-20)**: corrected white primitives, stencil and blend
+  state after the user's repeat tests disproved the previous completion claim.
+  Live Vulkan map no longer shows world shadows over it; loading bar, compass,
+  Damage/Felony and police flash/cones were observed. Controlled GL/Vulkan HUD
+  captures and natural CloseShutters at h=96 confirm restored elements; small
+  pixel differences remain (not pixel-exact parity). Fork commit `d9d8628`; see
   [`product/vulkan-ui-image-parity.md`](product/vulkan-ui-image-parity.md).
-- No Khronos validation layer is installed on the development machine, so recent
-  runs relied on behaviour, captures and `-vkpsxtest` rather than validation
-  output.
+- Khronos validation is installed (`G:\VulkanSDK\1.4.357.0`) and automatically
+  enabled by the backend. It exposed incompatible resumed render passes
+  (`VUID-vkCmdDraw-renderPass-02684`), now fixed. The subsequent inspected game
+  debug output confirmed the layer was enabled and contained no VUID/error.
 - `D32_SFLOAT` depth fallback, macOS/MoltenVK build, raw uncapped GPU
   throughput, the R5 shadow-quality comparison and a fresh `-opengl` parity run
   remain open.

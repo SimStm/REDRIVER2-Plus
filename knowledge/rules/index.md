@@ -48,3 +48,6 @@ tags: [okf, rules]
   not, and retained references must detect reuse.
 - [Self-learning rules](self-learning.md): turn repeated, evidenced constraints
   into durable project knowledge.
+
+- [Verify renderer parity with state and pixel evidence](renderer-parity-evidence.md):
+  check API semantics, actual bridge paths and controlled captures.

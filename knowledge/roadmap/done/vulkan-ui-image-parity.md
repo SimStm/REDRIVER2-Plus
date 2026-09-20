@@ -23,14 +23,11 @@ defects around UI and image-drawing elements:
 5. animated effects such as the clapperboard loading-to-gameplay transition do
    not play correctly.
 
-Root cause: the Vulkan backend records the entire frame's PSX draws at present
-time, while the OpenGL renderer executes every `DrawSync` flush immediately. Four
-defects followed - vertex uploads overwrote the previous flush, every draw
-sampled the frame's final VRAM state instead of the state at its own flush, the
-depth write was tied to the depth test, and the depth/stencil attachment used
-`DONT_CARE` so a mid-frame pass split lost them. All four are fixed (see the
-delivery progress below and
-[`knowledge/product/vulkan-ui-image-parity.md`](../../product/vulkan-ui-image-parity.md)).
+The initial delivery corrected vertex upload and VRAM ordering defects. The
+user's subsequent tests showed that its UI acceptance claim was premature.
+The follow-up also corrected white primitives, stencil initialization/state,
+render-pass compatibility and display-space blending; current evidence and
+remaining checks live in the product document and RECENT_CONTEXT.md.
 
 ## Intended behaviour
 
@@ -100,12 +97,10 @@ in order. Three defects were found and fixed in the PsyCross fork:
    deferred draws are recorded; the main pass is closed and immediately reopened
    around each replay, because a transfer cannot be recorded inside a render
    pass.
-3. **Depth writes with the depth test off** (`da6d693`). OpenGL only toggles
-   `GL_DEPTH_TEST` and never touches `glDepthMask`, so a draw with the test
-   disabled still writes depth; the Vulkan pipelines disabled both. The 2D UI is
-   drawn against a depth-tested 3D scene and depends on that write to occlude it.
-   `depthWriteEnable` is now on wherever the pass owns a depth attachment (the
-   offscreen pass is depth-less and stays off).
+3. **Historical depth change** (`da6d693`). This was based on an incorrect
+   interpretation of GL_DEPTH_TEST. It is superseded: both APIs disable depth
+   writes when depth testing is disabled. The follow-up restores that rule and
+   implements UI protection through the actual stencil state.
 
 4. **Depth and mask discarded at a pass split** (`bddec0c`). A replayed VRAM
    write closes the main render pass, records the transfer and reopens the pass.
@@ -124,28 +119,19 @@ Before the fixes it did not draw at all (vertex overwrite), then drew scattered
 garbage (VRAM ordering), then drew correctly but was painted over by the world
 (depth store).
 
-## Verification
+## Verification correction (2026-09-20)
 
-Captured on the Vulkan build (`Release_dev`, 2026-09-19) against the reported
-items:
+The previous all-items-pass table is withdrawn after the user's repeat tests
+showed shadow bleed, missing/faint UI and broken loading/CloseShutters. The
+previous claim of a solid yellow Felony bar was not a valid GL parity criterion.
+A breakpoint and changing shutter height did not establish rendered correctness.
 
-| Item | Result | Evidence |
-| --- | --- | --- |
-| 1.1 loading progress bar | passes | The frontend boot load (`ShowLoadingScreen("GFX\\FELOAD.TIM", 1, 12)` + `ShowLoading`) shows the loading art, "Is Loading" and the bar with `fastLoadingScreens=0`. |
-| 1.2 map screen and icons | passes | The fullscreen map matches the OpenGL reference: tiles, roads, the compass, the district labels and the "Rotation / Move / Skip cutscene" icon row. |
-| 1.3 minimap police elements | passes | With `CopsCanSeePlayer = 1` and `car_data[0].felonyRating = 5000`, the map draws the police indicator: the flame marker with its white direction cone. |
-| 1.4 Damage/Felony colour | passes | With the same wanted state the Felony bar draws as a solid police-yellow bar over the 3D scene instead of taking the colour of what is behind it; in normal play the HUD matches OpenGL. |
-| 1.5 animated transition | passes | `CloseShutters` runs at level start (breakpoint confirms the call) and `h` advances 16 -> 32 -> 80 through the loop; the captured frame during `h = 80` shows the loading art with the bar and the closing black bands. The loading bar accumulating across `ShowLoading` frames uses the same cross-frame persistence the shutters need. |
-
-Regression checks: normal gameplay, the minimap and the frontend render as
-before; `REDRIVER2_dev.exe -vkpsxtest` passes (`16-bit worst=0`, `4-bit CLUT
-worst=0`, offscreen samples ok, `vram export 1048594/1048594`). All four fixes
-are Vulkan-only, so the OpenGL, Emscripten, Android and PSX paths are unchanged.
-
-## Remaining verification
-
-- The minimap and the Damage/Felony HUD render as on OpenGL in normal play.
-- Before/after image pairs exist for the map screen and the HUD; items 1.1, 1.3
-  and 1.5 were confirmed by an after capture plus runtime state (the debugger
-  showing the loading bar accumulation and the shutter height) rather than a
-  paired before image.
+The current follow-up passes expanded synthetic white/blend/stencil tests, and
+live Vulkan observations show the full map without shadow bleed and restored
+police/HUD primitives. Khronos validation exposed an incompatible resumed pass;
+that error was corrected and the inspected subsequent game output was clean.
+The follow-up (`d9d8628`) now also has controlled GL/Vulkan HUD captures and
+natural CloseShutters captures at h=96. Reported elements render on both; small
+pixel differences and per-image preservation limits are documented in
+[RECENT_CONTEXT.md](../../RECENT_CONTEXT.md). The initial broad claims above
+are historical, superseded by this measured follow-up.

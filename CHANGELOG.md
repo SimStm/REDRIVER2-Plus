@@ -386,6 +386,9 @@ where release policy permits it.
 
 ### Fixed
 
+- Vulkan modern scene-depth copies now transition both depth/stencil aspects
+  together and initialize the destination transfer layout before copying,
+  correcting Khronos validation errors 03320 and 09600 in the enhanced path.
 - The overhead map, the loading progress bar and the rest of the 2D UI were
   painted over by the 3D scene on the Vulkan backend. A replayed mid-frame VRAM
   write closes and reopens the main render pass, and the depth/stencil attachment
@@ -403,13 +406,16 @@ where release policy permits it.
   by its upload's base) and `GR_CopyVRAM` queues its rectangle with the pixels so
   the writes are replayed in flush order while the draws are recorded. The map
   screen now draws its tiles and labels; full parity with OpenGL is tracked in
-  `knowledge/roadmap/planned/vulkan-ui-image-parity.md`.
-- The Vulkan PSX pipelines tied the depth write to the depth test, while OpenGL
-  only toggles `GL_DEPTH_TEST` and never `glDepthMask`, so a draw with the test
-  disabled still wrote depth. The 2D UI drawn against the depth-tested 3D scene
-  (the overhead map, the Damage/Felony bars) therefore stopped occluding it and
-  the scene showed through, shifting their apparent colour. Depth writes now
-  match OpenGL wherever the render pass owns a depth attachment.
+  `knowledge/product/vulkan-ui-image-parity.md`.
+- Vulkan untextured UI primitives now use the GL-equivalent decoded white
+  texture instead of sampling VRAM. Game presentation prefers UNORM so police
+  flashing, compass and HUD blending use display-space values; constant alpha
+  matches OpenGL. Expanded PSX self-tests cover these paths and stencil.
+- Vulkan stencil capability survives resource initialization, mask operations
+  match OpenGL, and depth-disabled draws retain stencil protection. Resumed
+  passes preserve stencil and use compatible dependencies, fixing the Khronos
+  `VUID-vkCmdDraw-renderPass-02684` error and map shadow bleed. Depth writes
+  require depth testing, correcting the previous interpretation of GL state.
 - The loading screen was black on the Vulkan backend and its progress bar was
   lost. The PSX loading path draws the art once (`ShowLoadingScreen`) and then
   redraws only the bar (`ShowLoading`) while the level streams in; the OpenGL

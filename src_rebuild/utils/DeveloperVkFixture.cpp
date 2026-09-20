@@ -450,6 +450,7 @@ int RunPsxSelfTest(void)
 	config.height = 720;
 	config.title = "REDRIVER2 - Vulkan PSX self-test";
 	config.enableImGui = 0;
+	config.gameMode = 1;
 
 	if (!PsyX_Vk_Initialise(&config))
 	{
@@ -457,7 +458,7 @@ int RunPsxSelfTest(void)
 		return 1;
 	}
 
-	char report[1024];
+	char report[4096];
 	const int ok = PsyX_Vk_GameSelfTest(report, sizeof(report));
 	VkLog("%s", report);
 	VkLog("VkFixture: psx self-test %s\n", ok ? "PASS" : "FAIL");

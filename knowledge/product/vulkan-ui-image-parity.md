@@ -19,8 +19,8 @@ differ in mechanism, never in result: the same frame must produce the same image
 for every UI and image element, including those that stream textures mid-frame
 (the overhead map being the extreme case).
 
-The two backends schedule work differently, and that difference is the source of
-every defect in this area:
+The two backends schedule work differently; queued data and pipeline state both
+need explicit parity checks:
 
 - OpenGL executes each `DrawSync` flush **immediately**, so it renders against
   the VRAM and vertex data as they were at that moment.
@@ -45,44 +45,48 @@ every defect in this area:
    closes the main pass and reopens it with the same colour/depth attachments
    (`ResumeMainPass` -> `modernRenderPass`). Everything that survives that
    boundary must be declared to survive it - see rule 5.
-4. **Depth writes do not follow the depth test.** OpenGL only toggles
-   `GL_DEPTH_TEST` and never touches `glDepthMask`, so a PSX draw with the test
-   disabled still **writes** depth. `depthWriteEnable` therefore follows the
-   render pass's depth attachment, not `depthEnable`. This is what lets the 2D
-   UI drawn early in the frame occlude the 3D scene drawn after it.
-5. **Depth and stencil must store, not discard.** Both attachments use
-   `VK_ATTACHMENT_STORE_OP_STORE`. With `DONT_CARE` the reopened pass loaded
-   undefined depth, so the world painted over the overhead map and the HUD took
-   the colour of whatever was behind it. Both are still **cleared** at the start
-   of every frame, so the PSX mask bit cannot leak between frames.
-6. **Framebuffer persistence is intentional.** The main pass colour attachment
-   uses `LOAD_OP_LOAD` with a `PRESENT_SRC` initial layout and clears only via
-   `vkCmdClearAttachments` when `GR_Clear` was requested. The loading path draws
-   its art once and then only the progress bar, and `CloseShutters` accumulates
-   bars across frames, so both depend on the previous frame surviving.
-
-## Failure signatures
-
-Use these to recognise a regression of the same class:
-
-| Symptom | Likely rule |
-| --- | --- |
-| Streaming image (overhead map) shows scattered or stale content | 1, 2 |
-| 2D UI disappears under the 3D scene; HUD colour shifts with the background | 4, 5 |
-| Animated transition jumps instead of accumulating | 6 |
-| Content vanishes only on frames that both stream VRAM and draw 3D geometry | 3, 5 |
+4. **Depth writes require depth testing.** Disabling GL_DEPTH_TEST disables
+   depth writes even when glDepthMask remains true. Vulkan uses depthEnable
+   together with the presence of a depth attachment. Earlier documentation
+   claiming otherwise was incorrect; UI protection is provided by stencil.
+5. **Stencil must match the GL state and survive pass splits.** Preserve the
+   selected stencil capability through resource initialization. DrawPrim writes
+   reference 1 with writeMask 0xff and ALWAYS comparison; other draws compare
+   NOT_EQUAL with mask 0xff, KEEP on pass and REPLACE on stencil failure.
+   Depth-disabled draws still need stencil. Both main and resumed passes store
+   depth/stencil, clear them at frame start, and use compatible dependencies.
+6. **White primitives are independent of VRAM.** The white texture sentinel is
+   mapped to PSYX_VK_TEX_WHITE for PSX formats. Its fragment value mirrors GL's
+   decoded 0xffff word: RGB 248/255, alpha 127/255. Pure RGBA keeps its path.
+7. **Blend in display space.** Game mode prefers a UNORM swapchain format.
+   Inverse gamma in the shader cannot undo destination decoding by an sRGB
+   blend attachment. Match the GL blend constants, including constant alpha 0.5.
+8. **Preservation has an explicit limitation.** LOAD_OP_LOAD preserves the
+   acquired swapchain image, not necessarily the last presented frame. Current
+   code does not copy the preceding frame. The partial-frame self-test checks
+   its actual acquisition sequence only. Do not infer complete loading or
+   transition parity from this test without runtime image evidence.
 
 ## Verification
 
-- `REDRIVER2_dev.exe -vkpsxtest` - Vulkan PSX readback (16-bit and 4-bit CLUT),
-  offscreen resolve and VRAM export.
-- `-opengl` vs default comparison on the same scene: the OpenGL capture is the
-  acceptance image for any UI or image element under change.
-- Force the state under test with the debugger
-  (`gShowMap = 1`, `CopsCanSeePlayer = 1`,
-  `car_data[0].felonyRating = 5000`) and capture the game window; see
-  [`knowledge/RECENT_CONTEXT.md`](../RECENT_CONTEXT.md) for the working recipe
-  and the environment caveats.
+`REDRIVER2_dev.exe -vkpsxtest` checks PSX textures/CLUT, offscreen resolve,
+white primitives in all three PSX formats, all five blend modes, stencil through
+two pass restarts, partial presentations and VRAM export. Inspect the log's
+PASS/FAIL result: the current command-line dispatcher does not propagate failure
+as a process exit code.
 
-All of the above is Vulkan-only. OpenGL, Emscripten, Android and PSX are not
-affected by these rules and must not be changed to satisfy them.
+Khronos validation is installed and automatically enabled when discovered. The
+resumed-pass compatibility error observed in this investigation was corrected;
+the subsequently inspected game run had no validation error/VUID.
+
+Compare Vulkan and OpenGL at the same spawn and state. For police flashing use
+player_position_known=1 and felony above the threshold; CopsCanSeePlayer alone
+does not trigger it. Freeze CameraCnt to compare the same blink phase, and set
+bar positions explicitly if pauseflag freezes their updates. A breakpoint hit
+in CloseShutters proves execution, not that its pixels rendered correctly.
+
+The follow-up in fork commit d9d8628 has synthetic test evidence and controlled
+GL/Vulkan HUD and natural CloseShutters comparisons. All reported elements
+render; the images are not pixel-identical. See [the current handoff](../RECENT_CONTEXT.md)
+for metrics, captures and persistence limitations. Historical completion claims
+remain superseded by these narrower, measured results.

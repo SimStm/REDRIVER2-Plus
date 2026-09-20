@@ -1,104 +1,123 @@
 ---
 type: Status
 title: Recent engineering context
-description: Session-to-session handoff - what the last interactions changed and what to do next.
+description: Current renderer correction and validation handoff.
 tags: [okf, status, agents]
 ---
 
 # Recent engineering context
 
-> Updated: 2026-09-19
-> Role: **handoff for the last interactions.** Everything implemented in the
-> project lives in [`CURRENT_STATUS.md`](CURRENT_STATUS.md); read that first for
-> the cumulative picture and use this file for what just happened.
-> Source of truth: the current source, `git status`, `git diff` and Git history.
-> Never claim validation that was not executed, and do not record secrets,
-> credentials, tokens or long logs.
+> Updated: 2026-09-20
+> Confirm this handoff against source, Git state and actual validation output.
 
-## Last interaction (2026-09-19)
+## Objective and status
 
-**Objective (complete):** fix the visual UI/image problems reported after the
-Vulkan default flip - the loading progress bar (1.1), the map screen and its
-navigation icons (1.2), the minimap police direction cone / police-colour
-blinking (1.3), the top-left Damage/Felony colour and tone (1.4) and the
-clapperboard loading-to-gameplay transition (1.5).
+Address the user's repeat Vulkan UI report: world shadows over the full map,
+missing police indicator/cone, faint police flashing and compass/HUD colours,
+loading progress and CloseShutters. Corrections are implemented in fork commits `d9d8628` and `647ea0b`, pushed to origin/master,
+and the parent gitlink is staged. Controlled visual comparisons are complete
+for the reported elements, with small remaining pixel differences. The previous document's
+complete claim and explanation that GL writes depth with depth testing off
+were incorrect and are superseded here.
 
-**Root cause:** the Vulkan backend records a whole frame's PSX draws at present
-time, while OpenGL executes every `DrawSync` flush immediately. Four defects
-followed, all fixed in the fork:
+## Implemented corrections
 
-| Defect | Fix | Commit |
-| --- | --- | --- |
-| Vertex uploads always wrote from offset 0, so a frame with several `DrawAllSplits` (the map flushes every 16 tiles) overwrote earlier flushes | uploads append; each draw is offset by its upload's base | `8510b31` |
-| `GR_CopyVRAM` only set a dirty flag, so every draw sampled the frame's final VRAM and all sixteen recycled map slots held the last batch | `PsyX_Vk_GameCopyVRAM` queues the rect plus pixels and replays them in generation order, closing/reopening the main pass around each transfer | `8510b31` |
-| Depth writes were tied to the depth test, while OpenGL only toggles `GL_DEPTH_TEST` and never `glDepthMask` | `depthWriteEnable` follows the pass's depth attachment | `da6d693` |
-| The depth/stencil attachment used `DONT_CARE`, so a mid-frame pass split (the replayed VRAM write) lost depth and later 3D geometry drew over the 2D UI | both store depth and stencil; still cleared every frame | `bddec0c` |
+- `PsyX_render.cpp` maps the white sentinel to `PSYX_VK_TEX_WHITE`, except pure
+  RGBA draws. `psx.frag` decodes the same white 0xffff word as GL (RGB 248 and
+  alpha 127); it no longer samples unrelated VRAM for untextured primitives.
+- `CreatePsxResources` preserves the stencil capability selected during render
+  pass creation instead of erasing it with memset. Pipeline masks/operations
+  reproduce GL reference 1, write mask 0xff and separate comparison masks.
+  Depth-disabled normal and DrawPrim variants both retain stencil.
+- Main and resumed passes store stencil and have matching dependencies covering
+  colour and early/late depth/stencil attachment accesses. This fixes the
+  render-pass compatibility VUID observed with Khronos validation.
+- Game mode prefers UNORM presentation for PSX display-space blending; the
+  standalone modern fixture retains its sRGB preference. Constant blend alpha
+  is 0.5, matching the actual GL call. Depth writes require depth testing.
+- `DeveloperVkFixture.cpp` runs PSX self-test with gameMode enabled and a larger
+  report. Tests cover empty-VRAM white primitives in all three PSX texture
+  formats, five blend modes, masking through two pass restarts, partial frames,
+  existing CLUT/offscreen checks and VRAM export.
 
-Parent commits: `7cf6484c`, `37a4121d`, `1e77232f`, `2a6ca6af`. The verification
-table per reported item is in
-[`roadmap/done/vulkan-ui-image-parity.md`](roadmap/done/vulkan-ui-image-parity.md);
-the resulting behaviour rules are in
-[`product/vulkan-ui-image-parity.md`](product/vulkan-ui-image-parity.md).
+## Validation actually executed
 
-### Evidence gathered
+- `scripts/compile_vk_shaders.ps1`: succeeded, generated SPIR-V and embedded header.
+- Visual Studio MCP `Release_dev|x64` builds: latest succeeded, zero failures.
+- `REDRIVER2_dev.exe -vkpsxtest`: log reports PASS. White RGB 248; all five
+  blend checks worst error <= 1; stencil protected/outside pixels correct;
+  existing texture/offscreen checks pass; VRAM export 1048594/1048594 bytes.
+- Khronos layer is installed at `G:\VulkanSDK\1.4.357.0`, registered and loaded.
+  The renderer already enables it when available. Before correction the game
+  emitted `VUID-vkCmdDraw-renderPass-02684`; the inspected post-fix game output
+  had layer-enabled confirmation and no validation error/VUID.
+- Live Vulkan captures showed the full map without shadow bleed, white compass,
+  green Damage portion, coloured Felony bar, police cones and brighter flash.
+  Loading art with a filled red progress bar was observed.
+- Controlled HUD captures at the same spawn, CameraCnt=4 and injected cop state
+  show matching Damage/Felony, compass and police indicator/flash structure.
+  Mean absolute RGB difference was 2.4042/255 in the HUD rectangle and
+  2.8266/255 in the minimap rectangle (max 51 and 83 respectively). These are
+  visual parity checks, not pixel-identical results; world traffic differs.
+- Natural CloseShutters captures at h=96 show both black bands and the same
+  loading image on GL and Vulkan. Full-frame mean RGB difference 0.8747/255,
+  maximum 4. A prior artificial jump from h=0 to h=96 produced an asymmetric
+  Vulkan frame; do not use injected animation jumps as natural-run evidence.
+- The shutter captures used temporary source probes (GL before EndScene, Vulkan
+  after EndScene). Probes were removed; loadview.c has no content diff. Final
+  Release_dev|x64 build after removal succeeded, zero failed projects.
+- `git diff --check` and submodule diff check passed before commit. Upstream
+  releases page checked: baseline remains 8.0 at b2d8857.
+- The partial-presentation test passed for the actual acquired-image sequence;
+  it does not guarantee coverage of every swapchain image or establish general
+  previous-frame persistence. The renderer still loads individual images.
 
-- 1.1: the frontend boot load shows the art, "Is Loading" and the bar
-  (`fastLoadingScreens=0` delays it enough to capture).
-- 1.2: the fullscreen map matches the OpenGL reference - tiles, roads, compass,
-  district labels and the "Rotation / Move / Skip cutscene" icon row.
-- 1.3: with `CopsCanSeePlayer = 1` and `car_data[0].felonyRating = 5000` set
-  through the debugger, the map draws the police flame marker and its white
-  direction cone.
-- 1.4: the Felony bar draws as a solid police-yellow bar over the scene instead
-  of taking the colour of what is behind it.
-- 1.5: `CloseShutters` runs at level start (breakpoint hit) with `h` advancing
-  16 -> 32 -> 80, and the captured frame during `h = 80` shows the loading art,
-  the bar and the closing black bands.
-- Regression: gameplay, minimap and frontend unchanged; `-vkpsxtest` PASS
-  (16-bit/4-bit `worst=0`, offscreen ok, `vram export 1048594/1048594`).
-- The four fixes are Vulkan-only, so OpenGL/Emscripten/Android/PSX are untouched
-  and no game logic changed.
+## Working techniques and environment
 
-## Techniques that worked
+- Use Visual Studio MCP to select `Release_dev` (Vulkan) or `Release_dev_gl`,
+  pause, assign globals and resume. Vulkan function evaluation
+  `PsyX_TakeScreenshot()` works while paused and writes
+  `bin/Release_dev/SCREENSHOT.BMP`. The GL function evaluation timed out; use
+  the normal-running capture tick for GL and verify file timestamps.
+- `DeveloperDebugStart` capture globals also work while rendering gameplay:
+  `g_captureDelayMs=1`, `g_captureTaken=0`. Tick occurs before presentation.
+- Use System.Drawing to convert BMP to PNG for `view_image`; system Python has
+  no Pillow. Captures are local ignored artifacts under
+  `src_rebuild/build/ui-parity-20260919/`.
+- Native computer control was unavailable (pipe error); the user-authorized
+  computer-control MCP worked for running windows. Window tools can hang while
+  the debuggee is paused, so prefer renderer screenshot function evaluation.
+- For frozen HUD capture set pauseflag=1, CameraCnt to a fixed phase, gShowMap=0,
+  player_position_known=1, CopsCanSeePlayer=1, car_data[0].felonyRating=5000,
+  PlayerDamageBar.position=2000 and FelonyBar.position=4096. Paused physics does
+  not update bar positions automatically. Police sight cones require a cop
+  control flag or a live pursuer car; white dot blinks with CameraCnt & 7.
+- `-vkpsxtest` command-line dispatch currently ignores the test return status;
+  inspect its PASS/FAIL log, not just the process exit code.
+- `opencode.jsonc` is an unrelated pre-existing user edit; leave it untouched.
 
-- Capturing a UI state deterministically: run the `Release_dev|x64` build under
-  the VS debugger, `debugger_break`, write the globals with
-  `debugger_evaluate` (`gShowMap = 1`, `CopsCanSeePlayer = 1`,
-  `car_data[0].felonyRating = 5000`), `debugger_continue`, then screenshot the
-  game window with the exact title regex `^REDRIVER2$`.
-- Freezing an animation mid-flight: put a breakpoint inside the loop
-  (`loadview.c` `CloseShutters`) and continue repeatedly, reading the loop
-  variable in between, so the last presented frame holds a partial state.
-- `debugger_evaluate` cannot call functions; assign to globals instead.
-- Compare against `-opengl` (same binary, `Release_dev_gl` config or the flag)
-  whenever a 2D-over-3D result is in doubt.
-- Local settings that matter for captures: `config.ini` `fastLoadingScreens`,
-  and `developer_debug_start.ini` `enabled` (also settable with the `-mission`,
-  `-level`, `-gametype`, `-startdir` arguments). Restore them after capturing.
+## Enhanced-path validation follow-up
 
-## Environment notes
+A final launch with modern meshes active exposed two additional errors:
+VUID-VkImageMemoryBarrier-image-03320 (depth-only barrier on combined D24/S8)
+and VUID-vkCmdDraw-None-09600 (copy destination never transitioned to transfer).
+RecordGameModernSceneDepthCopy now transitions both aspects, copies only depth,
+and discards/prepares the fully overwritten destination before each copy.
+Commit `647ea0b` contains this follow-up. The build passed; the post-fix run
+confirmed the validation layer enabled, imported all eight modern fixtures with
+modern meshes and shadows enabled, and emitted no validation error/VUID in the
+inspected debug output. Modern enabled state was restored to 0 (its prior value),
+shadows remained 1, and the debuggee was stopped. Earlier clean-run statements
+apply only to those inspected runs.
 
-- The Khronos validation layer is **not installed**, so runs cannot report
-  validation errors here; rely on captures and `-vkpsxtest`.
-- A breakpoint hit brings Visual Studio to the foreground; the window screenshot
-  tool then captures VS. Bring the game back with the window-activate tool, or
-  minimise VS first.
-- `windows-mcp` window calls (`App mode=switch`, `MoveWindow`) can time out while
-  the debugged process is paused.
-- Synthetic menu input is unreliable in the frontend and in-game pause menu
-  (keys need to be held across frames, and some states ignore input entirely),
-  which is why the debugger-driven state injection above is preferred.
+## Artifacts and remaining limits
 
-## Next recommended action
-
-1. Fix the bugs the user reported in the new session. Read
-   [`CURRENT_STATUS.md`](CURRENT_STATUS.md) for the implemented surface,
-   [`product/vulkan-ui-image-parity.md`](product/vulkan-ui-image-parity.md) for
-   the UI/depth rules, and
-   [`roadmap/done/vulkan-ui-image-parity.md`](roadmap/done/vulkan-ui-image-parity.md)
-   for the previous round's evidence.
-2. Keep `knowledge/CURRENT_STATUS.md` updated when a change lands, and record
-   this session's work here.
-3. Renderer items still open: `D32_SFLOAT` depth fallback, macOS/MoltenVK build,
-   R5 shadow-quality comparison, a fresh `-opengl` parity run, raw uncapped GPU
-   throughput.
+- Captures: `gl-hud4.png`, `vk-hud4.png`, `gl-shutters96.png`,
+  `vk-shutters-natural96.png`, `vk-loading.png`, `vk-map.png` in the ignored
+  capture directory above. The file named gl-loading.bmp is stale from a timed
+  out evaluation and is NOT GL evidence.
+- No gameplay changes remain. `opencode.jsonc` was not staged or modified.
+- Cross-platform builds, the D32-only stencil fallback and a general
+  previous-presented-image history mechanism remain outside this validated run.
+  Investigate explicit frame history if a natural partial-update sequence
+  reproduces corruption; do not claim the current LOAD operation guarantees it.
