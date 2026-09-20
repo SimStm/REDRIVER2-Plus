@@ -125,13 +125,45 @@ point math, timing, or rendering can affect compatibility.
 - Check the existing toolchain before claiming a build was run. The setup
   scripts require network access and can create large dependency directories.
 
+## MCP tooling and interactive debugging
+
+Check which MCP servers the session has available before documentation,
+debugging, or run-the-game work, and use them when they are configured:
+
+- **context7** - query current third-party API documentation instead of relying
+  on memory when touching SDL2, Dear ImGui, Vulkan, OpenAL, or other libraries.
+- **visual-studio-ide-mcp** - drive the solution already open in Visual Studio:
+  select the configuration, build, launch or debug
+  `src_rebuild/build/REDRIVER2.sln`, and inspect breakpoints, the call stack,
+  locals, and the error list. Use `Release_dev_gl` for the OpenGL renderer and
+  `Release_dev` for the default Vulkan renderer.
+- **computer-control-mcp**, **windows-mcp**, or another desktop-control MCP -
+  interact with the game window during a debug session: navigate the frontend
+  menus, drive, press keys, take screenshots, and read on-screen text. These
+  servers are the reliable way to drive the game; do not assume scripted input
+  injection reaches a window without focus.
+
+Avoid launching the game executable from the terminal. It is an interactive
+foreground application, so a normal terminal invocation blocks until the window
+closes and looks like a hang. Prefer the MCP launch paths above, and when a
+terminal launch is unavoidable, make it fire-and-forget (for example
+`Start-Process` without `-Wait`), wait with `Start-Sleep` or a timeout loop,
+then read the game log (`<executable>.log` next to the executable) and
+screenshots to learn the state instead of waiting on the process handle.
+
 ## PsyCross and submodules
 
 - Initialise the PsyCross submodule before editing or building it:
   `git submodule update --init --recursive`.
-- The PsyCross submodule is wired to the project fork
-  `git@github.com:SimStm/PsyCross.git` (`origin`) with upstream
-  `https://github.com/OpenDriver2/PsyCross.git` as `upstream`.
+- The PsyCross submodule **must come from the project fork**
+  `git@github.com:SimStm/PsyCross.git` (`origin`, tracked branch
+  `origin/master`), which carries this project's Vulkan backend,
+  MoltenVK/portability work and
+  other renderer changes that upstream does not have. Never check out
+  `OpenDriver2/PsyCross` in `src_rebuild/PsyCross`, never point `.gitmodules` or
+  the gitlink at it, and never build against an upstream copy. `upstream`
+  (`https://github.com/OpenDriver2/PsyCross.git`) exists only as a read-only
+  source for integrating upstream commits into the fork.
 - Commit project-specific PsyCross changes directly in the fork, push them to
   `origin`, and record the commit by staging `src_rebuild/PsyCross` in the
   parent. The parent gitlink intentionally tracks the fork, not the upstream
@@ -164,6 +196,49 @@ point math, timing, or rendering can affect compatibility.
   control the game.
 - ImGui is enabled only for Windows and Linux. Preserve these platform guards
   unless Emscripten/Android support is deliberately implemented and tested.
+
+## Code quality and structure
+
+Write new code and maintenance edits so the next reader can follow them without
+reconstructing your reasoning. These rules govern new code and the parts of
+existing files you touch; they are not a licence to rewrite reconstructed game
+logic or working code that is outside the task.
+
+- Prefer simple, readable, idiomatic C++ that is easy to modify, and match the
+  style already used in the file you are editing.
+- Do not produce spaghetti code: avoid long functions that mix
+  responsibilities, deeply nested control flow, unnecessary global state, and
+  implicit dependencies between distant parts of the code.
+- Separate responsibilities: game logic, user input, rendering/presentation,
+  domain rules, persistence, and external integration stay decoupled whenever
+  it is viable. Call the owning system instead of reaching across layers.
+- Prefer small, cohesive functions, explicit names, and types or structures
+  that express domain intent instead of raw primitives.
+- Avoid premature abstractions and unnecessary architectural patterns. Do not
+  create classes, interfaces, layers, or generic systems without a concrete
+  need in the project.
+- Before changing existing code, understand the current flow, reuse the local
+  conventions, and make the smallest coherent change that solves the problem.
+- When a function or file is already too complex, do not add to that
+  complexity. Extract cohesive parts only when the split clearly improves
+  readability, testability, or maintenance.
+- Do not duplicate logic. Extract a shared helper or component when repetition
+  is real, and keep the execution flow visible instead of hiding it behind
+  indirection.
+- Reduce deeply nested `if`/`switch` blocks with early returns, helper
+  functions, or explicit state modeling when the result is clearer.
+- Avoid `bool` flags and ambiguous positional parameters when an `enum class`,
+  an options structure, or a named type makes the intent explicit.
+- Keep error handling explicit and close to the point that can fail. Never
+  swallow an error silently.
+- Preserve determinism and predictability in game logic: side effects must be
+  visible, controlled, and limited to the system that owns them.
+- Do not perform broad refactors outside the task scope. When a larger
+  structural improvement is warranted, explain why and propose it as a separate
+  change instead of folding it in.
+- When you finish a change, review the result for mixed responsibilities,
+  duplication, vague names, unnecessary coupling, shared mutable state, and
+  execution paths that are hard to follow.
 
 ## Change discipline
 

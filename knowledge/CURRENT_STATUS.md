@@ -25,9 +25,11 @@ input, audio, CD, GTE) and the desktop platform integration.
 
 - Game code: `src_rebuild/Game/` (`C/`, `engine/`, `Frontend/`, `ASM/`).
 - Backend/platform layer: `src_rebuild/PsyCross/` - a Git **submodule pinned to
-  the project fork** `git@github.com:SimStm/PsyCross.git`. Project-specific
-  renderer changes are committed there and recorded by staging the gitlink in
-  the parent (`knowledge/rules/psycross-fork.md`).
+  the project fork** `git@github.com:SimStm/PsyCross.git` (tracked branch
+  `origin/master`). The fork, never `OpenDriver2/PsyCross`, is the build
+  source: it carries the Vulkan backend and MoltenVK/portability work upstream
+  lacks. Project-specific renderer changes are committed there and recorded by
+  staging the gitlink in the parent (`knowledge/rules/psycross-fork.md`).
 - Developer tools: `src_rebuild/utils/`, `scripts/`, `PSXToolchain/`.
 - Runtime data: `data/` (local game assets; do not modify or redistribute).
 - Build generation: Premake 5 (`src_rebuild/premake5.lua`,
@@ -160,6 +162,19 @@ Delivered in order, each verified on the game window:
   captures scenes with overrides on and off.
 - Developer Graphics Panel (F11) with Dear ImGui, persisted to
   `developer_graphics.ini` (schema 6); Windows and Linux only.
+- MCP-assisted agent workflow (2026-09-20): `AGENTS.md` now requires checking
+  for configured MCP servers first - context7 for library documentation,
+  visual-studio-ide-mcp for build/debug of `src_rebuild/build/REDRIVER2.sln`
+  (`Release_dev_gl` OpenGL, `Release_dev` Vulkan), and desktop-control MCPs
+  (computer-control-mcp, windows-mcp) for navigating the running game and
+  screenshots. Terminal game launches are fire-and-forget only, with log and
+  screenshot polling instead of waiting on the process handle.
+- Structural code-quality rules (2026-09-20): a mandatory **Code quality and
+  structure** section in `AGENTS.md` governs new code and maintenance edits -
+  readable idiomatic C++, no spaghetti code or unnecessary global state,
+  separated responsibilities, small cohesive functions, no premature
+  abstractions, no out-of-scope refactors, explicit error handling, and a
+  self-review pass for mixed responsibilities and coupling.
 
 ## Knowledge process
 

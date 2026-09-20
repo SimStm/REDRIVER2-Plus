@@ -284,6 +284,20 @@ where release policy permits it.
   selection keeps the parent instance of the clicked component (a car, a
   pedestrian) and highlights and exports every part together. A single click
   keeps selecting the individual part.
+- An MCP tooling workflow in `AGENTS.md`: agents must check for configured MCP
+  servers and use context7 for library documentation, visual-studio-ide-mcp to
+  build/debug the solution open in Visual Studio (`Release_dev_gl` OpenGL,
+  `Release_dev` Vulkan), and computer-control-mcp / windows-mcp to navigate the
+  running game and take screenshots. Terminal launches of the game must be
+  fire-and-forget, with log and screenshot polling, because the interactive
+  process otherwise blocks until the window closes.
+- A mandatory **Code quality and structure** section in `AGENTS.md` for new
+  code and maintenance edits: readable idiomatic C++, no spaghetti code or
+  unnecessary global state, separated responsibilities, small cohesive
+  functions and domain-named types, no premature abstractions or out-of-scope
+  refactors, explicit error handling, preserved determinism in game logic, and
+  a final self-review for mixed responsibilities, duplication, coupling and
+  hard-to-follow execution paths.
 
 ### Changed
 
@@ -327,7 +341,13 @@ where release policy permits it.
 - The PsyCross submodule now tracks this project's own fork
   (`git@github.com:SimStm/PsyCross.git`) instead of the upstream repository, so
   project-specific changes are committed and reviewed there and recorded by the
-  parent gitlink. The `patches/psycross/` delta and
+  parent gitlink.
+- `AGENTS.md` and the PsyCross fork rule now state explicitly that
+  `src_rebuild/PsyCross` must always be the SimStm fork (`origin`, tracked
+  branch `origin/master`) and never `OpenDriver2/PsyCross`: the fork carries this
+  project's Vulkan backend, MoltenVK/portability work and other renderer
+  changes that upstream does not have. The `upstream` remote remains a read-only
+  source for rebasing fork work. The `patches/psycross/` delta and
   `scripts/apply_psycross_patches.ps1` were removed, and the Windows and Linux
   prepare scripts now initialise the submodule instead of applying a patch.
 - Reorganised the developer panel: modding information (override toggle, mod

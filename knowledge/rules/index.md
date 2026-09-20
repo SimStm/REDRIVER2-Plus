@@ -48,6 +48,9 @@ tags: [okf, rules]
   not, and retained references must detect reuse.
 - [Self-learning rules](self-learning.md): turn repeated, evidenced constraints
   into durable project knowledge.
+- [Use configured MCP servers for docs, debugging, and game runs](mcp-agent-tooling.md):
+  check for context7, visual-studio-ide-mcp, and desktop-control MCPs first, and
+  never block on a terminal launch of the interactive game process.
 
 - [Verify renderer parity with state and pixel evidence](renderer-parity-evidence.md):
   check API semantics, actual bridge paths and controlled captures.

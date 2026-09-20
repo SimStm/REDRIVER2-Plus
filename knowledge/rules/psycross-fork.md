@@ -11,11 +11,19 @@ tags: [okf, psycross, submodule, fork]
 **then** commit it directly in the project fork and record the resulting commit
 in the parent gitlink.
 
+Use the fork, not upstream, as the working source. The fork carries this
+project's Vulkan backend (`PsyX_Vk.*`), the MoltenVK/portability work and other
+renderer changes that `OpenDriver2/PsyCross` does not have, so the build must
+always come from the fork. Never check out upstream's `master` in
+`src_rebuild/PsyCross`, never point `.gitmodules` or the gitlink at
+`OpenDriver2/PsyCross`, and never build against a copy of it.
+
 The submodule `src_rebuild/PsyCross` is wired to the project fork:
 
-- `origin` = `git@github.com:SimStm/PsyCross.git` (push target)
-- `upstream` = `https://github.com/OpenDriver2/PsyCross.git` (source of upstream
-  commits)
+- `origin` = `git@github.com:SimStm/PsyCross.git` (push target; the checkout's
+  working branch tracks `origin/master`)
+- `upstream` = `https://github.com/OpenDriver2/PsyCross.git` (read-only source
+  of upstream commits for rebasing the fork)
 
 Workflow:
 
