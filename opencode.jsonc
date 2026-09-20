@@ -19,9 +19,9 @@
           // - output 16000: bounds a single response and keeps room for tool use.
           // `limit.input` is the budget that drives auto-compaction, see below.
           "limit": {
-            "context": 300000,
-            "input": 300000,
-            "output": 16000
+            "context": 600000,
+            "input": 600000,
+            "output": 32000
           }
         }
       }
@@ -37,6 +37,6 @@
     // are legacy aliases and are not part of the 1.18.31 schema.
     "reserved": 100000,
     // Keep roughly the last 40000 tokens verbatim after each compaction.
-    "preserve_recent_tokens": 40000
+    "preserve_recent_tokens": 80000
   }
 }
