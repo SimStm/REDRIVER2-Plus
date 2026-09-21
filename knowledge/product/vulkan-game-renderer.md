@@ -63,6 +63,21 @@ delivery history and evidence are in
   swapchain so the hardware store does not double-encode; the offscreen target is
   UNORM and stays raw.
 
+## Window state and the frame fence
+
+- A minimized window has no surface extent, so no swapchain can be created for
+  it. The extent is resolved before anything is destroyed
+  (`ResolveSwapchainExtent`), a recreation that cannot produce a replacement
+  keeps the current swapchain instead of leaving `VK_NULL_HANDLE`, frames while
+  `SDL_WINDOW_MINIMIZED` are skipped, and a null swapchain is re-created rather
+  than passed to `vkAcquireNextImageKHR`. See
+  [`changes/2026-09-21/vulkan-minimize-swapchain-crash`](../changes/2026-09-21/vulkan-minimize-swapchain-crash/index.md).
+- The frame fence stays signaled until the submission that signals it again: it
+  is reset immediately before `vkQueueSubmit`, so an early exit (an out-of-date
+  acquire, an unexpected image index) cannot leave the next frame waiting on a
+  fence nothing will signal. See
+  [`changes/2026-09-21/vulkan-frame-fence-deadlock`](../changes/2026-09-21/vulkan-frame-fence-deadlock/index.md).
+
 ## Overlays and the modern pass
 
 Single-view gameplay supplies `PsyX_SetModernSceneBoundary(current->ot + 10)`

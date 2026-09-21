@@ -464,6 +464,17 @@ where release policy permits it.
 
 ### Fixed
 
+- The modern shadow volume is snapped to the light-space texel grid on both
+  backends. The volume follows the player vehicle, so its sub-texel motion made
+  `NEAREST` shadow edges swim; the centre is now rounded to whole
+  `2 * extent / shadowSize` steps in the plane perpendicular to the light,
+  which moves it by at most half a texel and leaves the depth along the light
+  exact.
+- Minimizing the window no longer leaves the Vulkan backend rendering nothing:
+  the frame fence is reset immediately before the submit that signals it again,
+  so an out-of-date acquire (which returns from the frame early) can no longer
+  leave the next frame waiting forever on a fence nothing would signal. A
+  failed submit signals the fence too.
 - Minimizing the game window no longer crashes the Vulkan backend with an
   access violation in the graphics driver. A minimized window has a `0x0`
   surface, so an out-of-date present triggered a recreation that destroyed the
@@ -472,6 +483,11 @@ where release policy permits it.
   the surface extent before destroying anything, the frame path skips
   minimized windows and never acquires from a null swapchain, and the
   swapchain is re-created normally when the window is restored.
+- The developer panel's display-mode confirmation can no longer be spent by a
+  single stalled frame: the countdown still runs while the window is minimized
+  (an unconfirmed mode always reverts), but one frame contributes at most
+  `0.25 s`, so the frame after a debugger stop or hibernation no longer reverts
+  the mode before the user can see it.
 - Enhanced rendering now composes modern meshes before the final gameplay
   overlays on Vulkan and OpenGL, preserving meshes behind translucent menus
   and preventing UI/lens-flare pixels from entering the world lighting copy.

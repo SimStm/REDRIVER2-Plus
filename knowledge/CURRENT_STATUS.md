@@ -101,6 +101,14 @@ Delivered in order, each verified on the game window:
   repeated minimize/restore, no exception and no validation error, and
   `-vkpsxtest` still passes. See
   [`changes/2026-09-21/vulkan-minimize-swapchain-crash`](changes/2026-09-21/vulkan-minimize-swapchain-crash/index.md).
+- Frame-fence deadlock (2026-09-21): the fence is reset immediately before the
+  submit that signals it again instead of at the top of the frame, so an
+  out-of-date acquire (which returns early) no longer leaves the next frame
+  blocked forever in `vkWaitForFences`; a failed submit signals the fence.
+  Reproduced with a temporary acquire log (minimize, restore, out-of-date
+  acquire, recreate, no further frame) and verified fixed with 46 s and 60+ s
+  iconized intervals on `Release_dev|x64`, plus `-vkpsxtest`. See
+  [`changes/2026-09-21/vulkan-frame-fence-deadlock`](changes/2026-09-21/vulkan-frame-fence-deadlock/index.md).
 - Backend-agnostic opt-in perf log (`PSYX_PERF_LOG` -> `psyx_perf.log`) measured
   OpenGL and Vulkan at 30.0 FPS / 33.4 ms with identical vertex and draw counts,
   i.e. the game is PSX-timestep-bound rather than GPU-bound.
@@ -152,6 +160,15 @@ Delivered in order, each verified on the game window:
   per-vertex depth (otherwise every legacy vertex takes the 2D path at a
   constant depth) and PGXP Z-buffer gates depth writes. The Graphics tab states
   this on both checkboxes.
+- Shadow-volume texel snap (2026-09-21): `PsyX_ModernShadowSnapCentre()` (shared
+  by both backends) rounds the shadow centre to whole
+  `2 * extent / shadowSize` steps in the plane perpendicular to the light, so
+  the `NEAREST` shadow edges stop swimming while the volume follows the car; the
+  coordinate along the light is untouched. Verified while driving: the raw
+  centre's fractional texel position swept `0.38..0.78` while the snapped one
+  stayed `0.0000`, the snap moved the centre by at most half a texel, and
+  `-vkpsxtest` still passes. See
+  [`changes/2026-09-21/shadow-volume-texel-snap`](changes/2026-09-21/shadow-volume-texel-snap/index.md).
 - World/overlay composition (2026-09-21): the earlier forced 2D-depth fix was
   replaced after user testing exposed opaque holes behind translucent menus,
   flare rectangles and angle-dependent scene loss. The game marks OT bucket 10
@@ -239,8 +256,15 @@ Delivered in order, each verified on the game window:
     through `ConfirmDisplayMode` persisted 1024x600, and the same change left
     unconfirmed reverted to 1600x900 without touching the file; a pick at the
     same relative point resolved a primitive at both sizes (the viewport and
-    picker read the live window size). The fullscreen branch is not
-    runtime-tested (it would change the machine's display).
+     picker read the live window size). The fullscreen branch is not
+     runtime-tested (it would change the machine's display).
+  - Countdown behaviour (2026-09-21): the display confirmation keeps counting
+    while the window is minimized (a safety timer must not pause), but one frame
+    can spend at most `0.25 s` of the budget, so the frame after a debugger
+    stop or hibernation no longer reverts the mode in one step. On Vulkan a
+    minimized window stops producing frames, so the timer holds its remaining
+    value until frames resume after the restore; verified iconized. See
+    [`product/runtime-settings-gui.md`](product/runtime-settings-gui.md).
   - Panel follow-up (2026-09-21, after user testing): the display confirmation is
     now its **own ImGui window** anchored to the bottom-left of the applied
     display size, drawn whether or not the panel is open and after it, with the

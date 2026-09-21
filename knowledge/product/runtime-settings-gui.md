@@ -53,6 +53,21 @@ captures. Panel edits never write `config.ini`; a setting with no persistence in
   always reverts. Keeping it persists to `developer_graphics.ini`. While the
   confirmation is armed the cursor is shown and input stays captured, so the
   click cannot also reach the game.
+  - **Minimizing does not stop the countdown.** The decision is deliberate: the
+    countdown is a safety timer, so the guarantee "an unconfirmed mode always
+    reverts" has to hold whatever the user does, including leaving the window
+    minimized. On the Vulkan backend a minimized window stops producing frames
+    (its surface has no extent to acquire from), which freezes the timer for as
+    long as it lasts; on restore the frames and the remaining countdown resume,
+    and the mode reverts then. Verified on Vulkan with an iconized window: the
+    timer held its remaining value through the occlusion and reverted after
+    frames resumed.
+  - A single frame can spend at most `0.25 s` of the budget. ImGui derives
+    `DeltaTime` from wall clock, so the frame after a debugger stop, a
+    hibernation or any other long stall would otherwise carry the whole gap and
+    revert the mode the instant the game resumes. Verified: the first frame
+    after a long debugger stop reports `dt=0.2500` and the remaining budget only
+    drops by that step.
 - **Input** - the game and menu tables for keyboard and controller, kept
   distinct. Click a binding to capture the next key, controller button or stick
   push; Escape, a right click, Cancel, 10 seconds of silence, or closing the

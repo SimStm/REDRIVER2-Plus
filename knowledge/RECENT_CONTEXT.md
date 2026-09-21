@@ -12,23 +12,62 @@ tags: [okf, status, agents]
 
 ## Objective and status
 
-Latest: fixed the Vulkan access violation that fired on every window minimize
-(the desktop default backend), reproduced and verified under the Visual Studio
-debugger. See
-[change record](changes/2026-09-21/vulkan-minimize-swapchain-crash/index.md).
+Latest session (2026-09-21b): item 1 and 2 of the recommended list. The shadow
+volume centre is snapped to the light-space texel grid on both backends, the
+OpenGL minimize path was re-tested, and the display-mode countdown decision is
+recorded (it keeps counting while minimized; one frame can spend at most
+`0.25 s`). While closing that edge a **pre-existing Vulkan frame-fence
+deadlock** surfaced after a restore from a long minimize and was fixed. See
+[shadow snap](changes/2026-09-21/shadow-volume-texel-snap/index.md),
+[fence deadlock](changes/2026-09-21/vulkan-frame-fence-deadlock/index.md) and
+[minimize crash](changes/2026-09-21/vulkan-minimize-swapchain-crash/index.md).
 
-Immediately before that: replaced the forced-2D-depth workaround after the
-user's report of translucent-menu holes, world/effect ordering errors and
-angle-dependent scene loss. That implementation composes the world and modern
-meshes before the final gameplay overlays. See
+Immediately before that: fixed the Vulkan access violation that fired on every
+window minimize (the desktop default backend), reproduced and verified under
+the Visual Studio debugger.
+
+Earlier: replaced the forced-2D-depth workaround after the user's report of
+translucent-menu holes, world/effect ordering errors and angle-dependent scene
+loss. That implementation composes the world and modern meshes before the final
+gameplay overlays. See
 [change record](changes/2026-09-21/modern-overlay-composition/index.md).
 
-Git state: the Vulkan fix is uncommitted in `src_rebuild/PsyCross`
-(`src/render/PsyX_Vk.cpp`) and the parent reports the submodule dirty. The
-earlier overlay composition is fork commit `13705cf`, pushed to the fork's
-`origin/master`, with the parent gitlink staged; game integration and
-knowledge/CHANGELOG changes are in the parent working tree. VS is back on
-`Release_dev|x64` and the test debug session is stopped.
+Git state: the shadow snap, the fence fix and the minimize fix are uncommitted
+in `src_rebuild/PsyCross` (`PsyX_ModernMesh.{h,cpp}`, `PsyX_Vk.cpp`) and the
+parent reports the submodule dirty. The overlay composition is fork commit
+`13705cf`, pushed to the fork's `origin/master`, with the parent gitlink
+staged; game integration and knowledge/CHANGELOG changes are in the parent
+working tree. VS is back on `Release_dev|x64` and the test debug session is
+stopped.
+
+## Item 1 and 2: implementation and evidence
+
+- **Shadow texel snap.** `PsyX_ModernShadowSnapCentre()` in the shared prologue
+  of `PsyX_ModernMesh.cpp` (declared in `PsyX_ModernMesh.h`) snaps the centre in
+  the light plane only, in double, and returns the basis up vector; both shadow
+  matrix builders call it. Evidence: while driving, a temporary log of the
+  fractional texel position swept `rawFrac=(0.38,0.05) -> (0.63,0.75) ->
+  (0.06,0.25) -> (0.78,0.37)` with `snapFrac=(0.0000,0.0000)` every sample and
+  `|deltaTexels| <= 0.42`; a live capture was unchanged; `-vkpsxtest` passed.
+- **Vulkan frame-fence deadlock (new finding, pre-existing bug).** The fence
+  was reset at the top of the frame, so the out-of-date acquire path
+  (`RecreateSwapchain(); return 1;`) left it unsignaled and the next
+  `vkWaitForFences(..., UINT64_MAX)` blocked forever. Reproduced debugger-free
+  with a temporary acquire log: `acquire: leave f=1926 result=-1000001004`
+  (`VK_ERROR_OUT_OF_DATE_KHR`), `swapchain recreated`, then no further frame and
+  `responding=False`. Fixed by resetting the fence immediately before the
+  submit (and signalling it with an empty submit if that submit fails).
+  Re-verified: 46 s and 60+ s iconized intervals, restore re-created the
+  swapchain, frames continued past `f=10246`, `responding=True`, capture normal.
+- **OpenGL minimize.** `Release_dev_gl|x64` built; the window was iconized
+  (verified), the process stayed alive, and the restored frame rendered the
+  world, fixtures, HUD and minimap. No crash before or after.
+- **Display-mode countdown.** Decision: keep counting while minimized (safety
+  timer; the guarantee "an unconfirmed mode always reverts" must hold whatever
+  the user does) and clamp one frame's contribution to `0.25 s`. Evidence: the
+  first frame after a long debugger stop logs `dt=0.2500`; while the window was
+  iconized the timer held its remaining value (Vulkan stops drawing there) and
+  resumed on restore.
 
 ## Minimize crash: implementation and evidence
 
@@ -138,11 +177,24 @@ is marked superseded. The durable composite rule now explicitly rejects it.
   meaningful.
 - Scripted clicks reach the ImGui panel once the game window is frontmost
   (`windows-mcp App switch` then `Click` at `image x 1.791667`).
+- Minimize/restore for a test: a `user32.dll` `ShowWindow` shim on
+  `(Get-Process REDRIVER2_dev).MainWindowHandle`, 6 (`SW_MINIMIZE`) and
+  9 (`SW_RESTORE`), with `IsIconic` to confirm; one step per shell call (a
+  `foreach` + `Start-Sleep` loop wedged the shell tool). `F11` never opened the
+  panel through the MCP - only scancode keys (arrows) reach the game - so arm
+  panel state with the debugger or an instrumented path instead of a key.
+- On this machine SDL does **not** report `SDL_WINDOW_MINIMIZED` for an iconized
+  window (frames kept rendering with `minimized=0` while `IsIconic` was true),
+  so do not rely on that flag to detect a minimized window. The Vulkan path
+  still stops producing frames once present/acquire reports the surface
+  out-of-date, which is what freezes everything until the window is restored.
+- To tell whether frames advance, read the `perf:` lines or a frame counter in
+  `psyx_vk.log` rather than CPU: the interrupt thread spins in
+  `Util_GetHPCTime` (100 % of one core) even when healthy, and
+  `Process.Responding` is `False` while the game is inside a debugger pause.
 
 ## Next candidate work
 
-- Shadow-centre **texel snapping** to remove shimmer as the volume follows the
-  car - identified, not implemented.
 - The R5 shadow receive difference between backends (VK 7722 px vs GL 2264 px,
   IoU 29.2%) and point-light receptivity/legacy casters for the shadow map
   remain open.

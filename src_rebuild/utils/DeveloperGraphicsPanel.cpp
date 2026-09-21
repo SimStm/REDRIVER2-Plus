@@ -139,13 +139,26 @@ int ConfirmDisplayMode()
 }
 
 // Runs every frame the overlay is drawn, visible or not, so the countdown is
-// never paused by closing the panel.
+// never paused by closing the panel or by minimizing the window: an
+// unconfirmed mode must always end in a revert, whatever the user does.
+//
+// A single frame can only ever spend a short step of the budget. ImGui derives
+// `DeltaTime` from wall clock, so the frame that follows a debugger stop, a
+// hibernation or any other long stall would otherwise carry the whole gap and
+// revert the mode the instant the game resumes - before the user sees it. The
+// step is clamped instead, which spreads the remaining time over the frames
+// that follow.
 void UpdateDisplayRevert()
 {
 	if (!g_displayRevertArmed)
 		return;
 
-	g_displayRevertRemaining -= ImGui::GetIO().DeltaTime;
+	const float kMaxFrameStep = 0.25f;
+	float delta = ImGui::GetIO().DeltaTime;
+	if (delta > kMaxFrameStep)
+		delta = kMaxFrameStep;
+
+	g_displayRevertRemaining -= delta;
 	if (g_displayRevertRemaining <= 0.0f)
 		RevertDisplayMode();
 }

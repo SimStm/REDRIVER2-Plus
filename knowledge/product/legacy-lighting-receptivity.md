@@ -57,6 +57,15 @@ and roadmap record
   themselves stay fixed in the world. The car's position storage is briefly
   absent during level/mission transitions, so a null pointer falls back to the
   camera instead of crashing.
+- The same volume is **snapped to the light-space texel grid** before the light
+  matrix is built (`PsyX_ModernShadowSnapCentre`, shared by both backends):
+  both backends sample the map with `NEAREST`, and the sub-texel motion of a
+  centre that follows a moving car made shadow edges swim. Snapping rounds the
+  two plane coordinates to whole `2 * extent / shadowSize` steps and leaves the
+  coordinate along the light untouched, so the volume moves by at most half a
+  texel and the receiver keeps its exact depth. Measured while driving: the
+  raw centre's fractional texel position sweeps `0.38 -> 0.63 -> 0.06 -> 0.78`
+  while the snapped position stays at `0.0000`.
 - The composite rewrites the scene from a copy of the framebuffer colour. A
   blend on a fixed-point attachment clamps the source to `[0,1]`, so a
   blend-factor implementation can only darken; the copy is what lets the sun
