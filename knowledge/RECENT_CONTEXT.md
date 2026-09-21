@@ -1,7 +1,7 @@
 ---
 type: Status
 title: Recent engineering context
-description: Explicit world/overlay composition replaces the regressed screen-space depth workaround; Vulkan and OpenGL validation.
+description: Vulkan minimize access violation fixed in the swapchain recreation path; the earlier world/overlay composition remains validated.
 tags: [okf, status, agents]
 ---
 
@@ -12,18 +12,44 @@ tags: [okf, status, agents]
 
 ## Objective and status
 
-Replaced the previous forced-2D-depth workaround after the user's report of
-translucent-menu holes, world/effect ordering errors and angle-dependent scene
-loss. The final implementation composes the world and modern meshes before
-the final gameplay overlays. See
+Latest: fixed the Vulkan access violation that fired on every window minimize
+(the desktop default backend), reproduced and verified under the Visual Studio
+debugger. See
+[change record](changes/2026-09-21/vulkan-minimize-swapchain-crash/index.md).
+
+Immediately before that: replaced the forced-2D-depth workaround after the
+user's report of translucent-menu holes, world/effect ordering errors and
+angle-dependent scene loss. That implementation composes the world and modern
+meshes before the final gameplay overlays. See
 [change record](changes/2026-09-21/modern-overlay-composition/index.md).
 
-PsyCross commit `13705cf` was pushed to the project fork's `origin/master`;
-the parent gitlink is staged. Game integration and knowledge/CHANGELOG changes
-remain in the parent working tree. VS is back on `Release_dev|x64`, with the
-test debug session stopped and temporary breakpoints removed.
+Git state: the Vulkan fix is uncommitted in `src_rebuild/PsyCross`
+(`src/render/PsyX_Vk.cpp`) and the parent reports the submodule dirty. The
+earlier overlay composition is fork commit `13705cf`, pushed to the fork's
+`origin/master`, with the parent gitlink staged; game integration and
+knowledge/CHANGELOG changes are in the parent working tree. VS is back on
+`Release_dev|x64` and the test debug session is stopped.
 
-## Implementation and evidence
+## Minimize crash: implementation and evidence
+
+- Cause: a minimized window reports a `0x0` surface, so out-of-date
+  acquire/present set `resizePending`; `RecreateSwapchain()` destroyed the
+  swapchain and `CreateSwapchain()` then failed on the zero extent, leaving
+  `g_vk.swapchain == VK_NULL_HANDLE`; the next acquire crashed inside
+  `nvoglv64.dll` (`0xC0000005`, break at `PsyX_Vk.cpp:5399`, Debug output:
+  `vkAcquireNextImageKHR-swapchain-parameter`).
+- Fix: `ResolveSwapchainExtent()` (now used by `CreateSwapchain`) validates the
+  extent; `RecreateSwapchain()` checks it before destroying anything;
+  `PsyX_Vk_RenderFrame()` skips frames while `SDL_WINDOW_MINIMIZED` and
+  re-creates a null swapchain before acquiring.
+- Verified: `Release_dev|x64` built; launched under the debugger, minimized
+  and restored repeatedly - the debugger stayed in Run with no exception, the
+  session log held no validation error, `psyx_vk.log` recorded
+  `swapchain recreated 1280x720 images=3`, and the restored window rendered the
+  normal world/HUD. `-vkpsxtest` passed afterwards. OpenGL was not re-tested
+  (the defect is Vulkan-specific).
+
+## Overlay composition: implementation and evidence
 
 - Game: `DrawGame` updates modern camera/instances before OT submission and
   supplies bucket 10 as the final-overlay boundary (lens flare 10, fades 8,
@@ -69,6 +95,11 @@ is marked superseded. The durable composite rule now explicitly rejects it.
   computer-control-mcp still captured and drove the game. WGC can return a
   black/stale image while unfocused; activate the exact `REDRIVER2` window and
   recapture before diagnosing a rendering failure.
+- Minimizing/restoring the game for a test: `Add-Type` a `user32.dll`
+  `ShowWindow` shim and call it on `(Get-Process REDRIVER2_dev).MainWindowHandle`
+  with 6 (`SW_MINIMIZE`) and 9 (`SW_RESTORE`); `IsIconic` confirms the state.
+  Keep each step in its own shell call - a `foreach` loop with `Start-Sleep` can
+  wedge the shell tool past its timeout even though the game is unaffected.
 
 - **The desktop-control MCP only delivers keys that carry a scancode.** The
   arrow keys work (`SDL_GetKeyboardState` reports them); `w`, `Return` and

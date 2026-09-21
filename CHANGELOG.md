@@ -464,6 +464,14 @@ where release policy permits it.
 
 ### Fixed
 
+- Minimizing the game window no longer crashes the Vulkan backend with an
+  access violation in the graphics driver. A minimized window has a `0x0`
+  surface, so an out-of-date present triggered a recreation that destroyed the
+  current swapchain and then failed to create a replacement, leaving
+  `VK_NULL_HANDLE` for the next `vkAcquireNextImageKHR`. Recreation now checks
+  the surface extent before destroying anything, the frame path skips
+  minimized windows and never acquires from a null swapchain, and the
+  swapchain is re-created normally when the window is restored.
 - Enhanced rendering now composes modern meshes before the final gameplay
   overlays on Vulkan and OpenGL, preserving meshes behind translucent menus
   and preventing UI/lens-flare pixels from entering the world lighting copy.

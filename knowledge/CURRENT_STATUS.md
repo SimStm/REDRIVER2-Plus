@@ -91,6 +91,16 @@ Delivered in order, each verified on the game window:
   inspected enhanced run had the validation layer enabled and no error/VUID.
 - Resize: both the resize and out-of-date paths go through
   `RecreateSwapchain()` (framebuffers, views and the depth image are rebuilt).
+- Minimize/restore (2026-09-21): a minimized window has a `0x0` surface, so an
+  out-of-date present used to destroy the swapchain and fail to create a
+  replacement, leaving `VK_NULL_HANDLE` and an access violation inside the
+  graphics driver on the next acquire. `ResolveSwapchainExtent()` now decides
+  before anything is destroyed, `PsyX_Vk_RenderFrame` skips minimized frames
+  and recovers a null swapchain instead of acquiring from it, and the restore
+  re-creates the swapchain at the valid size. Verified under the debugger:
+  repeated minimize/restore, no exception and no validation error, and
+  `-vkpsxtest` still passes. See
+  [`changes/2026-09-21/vulkan-minimize-swapchain-crash`](changes/2026-09-21/vulkan-minimize-swapchain-crash/index.md).
 - Backend-agnostic opt-in perf log (`PSYX_PERF_LOG` -> `psyx_perf.log`) measured
   OpenGL and Vulkan at 30.0 FPS / 33.4 ms with identical vertex and draw counts,
   i.e. the game is PSX-timestep-bound rather than GPU-bound.
