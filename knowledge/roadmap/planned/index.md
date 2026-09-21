@@ -50,6 +50,16 @@ require completing every unrelated entry above before starting this track.
    [Vulkan game renderer](../done/vulkan-game-renderer.md) record.
    The legacy lighting receptivity follow-up is implemented - see the completed
    [Legacy lighting receptivity](../done/legacy-lighting-receptivity.md) record.
+3. **18 — [Legacy geometry as shadow casters](legacy-shadow-casters.md)**:
+   the modern shadow map currently contains only the imported modern meshes, so
+   legacy buildings, trees and cars cast nothing. Needs a depth-only pass over
+   the legacy geometry on both backends; the Vulkan `submit_ms` baseline
+   (~6.4 ms CPU per frame) is the cost reference.
+4. **19 — [Point-light sources and receptivity](point-light-sources.md)**:
+   the game publishes one directional sun, so the legacy receptivity term has
+   nothing else to consume. Requires choosing and authoring point-light sources
+   from game state (headlights, sirens, lamps) and extending the composite term
+   to them on both backends.
 
 The playground has no dependency on modern rendering. JSON authoring, an editor
 and cross-city assets are outside its initial scope. Original-city regression

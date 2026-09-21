@@ -109,10 +109,30 @@ poison the world depth. See the
   filtering, PGXP, VSync, draw distance, field of view, modern renderer, HD
   texture overrides); `developer_modern_mesh.ini` holds the modern-mesh gallery
   state. Both are separate from `config.ini`.
-- `PSYX_PERF_LOG=1` writes per-frame samples to `psyx_perf.log`;
-  `PSYX_VK_PRESENT_MODE` selects the present mode.
+- `PSYX_PERF_LOG=1` writes per-frame samples to `psyx_perf.log`; each sample
+  carries the wall-clock rate (`fps`, `frame_ms`) and the frame-submission CPU
+  cost (`submit_ms`, the mean time spent in `GR_SwapWindow` plus, on OpenGL, the
+  overlay). `PSYX_VK_PRESENT_MODE` selects the present mode.
 - `developer_debug_start.ini` places the player at a fixed spawn for repeatable
   captures.
+
+## Measured cost
+
+Windows `Release_dev|x64` / `Release_dev_gl|x64`, 1280x720, mission 50 spawn,
+30 one-second samples per run:
+
+- The frame rate is the game's, not the renderer's: 30.0 FPS with FIFO present,
+  with `PSYX_VK_PRESENT_MODE=immediate`, and on OpenGL with `vsync=0`. The ceiling
+  is the emulated PSX vblank the game's `VSync(0)` waits on, so measuring the
+  renderer through the game loop cannot exceed it.
+- `submit_ms` is ~6.4 ms on Vulkan, i.e. ~19 % of the 33.3 ms budget: the Vulkan
+  backend records the whole frame (ImGui included) at present time. OpenGL
+  reports ~0.18 ms because it draws during the game's own frame.
+- The standalone fixture window (`-vkfixture -vknogui`, immediate present, 12
+  draws) sustains ~660-900 FPS / 1.1-1.5 ms per frame, so pipeline overhead per
+  frame is ~1 ms and the GPU has large headroom for the game's ~700-draw frame.
+- Not measured: the game frame's own GPU time, which needs Vulkan timestamp
+  queries around the passes.
 
 ## Limits and not validated
 
@@ -126,15 +146,22 @@ poison the world depth. See the
   `main depth format 126 stencil=0`, asserts that the PSX mask bit degrades to a
   no-op, and still passes every other check. The game renders normally under the
   forced fallback with the validation layer enabled and no VUID.
-- Legacy shadow reception is implemented on both backends but is not yet
-  equivalent: at a low sun in the modern gallery scene, Vulkan's receive term
-  changed 7722 pixels of the sampled ground band versus OpenGL's 2264 (2257
-  shared, IoU 29.2 %), and OpenGL additionally darkens the legacy tree canopy
-  where Vulkan barely does. Recorded as an R5 follow-up, not a blocked feature.
-- CPU/GPU frame-time distribution, peak memory and the Linux/web/Android builds
-  have not been profiled. At the time of writing both backends present at the
-  game's fixed 30 Hz PSX timestep (~30 FPS / 33.4 ms), so that equality shows
-  neither backend is struggling, not its maximum throughput.
+- Legacy shadow reception is implemented on both backends and the backends
+  agree: under the controlled capture method (aligned developer state,
+  traffic-free playground, same-backend control capture) the shadowed-pixel sets
+  have IoU 0.985 and differ by 7 pixels, inside the 2499-pixel capture noise
+  floor. Switching shadows on changes the backend-to-backend difference by 10
+  pixels and 0.009/255 in the mean, so the shadow path contributes no measurable
+  backend difference; the remaining ~3/255 mean is the legacy-scene parity gap.
+  See
+  [`changes/2026-09-21/shadow-receive-parity`](../changes/2026-09-21/shadow-receive-parity/index.md).
+- Legacy geometry does not cast into the modern shadow map, and the game
+  publishes only a directional sun, so there are no point lights for the
+  receptivity term to consume. Both are planned:
+  [`roadmap/planned/legacy-shadow-casters`](../roadmap/planned/legacy-shadow-casters.md)
+  and
+  [`roadmap/planned/point-light-sources`](../roadmap/planned/point-light-sources.md).
+- Peak memory and the Linux/web/Android builds have not been profiled.
 
 ## Working on it
 

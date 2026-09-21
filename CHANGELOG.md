@@ -10,6 +10,13 @@ where release policy permits it.
 
 ### Added
 
+- The opt-in performance log (`PSYX_PERF_LOG=1`) now reports `submit_ms`, the
+  mean CPU time of the frame-submission path (`GR_SwapWindow` plus the OpenGL
+  overlay). Measured at 1280x720: ~6.4 ms on Vulkan, where the whole frame is
+  recorded at present time, versus ~0.18 ms on OpenGL. Uncapping present
+  (`PSYX_VK_PRESENT_MODE=immediate`) and disabling vsync both leave the frame
+  rate at 30.0, confirming the ceiling is the game's emulated PSX vblank rather
+  than the renderer.
 - The modern light set now also shades the legacy scene (renderer roadmap
   legacy-lighting-receptivity): road, cars, trees, barriers and near buildings
   brighten by the modern sun's `N·L` term while the legacy shading itself is
@@ -464,6 +471,13 @@ where release policy permits it.
 
 ### Fixed
 
+- The reported Vulkan/OpenGL difference in shadow reception was a measurement
+  artefact, not a renderer defect: the two installs had different developer
+  state (sun direction, shadow extent 2500 vs 6991, spawn) and the street scene
+  contains moving traffic whose capture noise exceeded the metric. With aligned
+  settings in the traffic-free playground the two backends' shadowed-pixel sets
+  reach IoU 0.985, within the capture noise floor; the OpenGL install keeps the
+  aligned state.
 - The modern shadow volume is snapped to the light-space texel grid on both
   backends. The volume follows the player vehicle, so its sub-texel motion made
   `NEAREST` shadow edges swim; the centre is now rounded to whole

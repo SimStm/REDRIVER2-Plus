@@ -109,16 +109,31 @@ Delivered in order, each verified on the game window:
   acquire, recreate, no further frame) and verified fixed with 46 s and 60+ s
   iconized intervals on `Release_dev|x64`, plus `-vkpsxtest`. See
   [`changes/2026-09-21/vulkan-frame-fence-deadlock`](changes/2026-09-21/vulkan-frame-fence-deadlock/index.md).
-- Backend-agnostic opt-in perf log (`PSYX_PERF_LOG` -> `psyx_perf.log`) measured
-  OpenGL and Vulkan at 30.0 FPS / 33.4 ms with identical vertex and draw counts,
-  i.e. the game is PSX-timestep-bound rather than GPU-bound.
+- Backend-agnostic opt-in perf log (`PSYX_PERF_LOG` -> `psyx_perf.log`). Each
+  sample carries the wall-clock rate and, since 2026-09-21, `submit_ms`: the
+  frame-submission CPU cost measured around `GR_SwapWindow` (plus the OpenGL
+  overlay). Measured at 1280x720: ~6.4 ms on Vulkan (the backend records the
+  whole frame, ImGui included, at present time) versus ~0.18 ms on OpenGL.
+  Uncapping present (`PSYX_VK_PRESENT_MODE=immediate`) and `vsync=0` on OpenGL
+  all stay at 30.0 FPS, confirming the game's emulated PSX vblank is the
+  ceiling; the fixture window sustains ~660-900 FPS (1.1-1.5 ms/frame, 12
+  draws) as the raw pipeline reference. The game frame's own GPU time is not
+  isolated (needs Vulkan timestamp queries). See
+  [`changes/2026-09-21/frame-submission-profiling`](changes/2026-09-21/frame-submission-profiling/index.md).
+- Shadow receive parity (2026-09-21): the earlier Vulkan `7722` vs OpenGL
+  `2264` pixel difference (IoU 29.2 %) was measurement drift, not a renderer
+  defect - the two installs had different sun direction, `shadowextent`
+  (2500 vs 6991) and spawn, and the street scene's moving traffic makes a
+  per-pixel metric noise-dominated. With aligned developer state in the
+  traffic-free playground the shadowed-pixel sets reach **IoU 0.985** (4816 vs
+  4823 pixels, noise floor 2499), and enabling shadows moves the
+  backend-to-backend difference by 10 pixels of 921600. The OpenGL install's
+  developer state is now aligned with Vulkan's. See
+  [`changes/2026-09-21/shadow-receive-parity`](changes/2026-09-21/shadow-receive-parity/index.md).
 - Renderer-debt closure (2026-09-20): the stencil-less `D32_SFLOAT` fallback is
-  selectable with `PSYX_VK_DEPTH_FORMAT=d32` and the self-test then asserts the
-  mask-bit no-op degradation; a fresh classic-renderer `-opengl` parity capture
-  differs from Vulkan by mean 4.08/255 with 0.22 % of channels > 16; the R5
-  shadow comparison measured Vulkan 7722 vs OpenGL 2264 changed pixels in the
-  sampled ground band (IoU 29.2 %), with OpenGL additionally darkening the
-  legacy tree canopy. See
+  selectable with `PSYX_VK_DEPTH_FORMAT=d32` (self-test asserts the mask-bit
+  no-op degradation); a fresh `-opengl` parity capture differs from Vulkan by
+  mean 4.08/255 with 0.22 % of channels > 16. See
   [`changes/2026-09-20/vulkan-renderer-debt`](changes/2026-09-20/vulkan-renderer-debt/index.md).
 - Previous-frame history was investigated, not implemented: `LOAD_OP_LOAD`
   preserves each swapchain image individually, and sampled natural
@@ -188,6 +203,18 @@ Delivered in order, each verified on the game window:
 
 ### Unresolved renderer items
 
+- **Legacy casters and point lights (item 3 remainder)**: the modern shadow map
+  still contains only the imported modern meshes, so legacy buildings, trees and
+  cars cast nothing, and the game publishes exactly one directional sun, so the
+  receptivity term has no point lights to consume. Both are scoped as planned
+  records:
+  [`roadmap/planned/legacy-shadow-casters.md`](roadmap/planned/legacy-shadow-casters.md)
+  and
+  [`roadmap/planned/point-light-sources.md`](roadmap/planned/point-light-sources.md),
+  with the Vulkan `submit_ms` (~6.4 ms) as the cost baseline.
+- **Frame-time split (item 4 remainder)**: the game frame's own GPU time is not
+  isolated; that needs Vulkan timestamp queries around the shadow and main
+  passes. Peak memory and the Linux/web/Android builds are still unprofiled.
 - **UI follow-up (2026-09-20)**: corrected white primitives, stencil and blend
   state after the user's repeat tests disproved the previous completion claim.
   Live Vulkan map no longer shows world shadows over it; loading bar, compass,
@@ -199,11 +226,12 @@ Delivered in order, each verified on the game window:
   enabled by the backend. It exposed incompatible resumed render passes
   (`VUID-vkCmdDraw-renderPass-02684`), now fixed. The subsequent inspected game
   debug output confirmed the layer was enabled and contained no VUID/error.
-- Open after the 2026-09-20 closure: macOS/MoltenVK build, raw uncapped GPU
-  throughput and CPU/GPU frame-time profiling. The `D32_SFLOAT` fallback,
-  fresh `-opengl` parity run and R5 shadow comparison now have executed evidence
-  (see above); the shadow receive still differs between backends and is an R5
-  follow-up. Legacy lighting receptivity is implemented
+- Open after the 2026-09-20 closure: macOS/MoltenVK build and the game frame's
+  own GPU time. The `D32_SFLOAT` fallback, fresh `-opengl` parity run and the
+  shadow comparison now have executed evidence; the shadow receive was
+  re-measured as backend-equivalent (IoU 0.985, see above) and the frame rate
+  was confirmed to be the PSX vblank gate rather than a renderer limit.
+  Legacy lighting receptivity is implemented
   ([`product/legacy-lighting-receptivity.md`](product/legacy-lighting-receptivity.md));
   it adds one full-screen colour copy plus draw only while its composite is
   active, and no frame-time delta on the minimum GPU class is recorded yet.

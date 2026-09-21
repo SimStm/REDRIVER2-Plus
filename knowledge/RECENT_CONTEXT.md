@@ -12,33 +12,74 @@ tags: [okf, status, agents]
 
 ## Objective and status
 
-Latest session (2026-09-21b): item 1 and 2 of the recommended list. The shadow
-volume centre is snapped to the light-space texel grid on both backends, the
-OpenGL minimize path was re-tested, and the display-mode countdown decision is
-recorded (it keeps counting while minimized; one frame can spend at most
-`0.25 s`). While closing that edge a **pre-existing Vulkan frame-fence
-deadlock** surfaced after a restore from a long minimize and was fixed. See
-[shadow snap](changes/2026-09-21/shadow-volume-texel-snap/index.md),
+Latest session (2026-09-21c): items 3 and 4. The reported shadow-receive
+difference between backends was **measured away, not fixed**: it came from
+drifted developer state between the two installs and from moving-traffic
+capture noise; under aligned settings in the traffic-free playground the two
+backends' shadowed-pixel sets reach IoU 0.985. The remaining item-3 scope
+(legacy casters, point lights) is planned, not implemented. Item 4 added
+`submit_ms` to the perf log and established that the 30 FPS ceiling is the
+game's emulated PSX vblank, with ~6.4 ms of Vulkan CPU per frame for the
+submission path. See
+[parity](changes/2026-09-21/shadow-receive-parity/index.md) and
+[profiling](changes/2026-09-21/frame-submission-profiling/index.md) records.
+
+Previous session (2026-09-21b): item 1 and 2. The shadow volume centre is
+snapped to the light-space texel grid on both backends, the OpenGL minimize
+path was re-tested, the display-mode countdown decision is recorded (it keeps
+counting while minimized; one frame can spend at most `0.25 s`), and a
+pre-existing Vulkan frame-fence deadlock on the minimize/restore path was fixed.
+See [shadow snap](changes/2026-09-21/shadow-volume-texel-snap/index.md),
 [fence deadlock](changes/2026-09-21/vulkan-frame-fence-deadlock/index.md) and
 [minimize crash](changes/2026-09-21/vulkan-minimize-swapchain-crash/index.md).
 
-Immediately before that: fixed the Vulkan access violation that fired on every
-window minimize (the desktop default backend), reproduced and verified under
-the Visual Studio debugger.
+Earlier: the Vulkan access violation on minimize was fixed, and before that the
+forced-2D-depth workaround was replaced by explicit world/overlay composition
+([record](changes/2026-09-21/modern-overlay-composition/index.md)).
 
-Earlier: replaced the forced-2D-depth workaround after the user's report of
-translucent-menu holes, world/effect ordering errors and angle-dependent scene
-loss. That implementation composes the world and modern meshes before the final
-gameplay overlays. See
-[change record](changes/2026-09-21/modern-overlay-composition/index.md).
+Git state: the perf instrumentation is uncommitted in `src_rebuild/PsyCross`
+(`src/PsyX_main.cpp`) and the parent reports the submodule dirty with the new
+knowledge records. The overlay composition is fork commit `13705cf`; the texel
+snap and fence fix are fork commit `e803dd6`, both pushed to `origin/master`.
+VS is back on `Release_dev|x64` and no debug session is active.
 
-Git state: the shadow snap, the fence fix and the minimize fix are uncommitted
-in `src_rebuild/PsyCross` (`PsyX_ModernMesh.{h,cpp}`, `PsyX_Vk.cpp`) and the
-parent reports the submodule dirty. The overlay composition is fork commit
-`13705cf`, pushed to the fork's `origin/master`, with the parent gitlink
-staged; game integration and knowledge/CHANGELOG changes are in the parent
-working tree. VS is back on `Release_dev|x64` and the test debug session is
-stopped.
+## Item 3 and 4: implementation and evidence
+
+- **Shadow receive parity.** No renderer change. The two composites are
+  line-for-line ports; the earlier `7722 vs 2264 (IoU 29.2 %)` compared
+  different configurations: Vulkan had `lightdir=-0.2240,0.8480,-0.4803`,
+  `shadowextent=6991`, spawn car 3 / X=9046 / Z=-217980, while OpenGL had
+  `lightdir=-0.2500,0.7200,-0.3800`, `shadowextent=2500`, spawn car 2 /
+  X=13659 / Z=-216011. The OpenGL install's `developer_modern_mesh.ini` and
+  `developer_debug_start.ini` were aligned with the Vulkan ones (backups of the
+  previous OpenGL files are in
+  `C:\Users\simst\AppData\Local\Temp\opencode\{gl_modern_mesh,gl_debug_start}.ini.bak`).
+  Controlled result, `-playground` (traffic-free), 1280x720, threshold 6 per
+  channel: VK run-vs-run noise 2499 px; VK shadowed 4816, GL shadowed 4823,
+  intersection 4782, union 4857, **IoU 0.985**; VK-vs-GL with shadows off
+  `meanAbs 3.082/255`, with shadows on `3.073/255`, i.e. the shadow path adds
+  no backend difference. In the street scene the metric is noise-dominated: two
+  Vulkan captures of the same build differ by 7973 px just from traffic timing.
+- **Item 4 profiling.** `submit_ms` added to the perf sample. Vulkan FIFO
+  30.0 FPS / `submit_ms` 6.2-6.7 ms; Vulkan `PSYX_VK_PRESENT_MODE=immediate`
+  identical (30.0 FPS) - so the ceiling is the game's `VSync(0)` ->
+  `PsyX_WaitForTimestep` vblank wait, not vsync or GPU; OpenGL with `vsync=0`
+  30.0 FPS / `submit_ms` 0.17-0.20 ms. Fixture window (`-vkfixture -vknogui`,
+  immediate) ~660-900 FPS / 1.1-1.5 ms per frame as the raw pipeline reference.
+  The game frame's own GPU time is still not isolated (would need Vulkan
+  timestamp queries).
+- **Method notes.** Capture procedure: `run_and_capture.ps1` in the temp dir
+  (launch, foreground, `capture-window.ps1` client-area grab, kill) with the
+  comparison helpers `diff_captures.ps1` and `shadow_mask_iou.ps1`; always run a
+  same-backend control capture, because animated content puts the noise floor
+  around 2500-8000 pixels at 1280x720.
+- **Not implemented (planned records).**
+  [`roadmap/planned/legacy-shadow-casters`](roadmap/planned/legacy-shadow-casters.md)
+  (legacy geometry casting into the modern map; the Vulkan `submit_ms` is the
+  cost baseline) and
+  [`roadmap/planned/point-light-sources`](roadmap/planned/point-light-sources.md)
+  (the game publishes only one directional sun, so there is nothing for a
+  point-light receptivity term to consume yet).
 
 ## Item 1 and 2: implementation and evidence
 

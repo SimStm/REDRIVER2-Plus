@@ -107,8 +107,20 @@ Windows `Release_dev|x64`, mission 50 deterministic spawn, low sun, strength
   position and normal are not trustworthy. They end up either excluded by the
   backdrop band or lit with an approximate normal.
 - Legacy geometry does not cast into the modern shadow map; that stays a
-  separate follow-up. This feature only makes legacy surfaces *receive* the
-  light and shadows.
+  separate follow-up ([planned record](../roadmap/planned/legacy-shadow-casters.md)).
+  This feature only makes legacy surfaces *receive* the light and shadows. The
+  game also publishes only a directional sun, so the receptivity term has no
+  point lights to consume; authoring them is planned
+  ([point-light-sources](../roadmap/planned/point-light-sources.md)).
+- Backend agreement: the two composites are ports of each other and the
+  backends receive the shadow identically under the controlled capture method
+  (aligned developer state, traffic-free playground, same-backend control):
+  shadowed-pixel IoU 0.985, counts within the 2499-pixel capture noise floor,
+  and switching shadows on moves the Vulkan-versus-OpenGL difference by 10
+  pixels of 921600. The earlier `7722 vs 2264 (IoU 29.2 %)` figure came from
+  drifted developer state (sun direction, `shadowextent` 2500 vs 6991, spawn)
+  and moving-traffic capture noise; see
+  [`changes/2026-09-21/shadow-receive-parity`](../changes/2026-09-21/shadow-receive-parity/index.md).
 - Cost is one full-screen colour copy plus one full-screen composite draw while
   the composite is active (depth copy + composite already ran for shadows).
   Measured at 1280x720 with `vsync=0` from the backend's `perf:` lines, with
