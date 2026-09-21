@@ -24,6 +24,7 @@
 #include "utils/ini.h"
 #include "utils/DeveloperDebugStart.h"
 #include "utils/DeveloperGraphicsPanel.h"
+#include "utils/DeveloperInputMapping.h"
 #include "utils/DeveloperModernMesh.h"
 #include "utils/DeveloperVkFixture.h"
 #include "utils/HdTextureOverrides.h"
@@ -455,6 +456,11 @@ void ParseControllerMappings(ini_t* config, char* section, PsyXControllerMapping
 	outMapping.gc_axis_right_y = PsyX_LookupGameControllerMapping(str, defaultMapping.gc_axis_right_y);
 }
 
+// config.ini freeCamera installs the debug camera handlers while the game
+// initialises. The value is kept here so the developer panel can show it as a
+// disabled, restart-only option.
+int gFreeCameraConfiguration = 0;
+
 PsyXKeyboardMapping g_kbGameMappings = { 0x123 };
 PsyXKeyboardMapping g_kbMenuMappings = { 0x456 };
 
@@ -473,6 +479,10 @@ void SwitchMappings(int menu)
 		g_cfg_keyboardMapping = g_kbGameMappings;
 		g_cfg_controllerMapping = g_gcGameMappings;
 	}
+
+	// The developer panel edits these tables; it must know which one the game is
+	// using so an edit only reaches the mapping that is live.
+	DeveloperInputMapping_NotifyActive(menu ? DeveloperInputTable::Menu : DeveloperInputTable::Game);
 }
 
 int main(int argc, char** argv)
@@ -668,6 +678,9 @@ int main(int argc, char** argv)
 		}
 #endif
 	}
+
+	gFreeCameraConfiguration = enableFreecamera;
+
 #ifndef _DEBUG
 	if (enableFreecamera)
 	{
@@ -704,6 +717,11 @@ int main(int argc, char** argv)
 
 	// start with menu mapping
 	SwitchMappings(1);
+	// The bindings parsed from config.ini are the defaults the developer panel
+	// resets to, so they must be recorded before the developer overrides are
+	// loaded on top of them.
+	DeveloperInputMapping_CaptureDefaults();
+	DeveloperInputMapping_LoadDefaultFile();
 	// The modern-mesh module reads its asset/light config first; the developer
 	// Graphics settings then own the authoritative classic/enhanced toggle.
 	DeveloperModernMesh_Initialise();

@@ -29,7 +29,7 @@ precedence over the simple reading order.
 4. **07 — [Inspector navigation and independent previews](inspector-camera-preview.md)**
 5. **08 — [OpenDriver2Tools interoperability and legacy overrides](modding-toolchain-integration.md)**
 6. **09 — [Model export and validated re-import](model-export-import-roundtrip.md)**
-7. **10 — [Runtime settings GUI and safe persistence](runtime-settings-gui.md)**
+7. **10 — [Runtime settings GUI and safe persistence](../done/runtime-settings-gui.md)**: implemented 2026-09-20.
 8. **11 — [Draw distance, LOD and streaming budgets](draw-distance-streaming.md)**
 9. **12 — [Measured graphics improvements and quality profiles](graphics-quality-profiles.md)**
 
@@ -48,11 +48,24 @@ require completing every unrelated entry above before starting this track.
    work. R2 waits for verified playground P1-P4; R1 audits can happen earlier.
    The backend port (R7b) is delivered - see the completed
    [Vulkan game renderer](../done/vulkan-game-renderer.md) record.
+   The legacy lighting receptivity follow-up is implemented - see the completed
+   [Legacy lighting receptivity](../done/legacy-lighting-receptivity.md) record.
 
 The playground has no dependency on modern rendering. JSON authoring, an editor
 and cross-city assets are outside its initial scope. Original-city regression
 scenes remain required alongside controlled playground tests. See the linked
 discussions inside both records for the reasoning and adopted decision.
+
+## Frame pacing track
+
+1. **17 — [High-FPS rendering with fixed 30 Hz simulation](high-fps-timestep.md)**:
+   decouple the render rate from the fixed 30 Hz simulation, separate sim and
+   render counters, and add render-side interpolation, so the game can present
+   at 60+ FPS without changing replay, mission, AI or physics timing. Primary
+   low-risk validation is a Take a Ride session on any city/map - not only the
+   playground - which exercises physics, traffic, scenery and cop behaviour
+   without involving replays or missions. Evidence and reasoning in the
+   [high-FPS discussion](../../discussions/high-fps-timestep/index.md).
 
 ## Completed
 

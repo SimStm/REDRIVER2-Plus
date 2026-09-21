@@ -2,6 +2,7 @@
 
 #include "DeveloperDebugStart.h"
 #include "DeveloperGraphicsSettings.h"
+#include "DeveloperInputMapping.h"
 #include "DeveloperModernMesh.h"
 #include "HdTextureOverrides.h"
 
@@ -23,7 +24,9 @@
 #include "C/draw.h"
 #include "C/felony.h"
 #include "C/glaunch.h"
+#include "C/loadview.h"
 #include "C/mission.h"
+#include "C/overlay.h"
 #include "C/players.h"
 #include "C/pres.h"
 #include "C/spool.h"
@@ -44,6 +47,17 @@ extern int maxCivCars;
 extern int current_region;
 extern int LoadedArea;
 
+// Legacy content options owned by config.ini [game]. The game declares these
+// inside the functions that read them, so they are declared here the same way;
+// inside the panel's anonymous namespace they would have internal linkage.
+extern int gContentOverride;
+extern int gUserLanguage;
+extern int gDriver1Music;
+
+// config.ini freeCamera, kept so the panel can show the startup value of a
+// restart-only option it cannot change at runtime.
+extern int gFreeCameraConfiguration;
+
 namespace
 {
 bool g_initialised = false;
@@ -54,9 +68,270 @@ char g_persistenceStatus[96] = "Session settings only";
 char g_inspectorExportModId[48] = "inspector-export";
 char g_inspectorExportStatus[512] = "Select a texture to export it into a new or existing mod directory.";
 
-void UpdateInputCapture()
+// A display mode change can leave the window unusable, so it is provisional
+// until the user confirms it. The countdown runs even while the panel is
+// closed, so a change can never strand the window: with no way to press Keep,
+// it reverts.
+const float kDisplayRevertSeconds = 15.0f;
+
+int g_displayRevertArmed = 0;
+int g_displayRevertFullscreen = 0;
+int g_displayRevertWidth = 0;
+int g_displayRevertHeight = 0;
+float g_displayRevertRemaining = 0.0f;
+char g_displayStatus[128] = "";
+
+// Defined below, once the binding-capture state it also reads is declared.
+void UpdateOverlayInputState();
+
+int ChaseDisplayMode(int fullscreen, int width, int height)
 {
-	PsyX_SetInputCapture(g_visible && g_captureGameInput ? PSYX_INPUT_CAPTURE_KEYBOARD | PSYX_INPUT_CAPTURE_GAMEPAD : 0);
+	int appliedWidth = 0;
+	int appliedHeight = 0;
+	const int applied = PsyX_ApplyWindowMode(fullscreen, width, height, &appliedWidth, &appliedHeight);
+	snprintf(g_displayStatus, sizeof(g_displayStatus), applied
+		? "Applied %s %d x %d"
+		: "Window manager refused %s %d x %d; kept the previous mode",
+		fullscreen ? "fullscreen" : "windowed", appliedWidth, appliedHeight);
+	return applied;
+}
+
+// Starts a provisional mode change from the state that is on screen now.
+void BeginDisplayChange(int fullscreen, int width, int height)
+{
+	SDL_Window* window = PsyX_GetSDLWindow();
+	if (window)
+	{
+		g_displayRevertFullscreen = (SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) != 0;
+		SDL_GetWindowSize(window, &g_displayRevertWidth, &g_displayRevertHeight);
+	}
+	else
+	{
+		g_displayRevertFullscreen = 0;
+		g_displayRevertWidth = width;
+		g_displayRevertHeight = height;
+	}
+
+	if (!ChaseDisplayMode(fullscreen, width, height))
+		return;
+
+	g_displayRevertArmed = 1;
+	g_displayRevertRemaining = kDisplayRevertSeconds;
+	UpdateOverlayInputState();
+}
+
+void RevertDisplayMode()
+{
+	ChaseDisplayMode(g_displayRevertFullscreen, g_displayRevertWidth, g_displayRevertHeight);
+	g_displayRevertArmed = 0;
+	g_displayRevertRemaining = 0.0f;
+	UpdateOverlayInputState();
+}
+
+// Accepts the provisional mode and persists it. Shared by the panel button and
+// the display tests so both exercise the same path.
+int ConfirmDisplayMode()
+{
+	g_displayRevertArmed = 0;
+	g_displayRevertRemaining = 0.0f;
+	UpdateOverlayInputState();
+	return DeveloperGraphicsSettings_SaveRuntime() ? 1 : 0;
+}
+
+// Runs every frame the overlay is drawn, visible or not, so the countdown is
+// never paused by closing the panel.
+void UpdateDisplayRevert()
+{
+	if (!g_displayRevertArmed)
+		return;
+
+	g_displayRevertRemaining -= ImGui::GetIO().DeltaTime;
+	if (g_displayRevertRemaining <= 0.0f)
+		RevertDisplayMode();
+}
+
+// The display confirmation is its own window rather than part of the panel: a
+// mode change can hide, clip or shrink the panel, so the buttons that accept or
+// reject it must not depend on it. The position is anchored to the applied
+// display size every frame, which keeps the window on screen after the very
+// resolution change it is asking about.
+void DrawDisplayConfirmWindow()
+{
+	if (!g_displayRevertArmed)
+		return;
+
+	const ImGuiIO& io = ImGui::GetIO();
+	const ImVec2 margin(16.0f, 16.0f);
+	ImGui::SetNextWindowPos(ImVec2(margin.x, io.DisplaySize.y - margin.y), ImGuiCond_Always, ImVec2(0.0f, 1.0f));
+	ImGui::SetNextWindowBgAlpha(0.94f);
+
+	const ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize |
+		ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_AlwaysAutoResize;
+
+	if (ImGui::Begin("Display mode", NULL, flags))
+	{
+		ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.3f, 1.0f), "Display mode not confirmed");
+		ImGui::Text("Reverting in %.0f s.", g_displayRevertRemaining);
+		ImGui::Separator();
+		if (ImGui::Button("Keep this display mode", ImVec2(190.0f, 0.0f)))
+		{
+			snprintf(g_persistenceStatus, sizeof(g_persistenceStatus), "%s",
+				ConfirmDisplayMode() ? "Saved developer_graphics.ini" : "Save failed; display mode is not saved");
+		}
+		ImGui::SameLine();
+		if (ImGui::Button("Revert now", ImVec2(120.0f, 0.0f)))
+			RevertDisplayMode();
+	}
+	ImGui::End();
+}
+
+// Binding capture: while a binding is being captured the panel consumes the
+// next matching event, so the key or button being bound can never reach the
+// game. A capture also expires on its own, so a lost focus or a forgotten
+// dialog cannot leave input held by the panel forever.
+struct BindingCapture
+{
+	int active;
+	DeveloperInputTable table;
+	DeveloperInputDevice device;
+	int action;
+	float remaining;
+};
+
+BindingCapture g_bindingCapture = { 0, DeveloperInputTable::Game, DeveloperInputDevice::Keyboard, -1, 0.0f };
+const float kBindingCaptureSeconds = 10.0f;
+char g_bindingStatus[160] = "Overrides live in developer_input.ini; config.ini is not modified.";
+
+// The panel, a binding capture and the provisional display mode all need the
+// mouse cursor and all must keep their clicks out of the game. The display
+// confirmation can be on screen with the panel closed, so it is part of both
+// decisions instead of relying on g_visible.
+void UpdateOverlayInputState()
+{
+	const int showCursor = g_visible || g_displayRevertArmed;
+	PsyX_SetCursorRelative(0);
+	SDL_ShowCursor(showCursor ? SDL_ENABLE : SDL_DISABLE);
+
+	const int capture = (g_visible && g_captureGameInput) || g_bindingCapture.active || g_displayRevertArmed;
+	PsyX_SetInputCapture(capture ? PSYX_INPUT_CAPTURE_KEYBOARD | PSYX_INPUT_CAPTURE_GAMEPAD : 0);
+}
+
+void BeginBindingCapture(DeveloperInputTable table, DeveloperInputDevice device, int action)
+{
+	g_bindingCapture.active = 1;
+	g_bindingCapture.table = table;
+	g_bindingCapture.device = device;
+	g_bindingCapture.action = action;
+	g_bindingCapture.remaining = kBindingCaptureSeconds;
+	UpdateOverlayInputState();
+}
+
+void EndBindingCapture()
+{
+	g_bindingCapture.active = 0;
+	g_bindingCapture.action = -1;
+	g_bindingCapture.remaining = 0.0f;
+	UpdateOverlayInputState();
+}
+
+void CancelBindingCapture()
+{
+	if (!g_bindingCapture.active)
+		return;
+
+	snprintf(g_bindingStatus, sizeof(g_bindingStatus), "Cancelled %s capture",
+		DeveloperInputMapping_ActionName(g_bindingCapture.device, g_bindingCapture.action));
+	EndBindingCapture();
+}
+
+void CommitBinding(DeveloperInputDevice device, int value)
+{
+	if (!g_bindingCapture.active || g_bindingCapture.device != device)
+		return;
+
+	char binding[64];
+	char status[160];
+	DeveloperInputMapping_Format(device, value, binding, sizeof(binding));
+	DeveloperInputMapping_Set(g_bindingCapture.table, device, g_bindingCapture.action, value);
+	DeveloperInputMapping_Apply(g_bindingCapture.table);
+	const int saved = DeveloperInputMapping_SaveDefaultFile();
+
+	snprintf(status, sizeof(status), "%s -> %s (%s), %s",
+		DeveloperInputMapping_ActionName(device, g_bindingCapture.action), binding,
+		g_bindingCapture.table == DeveloperInputTable::Game ? "game" : "menu",
+		saved >= 0 ? "saved" : "save failed; session only");
+	snprintf(g_bindingStatus, sizeof(g_bindingStatus), "%s", status);
+	EndBindingCapture();
+}
+
+// Consumes the events a capture is waiting for. A capture only accepts its own
+// device, so binding a key never silently rebinds a controller action.
+int HandleBindingCaptureEvent(const SDL_Event* event)
+{
+	if (!g_bindingCapture.active)
+		return 0;
+
+	if (g_bindingCapture.device == DeveloperInputDevice::Keyboard)
+	{
+		switch (event->type)
+		{
+		case SDL_KEYDOWN:
+			if (event->key.repeat == 0)
+			{
+				if (event->key.keysym.scancode == SDL_SCANCODE_ESCAPE)
+					CancelBindingCapture();
+				else
+					CommitBinding(DeveloperInputDevice::Keyboard, event->key.keysym.scancode);
+			}
+			return 1;
+		default:
+			break;
+		}
+	}
+	else
+	{
+		switch (event->type)
+		{
+		case SDL_CONTROLLERBUTTONDOWN:
+			CommitBinding(DeveloperInputDevice::Controller, event->cbutton.button);
+			return 1;
+		case SDL_CONTROLLERAXISMOTION:
+			// A resting stick reports a small offset; only a deliberate push
+			// counts as a binding.
+			if (event->caxis.value > 16000 || event->caxis.value < -16000)
+			{
+				int value = event->caxis.axis | CONTROLLER_MAP_FLAG_AXIS;
+				if (event->caxis.value < 0)
+					value |= CONTROLLER_MAP_FLAG_INVERSE;
+				CommitBinding(DeveloperInputDevice::Controller, value);
+			}
+			return 1;
+		default:
+			break;
+		}
+	}
+
+	// Right-click cancels; left clicks must still reach the panel's own widgets.
+	if (event->type == SDL_MOUSEBUTTONDOWN && event->button.button == SDL_BUTTON_RIGHT)
+	{
+		CancelBindingCapture();
+		return 1;
+	}
+
+	return 0;
+}
+
+void UpdateBindingCapture()
+{
+	if (!g_bindingCapture.active)
+		return;
+
+	g_bindingCapture.remaining -= ImGui::GetIO().DeltaTime;
+	if (g_bindingCapture.remaining <= 0.0f)
+	{
+		snprintf(g_bindingStatus, sizeof(g_bindingStatus), "Capture timed out; nothing changed");
+		EndBindingCapture();
+	}
 }
 
 void HelpMarker(const char* description)
@@ -70,6 +345,53 @@ void HelpMarker(const char* description)
 		ImGui::PopTextWrapPos();
 		ImGui::EndTooltip();
 	}
+}
+
+// Width of the checkbox as ImGui lays it out: the square, the inner spacing and
+// the label. Used to decide whether a trailing help marker still fits.
+float CheckboxControlWidth(const char* label)
+{
+	return ImGui::GetFrameHeight() + ImGui::GetStyle().ItemInnerSpacing.x + ImGui::CalcTextSize(label).x;
+}
+
+// Help marker at the end of the control that was just submitted. The marker
+// stays on the control's line when the line has room and moves to its own line
+// otherwise, so a long label is never clipped by the marker.
+void HelpMarkerAfterControl(const char* description, float controlWidth)
+{
+	const float markerWidth = ImGui::CalcTextSize("(?)").x + ImGui::GetStyle().ItemSpacing.x;
+	if (controlWidth + markerWidth <= ImGui::GetContentRegionAvail().x)
+		ImGui::SameLine();
+	HelpMarker(description);
+}
+
+// Checkbox with its explanation at the end of the label instead of below it.
+bool CheckboxWithHelp(const char* label, bool* value, const char* description)
+{
+	const float controlWidth = CheckboxControlWidth(label);
+	const bool changed = ImGui::Checkbox(label, value);
+	HelpMarkerAfterControl(description, controlWidth);
+	return changed;
+}
+
+// Slider with the same trailing-marker treatment as CheckboxWithHelp.
+bool SliderFloatWithHelp(const char* label, float* value, float minimum, float maximum,
+	const char* format, const char* description)
+{
+	const float controlWidth = ImGui::CalcItemWidth() + ImGui::GetStyle().ItemInnerSpacing.x + ImGui::CalcTextSize(label).x;
+	const bool changed = ImGui::SliderFloat(label, value, minimum, maximum, format);
+	HelpMarkerAfterControl(description, controlWidth);
+	return changed;
+}
+
+// Integer slider with the same trailing-marker treatment as CheckboxWithHelp.
+bool SliderIntWithHelp(const char* label, int* value, int minimum, int maximum,
+	const char* format, const char* description)
+{
+	const float controlWidth = ImGui::CalcItemWidth() + ImGui::GetStyle().ItemInnerSpacing.x + ImGui::CalcTextSize(label).x;
+	const bool changed = ImGui::SliderInt(label, value, minimum, maximum, format);
+	HelpMarkerAfterControl(description, controlWidth);
+	return changed;
 }
 
 void DebugValue(const char* label, int value, const char* description)
@@ -285,6 +607,8 @@ void DrawBatchJobUi()
 	}
 }
 
+void DrawLegacyContentSection();
+
 void DrawGameDebugTab()
 {
 	ImGui::TextUnformatted("Live values behind the legacy in-game debug overlay.");
@@ -292,10 +616,9 @@ void DrawGameDebugTab()
 	HelpMarker("These values are read from the running game state. They help diagnose streaming, traffic, mission, vehicle, and road behaviour.");
 
 	bool showLegacyStats = gDisplayDrawStats != 0;
-	if (ImGui::Checkbox("Show legacy in-game stats", &showLegacyStats))
+	if (CheckboxWithHelp("Show legacy in-game stats", &showLegacyStats,
+		"Draws the original text-only statistics directly into the PlayStation-style game frame. The ImGui view below is easier to inspect and does not require this option."))
 		gDisplayDrawStats = showLegacyStats;
-	ImGui::SameLine();
-	HelpMarker("Draws the original text-only statistics directly into the PlayStation-style game frame. The ImGui view below is easier to inspect and does not require this option.");
 
 	if (ImGui::CollapsingHeader("Renderer and primitive table", ImGuiTreeNodeFlags_DefaultOpen))
 	{
@@ -448,6 +771,50 @@ void DrawGameDebugTab()
 		ImGui::TextWrapped("%s", snapshotStatus);
 		ImGui::TextDisabled("%s is applied at startup only when no -mission or -replay argument is present.", DeveloperDebugStart_GetFilePath());
 	}
+
+	ImGui::Separator();
+	DrawLegacyContentSection();
+}
+
+// Legacy content options that live in config.ini [game]. They are session
+// values here: the panel never writes config.ini, and each one states when the
+// running game picks the change up.
+void DrawLegacyContentSection()
+{
+	ImGui::TextUnformatted("Content and language");
+	ImGui::SameLine();
+	HelpMarker("These are config.ini [game] options. Changing them here affects the running session only; config.ini is the shipped owner and is never modified by the panel.");
+
+	bool contentOverride = gContentOverride != 0;
+	if (CheckboxWithHelp("Modded content override", &contentOverride,
+		"config.ini overrideContent. Uses modded car models and cosmetic/denting resources when present. Car availability and the frontend read it while loading, so the change applies from the next frontend or level load."))
+		gContentOverride = contentOverride ? 1 : 0;
+
+	bool disableBridges = gDisableChicagoBridges != 0;
+	if (CheckboxWithHelp("Disable Chicago bridges", &disableBridges,
+		"config.ini disableChicagoBridges (experimental: also activate AI roads). Read when a level's roads are set up, so it applies from the next level load."))
+		gDisableChicagoBridges = disableBridges ? 1 : 0;
+
+	static const char* const kLanguageNames[] = { "English", "Italian", "German", "French", "Spanish" };
+	int language = gUserLanguage;
+	if (ImGui::Combo("Language", &language, kLanguageNames, (int)(sizeof(kLanguageNames) / sizeof(kLanguageNames[0]))))
+		gUserLanguage = language;
+	HelpMarkerAfterControl("config.ini languageId. The *_GAME.LTXT and *_MISSION.LTXT files are loaded once at startup, so a change applies after a restart.",
+		ImGui::CalcItemWidth() + ImGui::GetStyle().ItemInnerSpacing.x + ImGui::CalcTextSize("Language").x);
+
+	bool driver1Music = gDriver1Music != 0;
+	if (CheckboxWithHelp("Driver 1 music", &driver1Music,
+		"config.ini driver1music. Plays D1MUSIC.BIN from the DRIVER2\\SOUND folder when present. Read when music starts, so it applies from the next music change."))
+		gDriver1Music = driver1Music ? 1 : 0;
+
+	// Restart-only options are shown disabled with the reason rather than hidden,
+	// so the panel does not look like it is missing them.
+	bool freeCamera = gFreeCameraConfiguration != 0;
+	ImGui::BeginDisabled();
+	ImGui::Checkbox("Free camera (restart only)", &freeCamera);
+	ImGui::EndDisabled();
+	ImGui::SameLine();
+	HelpMarker("config.ini freeCamera installs the debug camera key and mouse handlers while the game initialises, so it cannot be toggled in a running session. Set it in config.ini and restart.");
 }
 
 void DrawThreeDDebugTab()
@@ -497,9 +864,8 @@ void DrawThreeDDebugTab()
 	}
 
 	ImGui::Separator();
-	ImGui::Checkbox("Pick visible primitive", &g_inspectorPickMode);
-	ImGui::SameLine();
-	HelpMarker("With this enabled, left-click a visible game primitive outside the ImGui windows. The selection is resolved from the completed PSX draw stream on the next frame.");
+	CheckboxWithHelp("Pick visible primitive", &g_inspectorPickMode,
+		"With this enabled, left-click a visible game primitive outside the ImGui windows. The selection is resolved from the completed PSX draw stream on the next frame.");
 	ImGui::Checkbox("Highlight selected draw source", &showHighlight);
 	ImGui::Checkbox("Show selection label", &showLabel);
 	ImGui::ColorEdit4("Highlight colour", highlightColour);
@@ -909,13 +1275,12 @@ void DrawThreeDDebugTab()
 	// Palette choice at export time. Cars and pedestrians are drawn through
 	// runtime palettes, so this decides which colours the PNG carries.
 	bool baseColourExport = HdTextureOverrides_IsBaseColourExportEnabled() != 0;
-	if (ImGui::Checkbox("Export textures in base colours", &baseColourExport))
+	if (CheckboxWithHelp("Export textures in base colours", &baseColourExport,
+		"Enabled: the PNG uses the palette the level registered for the texture, the original artwork colours. This is the right choice for recolouring mods, because the game still selects a runtime palette (CLUT) for cars and pedestrians, and the modded image is re-mapped through it.\n\nDisabled: the PNG uses the palette of the clicked primitive, so a car or pedestrian is exported with the colours that instance currently shows. The same texture can then produce a different PNG per instance."))
 	{
 		HdTextureOverrides_SetBaseColourExport(baseColourExport ? 1 : 0);
 		DeveloperGraphicsSettings_SaveRuntime();
 	}
-	ImGui::SameLine();
-	HelpMarker("Enabled: the PNG uses the palette the level registered for the texture, the original artwork colours. This is the right choice for recolouring mods, because the game still selects a runtime palette (CLUT) for cars and pedestrians, and the modded image is re-mapped through it.\n\nDisabled: the PNG uses the palette of the clicked primitive, so a car or pedestrian is exported with the colours that instance currently shows. The same texture can then produce a different PNG per instance.");
 	ImGui::TextDisabled(baseColourExport
 		? "Base palette: original colours, keeps CLUT recolouring working."
 		: "Primitive palette: the colours this instance currently shows.");
@@ -1162,19 +1527,17 @@ void DrawModsTab()
 	if (diagnostics.supported)
 	{
 		bool enabled = diagnostics.enabled != 0;
-		if (ImGui::Checkbox("Enable HD texture overrides", &enabled))
+		if (CheckboxWithHelp("Enable HD texture overrides", &enabled,
+			"Takes effect on the next primitive without reloading the level. Manifest or PNG edits require a reload or a level reload."))
 			HdTextureOverrides_SetEnabled(enabled);
-		ImGui::SameLine();
-		HelpMarker("Takes effect on the next primitive without reloading the level. Manifest or PNG edits require a reload or a level reload.");
 
 		bool proportionalAlpha = g_cfg_overrideProportionalAlpha != 0;
-		if (ImGui::Checkbox("Proportional override alpha", &proportionalAlpha))
+		if (CheckboxWithHelp("Proportional override alpha", &proportionalAlpha,
+			"Off (default): an override texel below 0.5 alpha is a hole, the behaviour existing mods were authored against.\n\nOn: on BM_AVERAGE draws the imported alpha blends proportionally, so 0/64/128/192/255 give five steps, while alpha 0 still cuts out and 128 still reproduces the original STP=1 blend. Additive, subtractive and opaque draws keep the binary cutout so rendered results and picking agree."))
 		{
 			g_cfg_overrideProportionalAlpha = proportionalAlpha ? 1 : 0;
 			DeveloperGraphicsSettings_SaveRuntime();
 		}
-		ImGui::SameLine();
-		HelpMarker("Off (default): an override texel below 0.5 alpha is a hole, the behaviour existing mods were authored against.\n\nOn: on BM_AVERAGE draws the imported alpha blends proportionally, so 0/64/128/192/255 give five steps, while alpha 0 still cuts out and 128 still reproduces the original STP=1 blend. Additive, subtractive and opaque draws keep the binary cutout so rendered results and picking agree.");
 		ImGui::TextDisabled(proportionalAlpha
 			? "Override alpha: proportional on BM_AVERAGE; 0 cuts out, 128 matches the original STP=1 blend."
 			: "Override alpha: binary 0.5 cutout (compatibility default).");
@@ -1240,6 +1603,147 @@ void DrawModsTab()
 	}
 }
 
+// Binding editor. The game and frontend use separate tables, so the tab keeps
+// them distinct and shows which one is live.
+void DrawInputTab()
+{
+	static int contextIndex = 0;
+	const DeveloperInputTable table = contextIndex == 0 ? DeveloperInputTable::Game : DeveloperInputTable::Menu;
+
+	ImGui::TextWrapped("Bindings apply to the running game immediately and are saved to developer_input.ini as overrides: only bindings that differ from config.ini are listed, so resetting one returns it to the config.ini value.");
+	HelpMarker("Each row starts with the binding on its button. Click it, then press the key or controller button to bind; Esc, a right click, or 10 seconds without input cancels. Editing never changes which table is active, so a gameplay binding cannot make the menu respond differently until the game switches context on its own.");
+
+	if (g_bindingCapture.active)
+	{
+		ImGui::Separator();
+		ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.85f, 0.3f, 1.0f));
+		ImGui::TextWrapped("Listening for %s on %s (%s): %.0f s left.",
+			g_bindingCapture.device == DeveloperInputDevice::Keyboard ? "a key" : "a button or stick push",
+			DeveloperInputMapping_ActionName(g_bindingCapture.device, g_bindingCapture.action),
+			g_bindingCapture.table == DeveloperInputTable::Game ? "game" : "menu",
+			g_bindingCapture.remaining);
+		ImGui::PopStyleColor();
+		if (ImGui::Button("Cancel capture", ImVec2(160.0f, 0.0f)))
+			CancelBindingCapture();
+		ImGui::Separator();
+	}
+
+	ImGui::RadioButton("Game controls", &contextIndex, 0);
+	ImGui::SameLine();
+	ImGui::RadioButton("Menu controls", &contextIndex, 1);
+	ImGui::SameLine();
+	ImGui::TextDisabled("active: %s", DeveloperInputMapping_GetActive() == DeveloperInputTable::Game ? "game" : "menu");
+	HelpMarker("config.ini [kbcontrols_game]/[controls_game] and [kbcontrols_menu]/[controls_menu] are separate tables; the game swaps them when a menu opens, so the same key may appear in both.");
+
+	for (int deviceIndex = 0; deviceIndex < 2; deviceIndex++)
+	{
+		const DeveloperInputDevice device = deviceIndex == 0 ? DeveloperInputDevice::Keyboard : DeveloperInputDevice::Controller;
+		const int actionCount = DeveloperInputMapping_ActionCount(device);
+
+		ImGui::Separator();
+		ImGui::TextUnformatted(deviceIndex == 0 ? "Keyboard" : "Controller");
+		ImGui::SameLine();
+		ImGui::PushID(deviceIndex);
+		if (ImGui::Button("Reset all to defaults", ImVec2(170.0f, 0.0f)))
+		{
+			DeveloperInputMapping_ResetTable(table, device);
+			DeveloperInputMapping_Apply(table);
+			const int saved = DeveloperInputMapping_SaveDefaultFile();
+			snprintf(g_bindingStatus, sizeof(g_bindingStatus), "Reset the %s %s bindings, %s",
+				contextIndex == 0 ? "game" : "menu", deviceIndex == 0 ? "keyboard" : "controller",
+				saved >= 0 ? "saved" : "save failed; session only");
+		}
+		ImGui::PopID();
+		HelpMarkerAfterControl(deviceIndex == 0
+			? "Defaults are the bindings config.ini provided at startup for this table."
+			: "Controller defaults use the SDL game-controller names, including the four stick axes, which the keyboard has no equivalent for.",
+			ImGui::GetItemRectSize().x);
+
+		// The action column fits the longest action name; the conflict note has
+		// its own stretch column, so a long note wraps inside the table instead
+		// of widening the binding column until the table leaves the panel.
+		float actionWidth = 0.0f;
+		for (int action = 0; action < actionCount; action++)
+		{
+			const float width = ImGui::CalcTextSize(DeveloperInputMapping_ActionName(device, action)).x;
+			if (width > actionWidth)
+				actionWidth = width;
+		}
+		actionWidth += ImGui::GetStyle().CellPadding.x * 2.0f;
+
+		if (ImGui::BeginTable(deviceIndex == 0 ? "keyboardBindings" : "controllerBindings", 4,
+			ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_NoSavedSettings))
+		{
+			ImGui::TableSetupColumn("Action", ImGuiTableColumnFlags_WidthFixed, actionWidth);
+			ImGui::TableSetupColumn("Binding", ImGuiTableColumnFlags_WidthFixed, 150.0f);
+			ImGui::TableSetupColumn("Also bound to", ImGuiTableColumnFlags_WidthStretch);
+			ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed);
+			ImGui::TableHeadersRow();
+
+			for (int action = 0; action < actionCount; action++)
+			{
+				ImGui::TableNextRow();
+				ImGui::PushID(action);
+
+				ImGui::TableSetColumnIndex(0);
+				ImGui::AlignTextToFramePadding();
+				ImGui::TextUnformatted(DeveloperInputMapping_ActionName(device, action));
+
+				ImGui::TableSetColumnIndex(1);
+				char binding[64];
+				const int value = DeveloperInputMapping_Get(table, device, action);
+				DeveloperInputMapping_Format(device, value, binding, sizeof(binding));
+				const int capturing = g_bindingCapture.active && g_bindingCapture.table == table &&
+					g_bindingCapture.device == device && g_bindingCapture.action == action;
+				if (ImGui::Button(capturing ? "press..." : binding, ImVec2(150.0f, 0.0f)))
+					BeginBindingCapture(table, device, action);
+
+				ImGui::TableSetColumnIndex(2);
+				int conflicts[8];
+				const int conflictCount = DeveloperInputMapping_Conflicts(table, device, value, conflicts, 8);
+				if (conflictCount > 1)
+				{
+					char shared[128] = "";
+					for (int i = 0; i < conflictCount && i < 8; i++)
+					{
+						if (conflicts[i] == action)
+							continue;
+						char part[40];
+						snprintf(part, sizeof(part), "%s%s", shared[0] ? ", " : "",
+							DeveloperInputMapping_ActionName(device, conflicts[i]));
+						strncat(shared, part, sizeof(shared) - strlen(shared) - 1);
+					}
+					ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.65f, 0.3f, 1.0f));
+					ImGui::TextWrapped("also %s", shared);
+					ImGui::PopStyleColor();
+				}
+				else
+				{
+					ImGui::AlignTextToFramePadding();
+					ImGui::TextDisabled("-");
+				}
+
+				ImGui::TableSetColumnIndex(3);
+				if (ImGui::Button("Reset"))
+				{
+					DeveloperInputMapping_ResetAction(table, device, action);
+					DeveloperInputMapping_Apply(table);
+					const int saved = DeveloperInputMapping_SaveDefaultFile();
+					snprintf(g_bindingStatus, sizeof(g_bindingStatus), "Reset %s (%s), %s",
+						DeveloperInputMapping_ActionName(device, action), contextIndex == 0 ? "game" : "menu",
+						saved >= 0 ? "saved" : "save failed; session only");
+				}
+				ImGui::PopID();
+			}
+
+			ImGui::EndTable();
+		}
+	}
+
+	ImGui::Separator();
+	ImGui::TextWrapped("%s", g_bindingStatus);
+}
+
 void DrawAboutTab()
 {
 	ImGui::TextUnformatted("REDRIVER2-Plus modifications implemented by Lucas Sims.");
@@ -1260,10 +1764,11 @@ void DrawAboutTab()
 
 void SetVisible(bool visible)
 {
+	if (!visible)
+		CancelBindingCapture();
+
 	g_visible = visible;
-	UpdateInputCapture();
-	PsyX_SetCursorRelative(0);
-	SDL_ShowCursor(visible ? SDL_ENABLE : SDL_DISABLE);
+	UpdateOverlayInputState();
 }
 
 int HandleSDLEvent(const SDL_Event* event)
@@ -1279,6 +1784,11 @@ int HandleSDLEvent(const SDL_Event* event)
 		SetVisible(!g_visible);
 		return 1;
 	}
+
+	// A pending capture owns the next matching event, before the game and before
+	// the panel's other input paths.
+	if (HandleBindingCaptureEvent(event))
+		return 1;
 
 	if (g_visible && g_inspectorPickMode && event->type == SDL_MOUSEBUTTONDOWN &&
 		event->button.button == SDL_BUTTON_LEFT && !ImGui::IsWindowHovered(ImGuiHoveredFlags_AnyWindow))
@@ -1309,13 +1819,11 @@ int HandleSDLEvent(const SDL_Event* event)
 	}
 }
 
-// Builds the panel's ImGui windows. The Vulkan backend owns the ImGui frame
-// and calls this between ImGui::NewFrame and ImGui::Render.
-void BuildOverlayWidgets()
+// The panel body. The display confirmation is deliberately not part of it:
+// a mode change can hide or clip the panel, so that window must be drawn
+// whether or not this one is, and after it so it is never covered.
+void DrawDeveloperPanel()
 {
-	if (!g_visible)
-		return;
-
 	const ImVec2 displaySize = ImGui::GetIO().DisplaySize;
 	ImGui::SetNextWindowSizeConstraints(ImVec2(320.0f, 240.0f), ImVec2(displaySize.x, displaySize.y * 0.95f));
 	ImGui::SetNextWindowSize(ImVec2(620.0f, displaySize.y * 0.85f), ImGuiCond_FirstUseEver);
@@ -1323,10 +1831,10 @@ void BuildOverlayWidgets()
 	{
 		ImGui::PushTextWrapPos(0.0f);
 		ImGui::TextUnformatted("F11 closes this panel. Settings are live.");
-		if (ImGui::Checkbox("Capture game input while panel is open", &g_captureGameInput))
-			UpdateInputCapture();
-		ImGui::SameLine();
-		HelpMarker("Enabled: keyboard, controller, and mouse events are held by the panel so changing a setting cannot also control the game. Disabled: the panel remains visible while the game continues to receive its normal inputs. UI interactions may then also affect the game.");
+		if (CheckboxWithHelp("Capture game input while panel is open", &g_captureGameInput,
+			"Enabled: keyboard, controller, and mouse events are held by the panel so changing a setting cannot also control the game. Disabled: the panel remains visible while the game continues to receive its normal inputs. UI interactions may then also affect the game."))
+			UpdateOverlayInputState();
+
 		if (ImGui::BeginTabBar("DeveloperPanelTabs"))
 		{
 			if (ImGui::BeginTabItem("Graphics"))
@@ -1336,30 +1844,156 @@ void BuildOverlayWidgets()
 				bool pgxpZBuffer = g_cfg_pgxpZBuffer != 0;
 				bool vsync = g_cfg_swapInterval != 0;
 				if (ImGui::Checkbox("Bilinear filtering", &bilinear)) g_cfg_bilinearFiltering = bilinear;
-				if (ImGui::Checkbox("PGXP texture mapping", &pgxpTextureMapping)) g_cfg_pgxpTextureCorrection = pgxpTextureMapping;
-				if (ImGui::Checkbox("PGXP Z-buffer", &pgxpZBuffer)) g_cfg_pgxpZBuffer = pgxpZBuffer;
+				if (CheckboxWithHelp("PGXP texture mapping", &pgxpTextureMapping,
+					"Perspective-correct textures and sub-pixel vertex positions for the emulated PSX geometry. It also changes the depth the legacy renderer stores, which the modern shadow and lighting reconstruction reads."))
+					g_cfg_pgxpTextureCorrection = pgxpTextureMapping;
+				if (CheckboxWithHelp("PGXP Z-buffer", &pgxpZBuffer,
+					"Depth-tests the emulated PSX geometry with PGXP's interpolated Z. With it off the legacy scene is drawn without depth testing and writes no depth, so the modern shadow and lighting passes have nothing to reconstruct from."))
+					g_cfg_pgxpZBuffer = pgxpZBuffer;
 				if (ImGui::Checkbox("VSync", &vsync)) g_cfg_swapInterval = vsync;
 
 				ImGui::Separator();
 				bool enhancedRenderer = DeveloperModernMesh_GetEnabled() != 0;
-				if (ImGui::Checkbox("Enhanced renderer (modern meshes/PBR)", &enhancedRenderer))
+				if (CheckboxWithHelp("Enhanced renderer (modern meshes/PBR)", &enhancedRenderer,
+					"Switches between the classic PSX renderer and the experimental modern path (imported glTF meshes, PBR materials, dynamic lights). F10 toggles it at any time. Requires developer_modern_mesh.ini."))
 					DeveloperModernMesh_SetEnabled(enhancedRenderer);
-				HelpMarker("Switches between the classic PSX renderer and the experimental modern path (imported glTF meshes, PBR materials, dynamic lights). F10 toggles it at any time. Requires developer_modern_mesh.ini.");
 
 				bool modernShadows = DeveloperModernMesh_GetShadows() != 0;
-				if (ImGui::Checkbox("Modern shadows", &modernShadows))
+				if (CheckboxWithHelp("Modern shadows", &modernShadows,
+					"Directional shadow map. Modern meshes cast; legacy geometry receives the projected shadow. Legacy geometry does not cast yet."))
 					DeveloperModernMesh_SetShadows(modernShadows);
-				HelpMarker("Directional shadow map. Coverage is modern meshes only: legacy geometry neither casts nor receives.");
 
 				bool modernAO = DeveloperModernMesh_GetAmbientOcclusion() != 0;
-				if (ImGui::Checkbox("Modern ambient occlusion", &modernAO))
+				if (CheckboxWithHelp("Modern ambient occlusion", &modernAO,
+					"Normal-based ambient-occlusion approximation on the modern path; a true depth-based screen-space AO is a follow-up."))
 					DeveloperModernMesh_SetAmbientOcclusion(modernAO);
-				HelpMarker("Normal-based ambient-occlusion approximation on the modern path; a true depth-based screen-space AO is a follow-up.");
+
+				bool legacyLighting = DeveloperModernMesh_GetLegacyLighting() != 0;
+				if (CheckboxWithHelp("Legacy geometry receives modern lighting", &legacyLighting,
+					"Adds the modern sun to the already-rendered legacy scene (buildings, vehicles, pedestrians, trees) using a normal reconstructed from the depth buffer. The legacy shading itself is preserved; the strength slider scales the added light. F9 toggles it. Requires the enhanced renderer."))
+					DeveloperModernMesh_SetLegacyLighting(legacyLighting);
+
+				// Every developer_modern_mesh.ini light and look value in one
+				// place, so the lighting can be checked at different angles
+				// without editing the file or restarting. The F-keys remain as
+				// a quick in-game alternative.
+				if (ImGui::CollapsingHeader("Modern sun and look", ImGuiTreeNodeFlags_DefaultOpen))
+				{
+					float sunAzimuth = 0.0f;
+					float sunElevation = 0.0f;
+					DeveloperModernMesh_GetSunAngles(&sunAzimuth, &sunElevation);
+					if (SliderFloatWithHelp("Sun azimuth", &sunAzimuth, 0.0f, 360.0f, "%.0f deg",
+						"Compass direction the sunlight travels from. [ and ] rotate the sun in game."))
+						DeveloperModernMesh_SetSunAngles(sunAzimuth, sunElevation);
+					if (SliderFloatWithHelp("Sun height", &sunElevation, 3.0f, 88.0f, "%.0f deg",
+						"Elevation above the horizon. Lower values lengthen the shadows; ; and ' tilt the sun in game."))
+						DeveloperModernMesh_SetSunAngles(sunAzimuth, sunElevation);
+
+					float lightIntensity = DeveloperModernMesh_GetLightIntensity();
+					if (SliderFloatWithHelp("Sun intensity", &lightIntensity, 0.0f, 4.0f, "%.2f",
+						"Modern sun radiance for the modern meshes and the legacy receptivity term. config.ini has no equivalent; it is stored in developer_modern_mesh.ini as lightintensity."))
+						DeveloperModernMesh_SetLightIntensity(lightIntensity);
+
+					float ambient = DeveloperModernMesh_GetAmbient();
+					if (SliderFloatWithHelp("Modern ambient", &ambient, 0.0f, 1.0f, "%.2f",
+						"Ambient term of the modern mesh shading. It does not change the legacy scene, which keeps its own shading."))
+						DeveloperModernMesh_SetAmbient(ambient);
+
+					float exposure = DeveloperModernMesh_GetExposure();
+					if (SliderFloatWithHelp("Modern exposure", &exposure, 0.1f, 4.0f, "%.2f",
+						"Output multiplier of the modern mesh shading. - and = change it in game."))
+						DeveloperModernMesh_SetExposure(exposure);
+
+					float shadowExtent = DeveloperModernMesh_GetShadowExtent();
+					if (SliderFloatWithHelp("Shadow volume size", &shadowExtent, 500.0f, 8000.0f, "%.0f",
+						"Half-size of the orthographic shadow volume in world units. Larger values cover more ground at a lower shadow resolution."))
+						DeveloperModernMesh_SetShadowExtent(shadowExtent);
+
+					if (legacyLighting)
+					{
+						float receptivity = DeveloperModernMesh_GetLegacyLightReceptivity();
+						if (SliderFloatWithHelp("Legacy light strength", &receptivity, 0.0f, 1.0f, "%.2f",
+							"Diffuse sun multiplier applied to legacy pixels that face the sun. 0 is the shipped look; higher values brighten sun-facing surfaces more."))
+							DeveloperModernMesh_SetLegacyLightReceptivity(receptivity);
+					}
+
+					int shadowDebug = DeveloperModernMesh_GetShadowDebug();
+					if (SliderIntWithHelp("Shadow debug view", &shadowDebug, 0, 10, "%d",
+						"Replaces the frame with a diagnostic view: 1 scene depth, 2 shadow frustum, 3 shadow map, 4 projected vs stored depth, 5 sun term, 6 reconstructed normal, 7 light scale, 8 two-channel depth, 9 two-channel distance, 10 sun coverage. 0 is the normal frame. The 7 key cycles 0-4 in game."))
+						DeveloperModernMesh_SetShadowDebugMode(shadowDebug);
+				}
 
 				ImGui::SliderInt("Draw distance", &gDrawDistance, 441, 1800);
 				int fieldOfView = gCameraDefaultScrZ;
 				if (ImGui::SliderInt("Field of view", &fieldOfView, 128, 384))
 					gCameraDefaultScrZ = (short)fieldOfView;
+
+				ImGui::Separator();
+				// Game options that the classic renderer reads every frame or
+				// every loading screen, so a change is visible without a
+				// restart. They persist here instead of in config.ini, which
+				// stays the shipped default.
+				bool dynamicLights = gEnableDlights != 0;
+				if (CheckboxWithHelp("Dynamic vehicle lights", &dynamicLights,
+					"Lit vehicle polygons (headlights, brake and indicator glow). Read per car draw, so it applies immediately. Equivalent to config.ini [game] dynamicLights."))
+					gEnableDlights = dynamicLights;
+
+				bool widescreenOverlays = gWidescreenOverlayAlign != 0;
+				if (CheckboxWithHelp("Widescreen overlay alignment", &widescreenOverlays,
+					"Aligns the map, damage bars and stats to the screen corners on wide displays. Read every overlay draw. Equivalent to config.ini [game] widescreenOverlays."))
+					gWidescreenOverlayAlign = widescreenOverlays;
+
+				bool fastLoadingScreens = gFastLoadingScreens != 0;
+				if (CheckboxWithHelp("Fast loading screens", &fastLoadingScreens,
+					"Skips vsync waits and delays in the loading sequence. Applies from the next loading screen. Equivalent to config.ini [game] fastLoadingScreens."))
+					gFastLoadingScreens = fastLoadingScreens;
+
+				ImGui::Separator();
+				// Display mode. A change resets the render device immediately, so
+				// the viewport, aspect and picking follow the new window size;
+				// it stays provisional until confirmed (see the banner above).
+				SDL_Window* window = PsyX_GetSDLWindow();
+				int windowWidth = 0;
+				int windowHeight = 0;
+				bool fullscreen = false;
+				if (window)
+				{
+					fullscreen = (SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) != 0;
+					SDL_GetWindowSize(window, &windowWidth, &windowHeight);
+				}
+
+				ImGui::TextUnformatted("Display mode");
+				ImGui::SameLine();
+				HelpMarker("Applies immediately and resets the render device, so the viewport, aspect and primitive picking all follow the new window size. The change is provisional for 15 seconds: press Keep to save it to developer_graphics.ini, or let it revert. Fullscreen uses the desktop resolution; Alt+Enter toggles fullscreen without saving.");
+
+				if (ImGui::Checkbox("Fullscreen (desktop)", &fullscreen))
+					BeginDisplayChange(fullscreen ? 1 : 0, windowWidth, windowHeight);
+
+				if (!fullscreen)
+				{
+					// The list always offers the size that is on screen now, so
+					// a mode applied by Alt+Enter or the window manager can be
+					// kept or returned to.
+					static const int kPresets[][2] = { { 1280, 720 }, { 1600, 900 }, { 1920, 1080 } };
+					char current[32];
+					snprintf(current, sizeof(current), "Current (%d x %d)", windowWidth, windowHeight);
+					if (ImGui::BeginCombo("Window size", current))
+					{
+						for (int i = 0; i < (int)(sizeof(kPresets) / sizeof(kPresets[0])); i++)
+						{
+							char label[32];
+							snprintf(label, sizeof(label), "%d x %d", kPresets[i][0], kPresets[i][1]);
+							if (ImGui::Selectable(label) &&
+								(kPresets[i][0] != windowWidth || kPresets[i][1] != windowHeight))
+								BeginDisplayChange(0, kPresets[i][0], kPresets[i][1]);
+						}
+						ImGui::EndCombo();
+					}
+					HelpMarker("Windowed sizes. The current size is always listed so the combo reports what is on screen after a manual resize.");
+				}
+
+				if (g_displayStatus[0] != '\0')
+					ImGui::TextDisabled("%s", g_displayStatus);
 
 				ImGui::Separator();
 				PsyXRenderStats renderStats = {};
@@ -1382,6 +2016,12 @@ void BuildOverlayWidgets()
 					snprintf(g_persistenceStatus, sizeof(g_persistenceStatus), "%s", "Defaults applied to this session");
 				}
 				ImGui::TextUnformatted(g_persistenceStatus);
+				ImGui::EndTabItem();
+			}
+
+			if (ImGui::BeginTabItem("Input"))
+			{
+				DrawInputTab();
 				ImGui::EndTabItem();
 			}
 
@@ -1416,6 +2056,26 @@ void BuildOverlayWidgets()
 
 	if (!g_visible)
 		SetVisible(false);
+}
+
+// Builds the panel's ImGui windows. The Vulkan backend owns the ImGui frame
+// and calls this between ImGui::NewFrame and ImGui::Render.
+// Reconstructed region (lost to a bad line-range edit; see the runtime-settings
+// change record). Rewrites DrawDeveloperPanel + BuildOverlayWidgets and
+// RenderOverlay from the HEAD version plus the session's additions, then the
+// anonymous-namespace close.
+void BuildOverlayWidgets()
+{
+	// The display revert countdown must run whether or not the panel is open,
+	// and its confirmation window must be visible even when the panel is not.
+	UpdateDisplayRevert();
+	UpdateBindingCapture();
+
+	if (g_visible)
+		DrawDeveloperPanel();
+
+	// Drawn after the panel so the confirmation is never covered by it.
+	DrawDisplayConfirmWindow();
 }
 
 void RenderOverlay()

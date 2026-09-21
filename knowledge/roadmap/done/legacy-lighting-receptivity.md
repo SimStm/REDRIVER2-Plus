@@ -1,11 +1,63 @@
 ---
 type: Roadmap
 title: Legacy lighting receptivity
-status: planned
+status: implemented
+completed: 2026-09-20
 tags: [roadmap, rendering, psycross, lighting]
 ---
 
 # Legacy lighting receptivity
+
+Status: implemented 2026-09-20. Product behaviour is documented in
+[`knowledge/product/legacy-lighting-receptivity.md`](../../product/legacy-lighting-receptivity.md).
+This record is the delivery history; the product document and the source are the
+authoritative evidence for current behaviour.
+
+## Delivered
+
+The modern light set now shades the legacy scene on both backends. The shadow
+composite pass grew a diffuse sun term driven by the light set's first
+directional light, applied to the already-rendered legacy colour, with a
+depth-derived screen-space normal. `developer_modern_mesh.ini` gained
+`legacyLighting` and `legacyLightReceptivity`; the Graphics panel gained a
+checkbox and a strength slider and F9 toggles it.
+
+Two findings shaped the implementation, both recorded in
+[`knowledge/rules/renderer-composite-writes.md`](../../rules/renderer-composite-writes.md):
+
+- A blend on a fixed-point attachment clamps the source to `[0,1]`, so the
+  original multiply-blend composite could only darken. The composite now samples
+  a copy of the framebuffer colour and writes the tinted result (Vulkan: an
+  extra `swapchainImages[imageIndex]` -> `sceneColorImage` copy; OpenGL:
+  `glCopyTexSubImage2D` into a new `g_sceneColorTexture`).
+- The PSX depth buffer spends its top band on flat backdrop layers, so the sun
+  term is gated to `depth < 0.995`. Without it the sky and the painted skyline
+  were shaded and the sky washed out.
+
+## Acceptance
+
+- Both backends apply the sun to legacy surfaces with the expected `N·L`
+  behaviour and leave the sky, HUD and minimap untouched; measurements per
+  backend are in the product document.
+- The sun term follows the light-set direction: the near road measured `+34%`,
+  `+12%` and `+10%` for overhead, low and side suns.
+- Toggle and strength persist in `developer_modern_mesh.ini` and are independent
+  of the shadow and AO toggles.
+- The classic renderer is unchanged (`meanAbs 0.290/255` against the pre-change
+  capture, frame timing) and the shadow-only composite is unchanged
+  (`meanAbs 0.225/255`).
+- Windows `Release_dev|x64` built with 0 failed projects; `REDRIVER2_dev.exe
+  -vkpsxtest` reports `psx self-test: PASS`.
+
+## Not delivered
+
+- Per-point-light receptivity, per-material response, legacy casters into the
+  shadow map and screen-space ambient occlusion remain open, as scoped.
+- No minimum-GPU-class frame-time measurement. At 1280x720 with `vsync=0` the
+  composite measured `+0.6 ms` (`+1.9%`, `33.49` -> `34.11 ms` mean over
+  frames 360-960) against frame-to-frame noise, inside a 30 Hz frame gate that
+  dominates the frame time.
+
 
 ## Problem
 

@@ -50,3 +50,6 @@ completed, as described in the [roadmap catalog](../index.md).
 - **[Vulkan UI and image parity](vulkan-ui-image-parity.md)**: implemented
   2026-09-19 (follow-up to renderer item 14); product document
   [`knowledge/product/vulkan-ui-image-parity.md`](../../product/vulkan-ui-image-parity.md).
+- **10 - [Runtime settings GUI and safe persistence](runtime-settings-gui.md)**:
+  implemented 2026-09-20; product document
+  [`knowledge/product/runtime-settings-gui.md`](../../product/runtime-settings-gui.md).

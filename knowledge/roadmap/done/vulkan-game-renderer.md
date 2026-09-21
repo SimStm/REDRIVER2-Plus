@@ -582,3 +582,14 @@ distribution, peak memory, Linux/web/Android builds), a fresh OpenGL
 MoltenVK/`D32_SFLOAT` fallback paths. If a later decision defers any of these,
 revise or split the scope explicitly instead of re-opening this completed
 record.
+
+## Post-completion validation (2026-09-20)
+
+Three of those items were executed after completion and are recorded in
+[`changes/2026-09-20/vulkan-renderer-debt`](../../changes/2026-09-20/vulkan-renderer-debt/index.md):
+the `D32_SFLOAT` fallback is now exercised with `PSYX_VK_DEPTH_FORMAT=d32`
+(self-test passes with the mask-bit no-op asserted), the fresh `-opengl` classic
+parity capture matches within mean 4.08/255 (0.22 % of channels > 16), and the
+R5 shadow comparison measured a receive-coverage difference (Vulkan 7722 vs
+OpenGL 2264 changed pixels, IoU 29.2 %). That difference and the macOS/raw-GPU
+throughput profiling remain open; the record stays complete.

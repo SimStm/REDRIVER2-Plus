@@ -35,6 +35,11 @@ Follow the [discussion maintenance rule](../rules/discussion-records.md).
 - [SDL2 to SDL3 migration](sdl-version-migration/index.md): the size of the
   current SDL2 surface, what SDL3 changes, and a recommendation to defer the
   migration until after Vulkan parity. **Exploring; no decision adopted.**
+- [High-FPS rendering with fixed 30 Hz simulation](high-fps-timestep/index.md):
+  the verified coupling between the vblank frame gate, replay tapes, mission
+  timers and draw-path `FrameCnt` effects, and a staged path to render at 60+
+  FPS while keeping the simulation at its native rate. **Exploring; no
+  decision adopted.**
 
 ## Structure and lifecycle
 

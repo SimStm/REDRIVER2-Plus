@@ -10,6 +10,64 @@ where release policy permits it.
 
 ### Added
 
+- The modern light set now also shades the legacy scene (renderer roadmap
+  legacy-lighting-receptivity): road, cars, trees, barriers and near buildings
+  brighten by the modern sun's `N·L` term while the legacy shading itself is
+  preserved. Controlled by `legacyLighting` and `legacyLightReceptivity` in
+  `developer_modern_mesh.ini`, the Graphics panel and F9; default off. Both
+  backends implement it by sampling a copy of the framebuffer colour, because a
+  blend on a fixed-point attachment clamps the source to `[0,1]` and could only
+  darken. The normal comes from a five-tap cross of the neighbour world
+  positions with an edge test (a single-pixel derivative flickered on moving
+  vehicles), the term is gated to `depth < 0.999` so the sky/skyline band stays
+  untouched, and it fades out with distance at `2x`-`4x` the shadow volume
+  half-size. The shadow volume and fade centre follow the player vehicle instead
+  of a fixed spawn anchor. Measured `+10%` to `+34%` on legacy surfaces depending
+  on the sun angle, with the sky unchanged. The composite needs both PGXP
+  options on, because it reads the depth they write; the panel states this on
+  both checkboxes. See
+  [`knowledge/product/legacy-lighting-receptivity.md`](knowledge/product/legacy-lighting-receptivity.md).
+- The Graphics tab exposes the whole modern light set under **Modern sun and
+  look**: sun azimuth and height, sun intensity, modern ambient, modern exposure,
+  shadow volume size, legacy light strength and a shadow debug view, each with
+  its explanation and persisted to `developer_modern_mesh.ini`. The F-key
+  controls and the sliders stay in sync.
+- The display confirmation is now its own ImGui window at the bottom-left of the
+  applied resolution, drawn whether or not the panel is open, with the cursor
+  shown and input captured while it is armed, so a mode change can no longer
+  hide the Keep/Revert buttons.
+- Checkbox and slider help markers in the developer panel moved to the end of the
+  control's label (on their own line only when the label fills the line), and the
+  Input tab table now has a dedicated wrapping column for shared bindings instead
+  of letting a long conflict note widen the table past the panel.
+- Three more live Graphics-panel controls, persisted to
+  `developer_graphics.ini` (`schemaVersion` 6 -> 7): **Dynamic vehicle lights**,
+  **Widescreen overlay alignment** and **Fast loading screens**. Each shows when
+  it takes effect and names the equivalent `config.ini` key, which remains the
+  shipped default. Runtime settings GUI, milestone 2.
+- Display mode in the developer panel (`schemaVersion` 7 -> 8): a Fullscreen
+  (desktop) checkbox and a window-size combo that apply immediately through the
+  new `PsyX_ApplyWindowMode`. A change is provisional for 15 seconds with
+  *Keep*/*Revert now* buttons, the countdown also runs while the panel is
+  closed, and an unconfirmed change restores the previous mode. Verified for
+  windowed sizes; the viewport and primitive picking follow the new window size.
+  Runtime settings GUI, milestone 3.
+- Developer panel **Input** tab: click a binding to capture a key, controller
+  button or stick push, with Escape/right-click/Cancel/timeout cancellation,
+  conflict markers when two actions share a binding, and per-action or
+  per-device reset to the `config.ini` defaults. Game and menu tables stay
+  distinct, an edit only reaches the mapping that is currently active, input is
+  held while capturing, and changes are saved to `developer_input.ini` as
+  overrides (a binding equal to the `config.ini` value is not written). Runtime
+  settings GUI, milestone 4.
+- Developer panel **Content and language** section (Game Debug tab) for
+  `overrideContent`, `disableChicagoBridges`, `languageId` and `driver1music`,
+  each stating when the change applies, plus the restart-only `freeCamera`
+  shown disabled with the reason.
+- Developer settings files are now written failure-safely and without losing
+  unrelated content: unknown keys, comments and blank lines are preserved, keys
+  removed from the owner are dropped, and the previous contents are kept as
+  `.bak` (`DeveloperSettingsFile_WriteKeys`). Runtime settings GUI, milestone 5.
 - The in-game modern-mesh system now runs on the Vulkan backend (renderer
   roadmap item 14, defect 3, Option A), so it is live in the default
   configuration instead of OpenGL-only. `PsyX_ModernMesh.cpp` dispatches every

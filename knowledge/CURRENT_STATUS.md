@@ -7,7 +7,7 @@ tags: [okf, status]
 
 # Current status
 
-> Updated: 2026-09-20
+> Updated: 2026-09-21
 > Role: **source of truth for what has been implemented in this project.**
 > Add a short, factual entry here whenever you finish implementing something, so a
 > new session can see the whole surface without reading every change record.
@@ -94,6 +94,19 @@ Delivered in order, each verified on the game window:
 - Backend-agnostic opt-in perf log (`PSYX_PERF_LOG` -> `psyx_perf.log`) measured
   OpenGL and Vulkan at 30.0 FPS / 33.4 ms with identical vertex and draw counts,
   i.e. the game is PSX-timestep-bound rather than GPU-bound.
+- Renderer-debt closure (2026-09-20): the stencil-less `D32_SFLOAT` fallback is
+  selectable with `PSYX_VK_DEPTH_FORMAT=d32` and the self-test then asserts the
+  mask-bit no-op degradation; a fresh classic-renderer `-opengl` parity capture
+  differs from Vulkan by mean 4.08/255 with 0.22 % of channels > 16; the R5
+  shadow comparison measured Vulkan 7722 vs OpenGL 2264 changed pixels in the
+  sampled ground band (IoU 29.2 %), with OpenGL additionally darkening the
+  legacy tree canopy. See
+  [`changes/2026-09-20/vulkan-renderer-debt`](changes/2026-09-20/vulkan-renderer-debt/index.md).
+- Previous-frame history was investigated, not implemented: `LOAD_OP_LOAD`
+  preserves each swapchain image individually, and sampled natural
+  partial-update frames (loading art + bar via a `ShowLoading` breakpoint)
+  showed complete, identical art with a progressing bar. No natural corruption
+  reproduced.
 - Experimental standalone Vulkan developer window: `-vkfixture` (with
   `-vkcapture N`, `-vkshot <path>`, `-vknogui`) renders eight Meshy GLBs plus
   four analytic spheres; SPIR-V is embedded and regenerated with
@@ -108,6 +121,27 @@ Delivered in order, each verified on the game window:
   casters and receivers include the legacy scene (R5), normal-based ambient
   occlusion, and the classic/enhanced switch persisted in
   `developer_graphics.ini` (`developer_modern_mesh.ini` holds the mesh tuning).
+- Legacy lighting receptivity (2026-09-20, refined 2026-09-21): the modern light
+  set now also shades the already-rendered legacy scene on both backends. The
+  composite samples a copy of the framebuffer colour (a blend cannot brighten
+  past the fixed-point clamp), reconstructs a normal from a five-tap cross of
+  the neighbour world positions with an edge test, and applies
+  `colour * (1 + strength * N·L * light)`, gated to `depth < 0.999` and faded
+  out with distance at `2x`-`4x` the shadow volume half-size. The shadow volume
+  and fade centre follow the **player vehicle**, not the spawn; the light set is
+  pushed every frame and falls back to the camera when `hd.where.t` is absent
+  during level/mission transitions. `legacyLighting` (default 0) and
+  `legacyLightReceptivity` (default `0.350`) persist in
+  `developer_modern_mesh.ini`; the Graphics panel, its **Modern sun and look**
+  group (azimuth, height, intensity, ambient, exposure, shadow size, debug view)
+  and F9 control it. Measured `+10%..+34%` on legacy surfaces depending on the
+  sun angle, sky unchanged; see
+  [`product/legacy-lighting-receptivity.md`](product/legacy-lighting-receptivity.md)
+  and [`changes/2026-09-21/lighting-and-panel-followup`](changes/2026-09-21/lighting-and-panel-followup/index.md).
+- The composite needs both PGXP options on: PGXP texture mapping writes the
+  per-vertex depth (otherwise every legacy vertex takes the 2D path at a
+  constant depth) and PGXP Z-buffer gates depth writes. The Graphics tab states
+  this on both checkboxes.
 - Bounded glTF 2.0/GLB importer (`utils/GltfLoader.*`) with six owned Meshy
   fixtures under `assets/modern_fixtures/` plus `provenance.md`.
 
@@ -124,9 +158,14 @@ Delivered in order, each verified on the game window:
   enabled by the backend. It exposed incompatible resumed render passes
   (`VUID-vkCmdDraw-renderPass-02684`), now fixed. The subsequent inspected game
   debug output confirmed the layer was enabled and contained no VUID/error.
-- `D32_SFLOAT` depth fallback, macOS/MoltenVK build, raw uncapped GPU
-  throughput, the R5 shadow-quality comparison and a fresh `-opengl` parity run
-  remain open.
+- Open after the 2026-09-20 closure: macOS/MoltenVK build, raw uncapped GPU
+  throughput and CPU/GPU frame-time profiling. The `D32_SFLOAT` fallback,
+  fresh `-opengl` parity run and R5 shadow comparison now have executed evidence
+  (see above); the shadow receive still differs between backends and is an R5
+  follow-up. Legacy lighting receptivity is implemented
+  ([`product/legacy-lighting-receptivity.md`](product/legacy-lighting-receptivity.md));
+  it adds one full-screen colour copy plus draw only while its composite is
+  active, and no frame-time delta on the minimum GPU class is recorded yet.
 
 ## Textures, mods and the inspector
 
@@ -151,7 +190,6 @@ Delivered in order, each verified on the game window:
   notes in `knowledge/product/`.
 
 ## Gameplay and developer tooling
-
 - Resident procedural playground (roadmap item 13, P1-P5): generated flat
   surface, collidable boxes, donor traffic/police/missions disabled, car reset,
   safe return to the frontend, a `-playground` launch path and a **Playground**
@@ -161,7 +199,58 @@ Delivered in order, each verified on the game window:
   **Reproduce this state** generates the command line; `scripts/run_debug_start.ps1`
   captures scenes with overrides on and off.
 - Developer Graphics Panel (F11) with Dear ImGui, persisted to
-  `developer_graphics.ini` (schema 6); Windows and Linux only.
+  `developer_graphics.ini` (schema 8); Windows and Linux only.
+  - Schema 7 added live checkboxes for `dynamicLights`, `widescreenOverlays` and
+    `fastLoadingScreens` (runtime-settings-gui milestone 2, 2026-09-20). Each
+    help marker names the equivalent `config.ini` key; `config.ini` stays the
+    shipped default and the panel file, applied afterwards, wins. Reader/apply
+    verified by an overlay-corner capture A/B, writer verified by a settings
+    save.
+  - Schema 8 added the **display mode** (milestone 3): a Fullscreen (desktop)
+    checkbox and a Window size combo (current, 1280x720, 1600x900, 1920x1080)
+    through the new `PsyX_ApplyWindowMode`, with a 15 s keep/revert countdown
+    that survives closing the panel (`UpdateDisplayRevert` runs before the
+    visibility check), so a bad mode always reverts. Verified: a persisted
+    1600x900 mode captured a 1600x900 frame; a provisional 1024x600 change kept
+    through `ConfirmDisplayMode` persisted 1024x600, and the same change left
+    unconfirmed reverted to 1600x900 without touching the file; a pick at the
+    same relative point resolved a primitive at both sizes (the viewport and
+    picker read the live window size). The fullscreen branch is not
+    runtime-tested (it would change the machine's display).
+  - Panel follow-up (2026-09-21, after user testing): the display confirmation is
+    now its **own ImGui window** anchored to the bottom-left of the applied
+    display size, drawn whether or not the panel is open and after it, with the
+    cursor shown and input captured while armed - the old in-panel banner was
+    invisible when the panel was closed or clipped by the mode change.
+    `CheckboxWithHelp` puts the `(?)` at the end of every checkbox label (its
+    own line only when the label fills the line), the new sun sliders follow the
+    same rule, the Input tab table is `Action | Binding | Also bound to | Reset`
+    with the conflict note in its own wrapping column, and the Graphics tab
+    exposes the whole `developer_modern_mesh.ini` light set under **Modern sun
+    and look**. See
+    [`changes/2026-09-21/lighting-and-panel-followup`](changes/2026-09-21/lighting-and-panel-followup/index.md).
+- Input-binding editor (runtime-settings-gui milestone 4, 2026-09-20): an
+  **Input** tab in the same panel edits the game and menu keyboard/controller
+  tables with click-to-capture, Escape/right-click/Cancel/10 s cancellation,
+  conflict markers and per-action/per-device reset. `DeveloperInputMapping.*`
+  owns the model; `SwitchMappings` reports the active table so an edit only
+  reaches the live mapping when it belongs to it, and input is held for the
+  duration of a capture. Verified with synthetic SDL events through the panel's
+  event handler: a captured `Q` bound game Cross while the live menu mapping
+  stayed `RETURN`, conflicts reported both actions, Escape and timeout
+  cancelled, and reset restored the `config.ini` value (`Up`).
+- Runtime settings GUI completed (milestone 5, 2026-09-20): the Game Debug tab
+  gained a **Content and language** section (content override, Chicago bridges,
+  language, Driver 1 music - each stating its reload/restart requirement - and
+  the restart-only Free camera disabled with the reason via the new
+  `gFreeCameraConfiguration`). Persistence moved onto the shared
+  `DeveloperSettingsFile_WriteKeys` writer, which preserves unknown keys and
+  comments, removes keys the owner no longer wants and writes through
+  `.tmp`/`.bak`, and bindings now persist in `developer_input.ini` as overrides
+  only. Verified: a hand-added comment and unknown key survived a graphics save
+  while missing keys were appended; bindings round-tripped
+  (`input-save=1 input-load=1 cross-default=82 cross-after-load=20`), a reset
+  removed the override line, and the Input tab rendered the seeded override.
 - MCP-assisted agent workflow (2026-09-20): `AGENTS.md` now requires checking
   for configured MCP servers first - context7 for library documentation,
   visual-studio-ide-mcp for build/debug of `src_rebuild/build/REDRIVER2.sln`

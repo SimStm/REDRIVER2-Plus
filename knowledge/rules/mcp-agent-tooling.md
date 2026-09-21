@@ -37,3 +37,54 @@ unavoidable:
 - read the game log (`<executable>.log` next to the executable, plus
   `psyx_perf.log` when `PSYX_PERF_LOG` is set) and screenshots to learn the
   state.
+
+## Capture and input techniques that were actually verified (2026-09-20)
+
+- `windows-mcp` `Shortcut` reaches the game for special keys: `F10` toggles the
+  modern renderer (logged), `F12` writes `SCREENSHOT.BMP`. Character keys
+  (`0`, `;`) did not change the polled `SDL_GetKeyboardState` state, and
+  `computer-control-mcp` `key_down`/`key_up` did not reach the game at all in
+  this environment. For a settings A/B, edit the ini and restart instead of
+  injecting a character key.
+- The timed capture tick (`captureAfterSeconds`) runs inside `DrawGame` before
+  `GR_EndScene`; on OpenGL that is before `PsyX_ModernMesh_RenderFrame`, so a
+  GL tick capture omits modern meshes and shadows. Use `F12` for GL modern-path
+  frames and the tick for Vulkan.
+- For phase-precise captures, set a breakpoint on the game function that draws
+  the frame (for example `ShowLoading`) through the Visual Studio MCP, evaluate
+  `PsyX_TakeScreenshot()` while paused, copy `SCREENSHOT.BMP`, then continue.
+  This works on Vulkan; the GL function evaluation previously timed out.
+- Convert the BMPs with `System.Drawing` and compare numerically (full frame and
+  fixed rectangles, mean/max channel difference and a per-pixel threshold count)
+  instead of relying on visual inspection alone.
+
+## Scripted UI interaction limits (2026-09-20, revised 2026-09-21)
+
+- Scripted mouse clicks **do** reach the ImGui panel once the game window is
+  really frontmost: activate it (`windows-mcp` `App switch`) before clicking and
+  convert screenshot coordinates with the reported scale (`screen = image x
+  1.791667` at 3440x1440). The earlier "clicks never arrive" observation was a
+  focus problem - when another window (terminal, IDE) is in front, the click
+  lands on that window instead.
+- Some widgets still resist a synthetic click: a click on a binding-capture
+  button was not observed to start a capture even with the window frontmost, so
+  validate such a control through the function it calls (a temporary probe can
+  call it directly) or by forcing a tab with `ImGuiTabItemFlags_SetSelected`.
+- The tab bar is a single merged OCR box; click by the tab centres measured from
+  the screenshot, not by OCR text boxes.
+- F-keys only work when the game window is really in front. `windows-mcp`
+  `Shortcut` sends keys to whatever is focused, and Visual Studio reacts to
+  `F11` by toggling full screen and to an edited `.vcxproj` by showing a modal
+  "modified outside the environment" dialog that then swallows every later
+  input. Activate the game window first - and when the IDE keeps stealing focus,
+  minimize it (`ShowWindow(hwnd, SW_MINIMIZE)` on the `devenv` process) and
+  restore it afterwards.
+- With the panel visible, the timed `captureAfterSeconds` tick did not produce
+  `SCREENSHOT.BMP` in this environment; a desktop capture with the panel forced
+  visible (`g_visible = true` in a temporary probe) was the reliable way to
+  photograph the panel itself. Plain desktop captures of the running game are
+  enough for renderer evidence.
+- Remove a temporary probe by replacing its **exact text** (the `edit` tool) and
+  then checking the resulting line count. A pattern-matched line range once
+  deleted 220 lines of a panel file because the end-of-block heuristic matched a
+  later closing brace; the removal has to be verified, not assumed.

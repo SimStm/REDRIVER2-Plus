@@ -863,3 +863,73 @@ gaps (frame-time distribution, peak memory, Linux/web/Android builds) remain
 explicitly non-blocking. No decision here is reversed; the discussion's direction
 is delivered for the backend port.
 
+
+
+### 2026-09-20 - Renderer debt closed; shadow receive differs by backend
+
+Three non-blocking items from the Vulkan completion were executed (details and
+filenames in
+[changes/2026-09-20/vulkan-renderer-debt](../../changes/2026-09-20/vulkan-renderer-debt/index.md)):
+
+- **`D32_SFLOAT` fallback exercised.** `PSYX_VK_DEPTH_FORMAT=d32` forces the
+  stencil-less path; the PSX self-test reports `main depth format 126 stencil=0`,
+  asserts `stencil unsupported: mask is a no-op` and still passes, and a 30 s
+  game run renders normally with the validation layer enabled and no VUID.
+- **Fresh OpenGL parity run.** Classic renderer, deterministic spawn: mean
+  4.08/255 full-frame difference, 0.22 % of channels > 16, HUD/compass/minimap
+  present on both. Visual parity, not pixel equality.
+- **R5 shadow receive measured.** Same low sun and gallery, `shadows=1` vs
+  `shadows=0` per backend: Vulkan changed 7722 pixels of the sampled ground band
+  vs OpenGL 2264 (2257 shared, IoU 29.2 %). OpenGL also darkens the legacy tree
+  canopy strongly; Vulkan barely changes it. The receive term is implemented on
+  both backends but is not yet equivalent - an R5 follow-up, not a blocked
+  feature, and not a regression (no earlier comparison existed).
+
+Previous-frame history was investigated with a `ShowLoading` breakpoint
+(Vulkan): the sampled bar-only frames have complete, identical loading art and a
+progressing bar, and the art phase presents 32-64 frames - more than the
+swapchain depth - so every image holds the art before the partial phase. No
+natural corruption reproduced; `LOAD_OP_LOAD` remains per-image persistence and
+an explicit frame copy is deferred until a path actually needs it. Capture
+technique notes were added to
+[rules/mcp-agent-tooling.md](../../rules/mcp-agent-tooling.md) and
+[rules/renderer-parity-evidence.md](../../rules/renderer-parity-evidence.md).
+
+
+### 2026-09-20 - Legacy lighting receptivity: composite must write, not blend
+
+The R5 shadow composite was the natural host for a legacy sun term: it already
+reconstructs world position from the copied depth and runs a full-screen pass.
+The first implementation multiplied the frame by a sun tint through the blend
+stage. It produced *identical* frames with the term on and off even at strength
+2.0. The composite's added probe modes isolated it: mode 7 showed the shader
+receiving `legacyScale >= 1` and mode 5 showed non-zero `ndl` on the same
+pixels, so the fragment output was correct and the loss was in blending.
+Vulkan and OpenGL clamp the source colour to `[0,1]` on a fixed-point
+attachment, so any tint above 1.0 - every brightening term - becomes 1.0. A
+blend-factor composite can therefore only darken; the shadow-only version looked
+right for exactly that reason.
+
+The fix is to sample a copy of the rendered colour and write `scene * tint` with
+blending off. Vulkan gained `sceneColorImage` (copied next to the depth copy in
+`RecordGameModernSceneCopy`) and OpenGL gained `g_sceneColorTexture`
+(`glCopyTexSubImage2D` next to the depth blit). This is recorded as a rule:
+[rules/renderer-composite-writes.md](../../rules/renderer-composite-writes.md).
+
+The second finding is about the depth source. With the blend fixed the whole
+frame brightened, including the sky, which washed out. A two-channel depth probe
+(mode 8) measured the PSX depth bands: sky and painted skyline `0.9997`, cloud
+haze and tree billboards `0.990`, ground `0.94-0.98`, buildings `0.985-0.99`.
+Reconstruction saturates in the top band, so a screen-space normal carries no
+information there; the sun term is gated to `depth < 0.995`. Legacy billboards
+(trees) sit inside the excluded band in places, so their response is
+inconsistent - the honest limit of a depth-derived normal, documented rather
+than hidden.
+
+Measured direction dependence on the near road (`+34%/+12%/+10%` for overhead,
+low and side suns) confirms the term follows the light set. Product behaviour:
+[product/legacy-lighting-receptivity.md](../../product/legacy-lighting-receptivity.md);
+change record with the full tables:
+[changes/2026-09-20/legacy-lighting-receptivity](../../changes/2026-09-20/legacy-lighting-receptivity/index.md).
+Open for later: point lights, legacy casters into the shadow map, and a
+frame-time delta on the minimum GPU class.

@@ -97,6 +97,11 @@ float s_exposure = 1.0f;
 int s_aoEnabled = 0;
 int s_shadowsEnabled = 0;
 float s_shadowExtent = 2500.0f;
+// Legacy-geometry light receptivity (roadmap legacy-lighting-receptivity):
+// off by default so the shipped legacy shading is untouched. The scale is the
+// diffuse-sun multiplier applied to the already-lit legacy colour.
+int s_legacyLighting = 0;
+float s_legacyLightReceptivity = 0.35f;
 
 // A distinct colour per corner keeps the cube's orientation readable.
 const unsigned char kColors[8][4] =
@@ -157,6 +162,13 @@ void ReadEnabledState()
 			;
 		else if (sscanf(line, " shadowdebug=%d", &value) == 1 || sscanf(line, "shadowdebug=%d", &value) == 1)
 			s_shadowDebug = value;
+		else if (sscanf(line, " legacylighting=%d", &value) == 1 || sscanf(line, "legacyLighting=%d", &value) == 1)
+			s_legacyLighting = value != 0;
+		else if (sscanf(line, " legacyLightReceptivity=%f", &s_legacyLightReceptivity) == 1)
+		{
+			if (s_legacyLightReceptivity < 0.0f) s_legacyLightReceptivity = 0.0f;
+			if (s_legacyLightReceptivity > 2.0f) s_legacyLightReceptivity = 2.0f;
+		}
 	}
 
 	fclose(file);
@@ -170,6 +182,7 @@ void WriteEnabledState()
 
 	fprintf(file, "# REDRIVER2-Plus experimental modern mesh (renderer roadmap R2/R3/R5).\n");
 	fprintf(file, "# Toggle in game with F10; light keys: [ ] azimuth, ; ' tilt, - = exposure, \\ AO.\n");
+	fprintf(file, "# F9 toggles legacy light receptivity; legacyLightReceptivity scales it.\n");
 	fprintf(file, "[modern_mesh]\n");
 	fprintf(file, "enabled=%d\n", s_enabled ? 1 : 0);
 	fprintf(file, "asset=%s\n", s_assetPath);
@@ -182,6 +195,8 @@ void WriteEnabledState()
 	fprintf(file, "shadows=%d\n", s_shadowsEnabled);
 	fprintf(file, "shadowextent=%.1f\n", s_shadowExtent);
 	fprintf(file, "shadowdebug=%d\n", s_shadowDebug);
+	fprintf(file, "legacyLighting=%d\n", s_legacyLighting ? 1 : 0);
+	fprintf(file, "legacyLightReceptivity=%.3f\n", s_legacyLightReceptivity);
 	fclose(file);
 }
 
@@ -519,7 +534,7 @@ void BuildInstanceView(const float pos[3], float yaw, float view[16])
 // basis so nothing follows the camera afterwards.
 void PositionGallery()
 {
-	if (MainPlayer.playerCarId >= 0)
+	if (MainPlayer.playerCarId >= 0 && car_data[MainPlayer.playerCarId].hd.where.t != NULL)
 	{
 		CAR_DATA* cp = &car_data[MainPlayer.playerCarId];
 		const int dir = cp->hd.direction & 0xFFF;
@@ -591,11 +606,32 @@ void ApplyLightSet()
 	set.aoEnabled = s_aoEnabled;
 	set.shadowsEnabled = s_shadowsEnabled;
 	set.shadowExtent = s_shadowExtent;
+	set.legacyLightingScale = s_legacyLighting ? s_legacyLightReceptivity : 0.0f;
 	if (s_positioned)
 	{
-		set.shadowCenter[0] = s_anchor[0];
-		set.shadowCenter[1] = s_anchor[1];
-		set.shadowCenter[2] = s_anchor[2];
+		// The shadow volume and the legacy lighting term are centred on the
+		// player, not on the spawn: the map is only useful where the player is,
+		// and the old fixed anchor left a lit/shadowed bubble behind as soon as
+		// the car drove away from it. The gallery fixtures stay fixed.
+		const VECTOR* playerPosition = NULL;
+		if (MainPlayer.playerCarId >= 0)
+			playerPosition = (const VECTOR*)car_data[MainPlayer.playerCarId].hd.where.t;
+
+		// The car's position storage is briefly absent while a level, mission or
+		// replay re-initialises; the camera is always valid, so fall back to it
+		// instead of dereferencing a null pointer once per frame.
+		if (playerPosition)
+		{
+			set.shadowCenter[0] = (float)playerPosition->vx;
+			set.shadowCenter[1] = (float)playerPosition->vy;
+			set.shadowCenter[2] = (float)playerPosition->vz;
+		}
+		else
+		{
+			set.shadowCenter[0] = (float)camera_position.vx;
+			set.shadowCenter[1] = (float)camera_position.vy;
+			set.shadowCenter[2] = (float)camera_position.vz;
+		}
 	}
 
 	// One directional sun; additional point lights could be appended here.
@@ -678,6 +714,141 @@ int DeveloperModernMesh_GetAmbientOcclusion(void)
 	return s_aoEnabled;
 }
 
+void DeveloperModernMesh_SetLegacyLighting(int enabled)
+{
+	s_legacyLighting = enabled != 0;
+	WriteEnabledState();
+	ApplyLightSet();
+}
+
+int DeveloperModernMesh_GetLegacyLighting(void)
+{
+	return s_legacyLighting;
+}
+
+void DeveloperModernMesh_SetLegacyLightReceptivity(float scale)
+{
+	if (scale < 0.0f) scale = 0.0f;
+	if (scale > 2.0f) scale = 2.0f;
+	s_legacyLightReceptivity = scale;
+	WriteEnabledState();
+	ApplyLightSet();
+}
+
+float DeveloperModernMesh_GetLegacyLightReceptivity(void)
+{
+	return s_legacyLightReceptivity;
+}
+
+void DeveloperModernMesh_GetSunAngles(float* azimuthDegrees, float* elevationDegrees)
+{
+	const float length = sqrtf(s_lightDir[0] * s_lightDir[0] + s_lightDir[1] * s_lightDir[1] + s_lightDir[2] * s_lightDir[2]);
+	const float x = length > 1e-5f ? s_lightDir[0] / length : 0.0f;
+	float y = length > 1e-5f ? s_lightDir[1] / length : 1.0f;
+	const float z = length > 1e-5f ? s_lightDir[2] / length : 0.0f;
+
+	if (azimuthDegrees)
+	{
+		float azimuth = atan2f(x, z) * 57.2957795f;
+		if (azimuth < 0.0f)
+			azimuth += 360.0f;
+		*azimuthDegrees = azimuth;
+	}
+
+	if (elevationDegrees)
+	{
+		if (y < -1.0f) y = -1.0f;
+		if (y > 1.0f) y = 1.0f;
+		*elevationDegrees = asinf(y) * 57.2957795f;
+	}
+}
+
+void DeveloperModernMesh_SetSunAngles(float azimuthDegrees, float elevationDegrees)
+{
+	const float azimuth = azimuthDegrees * 0.0174532925f;
+	const float elevation = elevationDegrees * 0.0174532925f;
+	const float cosElevation = cosf(elevation);
+
+	// Sun towards the light, matching the F-key controls' convention: y is the
+	// elevation, x/z the compass direction the light travels from.
+	s_lightDir[0] = cosElevation * sinf(azimuth);
+	s_lightDir[1] = sinf(elevation);
+	s_lightDir[2] = cosElevation * cosf(azimuth);
+
+	WriteEnabledState();
+	ApplyLightSet();
+}
+
+float DeveloperModernMesh_GetLightIntensity(void)
+{
+	return s_lightIntensity;
+}
+
+void DeveloperModernMesh_SetLightIntensity(float intensity)
+{
+	if (intensity < 0.0f) intensity = 0.0f;
+	if (intensity > 4.0f) intensity = 4.0f;
+	s_lightIntensity = intensity;
+	WriteEnabledState();
+	ApplyLightSet();
+}
+
+float DeveloperModernMesh_GetAmbient(void)
+{
+	return s_ambient;
+}
+
+void DeveloperModernMesh_SetAmbient(float ambient)
+{
+	if (ambient < 0.0f) ambient = 0.0f;
+	if (ambient > 1.0f) ambient = 1.0f;
+	s_ambient = ambient;
+	WriteEnabledState();
+	ApplyLightSet();
+}
+
+float DeveloperModernMesh_GetExposure(void)
+{
+	return s_exposure;
+}
+
+void DeveloperModernMesh_SetExposure(float exposure)
+{
+	if (exposure < 0.1f) exposure = 0.1f;
+	if (exposure > 4.0f) exposure = 4.0f;
+	s_exposure = exposure;
+	WriteEnabledState();
+	ApplyLightSet();
+}
+
+float DeveloperModernMesh_GetShadowExtent(void)
+{
+	return s_shadowExtent;
+}
+
+void DeveloperModernMesh_SetShadowExtent(float extent)
+{
+	if (extent < 200.0f) extent = 200.0f;
+	if (extent > 20000.0f) extent = 20000.0f;
+	s_shadowExtent = extent;
+	WriteEnabledState();
+	ApplyLightSet();
+}
+
+int DeveloperModernMesh_GetShadowDebug(void)
+{
+	return s_shadowDebug;
+}
+
+void DeveloperModernMesh_SetShadowDebugMode(int mode)
+{
+	if (mode < 0) mode = 0;
+	if (mode > 10) mode = 10;
+	s_shadowDebug = mode;
+	PsyX_ModernMesh_SetShadowDebug(s_shadowDebug);
+	WriteEnabledState();
+}
+
 void DeveloperModernMesh_Update(void)
 {
 	// Edge-detected F10 toggle; avoids synthetic click injection entirely.
@@ -694,6 +865,26 @@ void DeveloperModernMesh_Update(void)
 	else
 	{
 		s_keyHeld = 0;
+	}
+
+	// F9 toggles legacy light receptivity. A function key is used deliberately:
+	// character keys are not reliably injectable for A/B captures.
+	{
+		static int legacyKeyHeld = 0;
+		if (keys && keys[SDL_SCANCODE_F9])
+		{
+			if (!legacyKeyHeld)
+			{
+				legacyKeyHeld = 1;
+				DeveloperModernMesh_SetLegacyLighting(!s_legacyLighting);
+				printInfo("ModernMesh: legacy light receptivity %s (scale %.2f)\n",
+					s_legacyLighting ? "enabled" : "disabled", s_legacyLightReceptivity);
+			}
+		}
+		else
+		{
+			legacyKeyHeld = 0;
+		}
 	}
 
 	// Real-time light controls (R5): rotate/tilt the sun, exposure, AO.
@@ -745,10 +936,10 @@ void DeveloperModernMesh_Update(void)
 			PsyX_GetRenderStats(&renderStats);
 			PsyXModernMeshStats meshStats;
 			PsyX_ModernMesh_GetStats(&meshStats);
-			printInfo("Baseline: legacyVertices=%d legacyDrawSplits=%d modernMeshes=%d modernVerts=%d modernCalls=%d modernMicros=%d legacyShadowPass=%d\n",
+			printInfo("Baseline: legacyVertices=%d legacyDrawSplits=%d modernMeshes=%d modernVerts=%d modernCalls=%d modernMicros=%d legacyShadowPass=%d legacyLightPass=%d\n",
 				renderStats.vertexCount, renderStats.drawSplitCount,
 				meshStats.meshCount, meshStats.vertexCount, meshStats.drawCalls, meshStats.lastFrameMicros,
-				meshStats.legacyShadowPass);
+				meshStats.legacyShadowPass, meshStats.legacyLightPass);
 		}
 	}
 
@@ -781,6 +972,11 @@ void DeveloperModernMesh_Update(void)
 	CameraRotation(view);
 	const float cameraPos[3] = { (float)camera_position.vx, (float)camera_position.vy, (float)camera_position.vz };
 	PsyX_ModernMesh_SetCamera(view, cameraPos);
+
+	// Pushed every frame because the shadow centre follows the player vehicle;
+	// the light set itself only changes when the panel or an F-key changes it.
+	ApplyLightSet();
+
 	PsyX_ModernMesh_SetEnabled(1);
 
 	for (int i = 0; i < s_fixtureCount; i++)
@@ -813,6 +1009,26 @@ void DeveloperModernMesh_SetShadows(int) {}
 int  DeveloperModernMesh_GetShadows(void) { return 0; }
 void DeveloperModernMesh_SetAmbientOcclusion(int) {}
 int  DeveloperModernMesh_GetAmbientOcclusion(void) { return 0; }
+void DeveloperModernMesh_SetLegacyLighting(int) {}
+int  DeveloperModernMesh_GetLegacyLighting(void) { return 0; }
+void DeveloperModernMesh_SetLegacyLightReceptivity(float) {}
+float DeveloperModernMesh_GetLegacyLightReceptivity(void) { return 0.0f; }
+void DeveloperModernMesh_GetSunAngles(float* azimuthDegrees, float* elevationDegrees)
+{
+	if (azimuthDegrees) *azimuthDegrees = 0.0f;
+	if (elevationDegrees) *elevationDegrees = 0.0f;
+}
+void DeveloperModernMesh_SetSunAngles(float, float) {}
+float DeveloperModernMesh_GetLightIntensity(void) { return 0.0f; }
+void DeveloperModernMesh_SetLightIntensity(float) {}
+float DeveloperModernMesh_GetAmbient(void) { return 0.0f; }
+void DeveloperModernMesh_SetAmbient(float) {}
+float DeveloperModernMesh_GetExposure(void) { return 1.0f; }
+void DeveloperModernMesh_SetExposure(float) {}
+float DeveloperModernMesh_GetShadowExtent(void) { return 0.0f; }
+void DeveloperModernMesh_SetShadowExtent(float) {}
+int  DeveloperModernMesh_GetShadowDebug(void) { return 0; }
+void DeveloperModernMesh_SetShadowDebugMode(int) {}
 void DeveloperModernMesh_Update(void) {}
 int  DeveloperModernMesh_IsVisible(void) { return 0; }
 

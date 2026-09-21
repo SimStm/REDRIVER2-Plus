@@ -1,123 +1,128 @@
 ---
 type: Status
 title: Recent engineering context
-description: Current renderer correction and validation handoff.
+description: Panel follow-up (display confirmation, help markers, Input tab, modern sun controls) and legacy-lighting range/stability fixes.
 tags: [okf, status, agents]
 ---
 
 # Recent engineering context
 
-> Updated: 2026-09-20
+> Updated: 2026-09-21
 > Confirm this handoff against source, Git state and actual validation output.
 
 ## Objective and status
 
-Address the user's repeat Vulkan UI report: world shadows over the full map,
-missing police indicator/cone, faint police flashing and compass/HUD colours,
-loading progress and CloseShutters. Corrections are implemented in fork commits `d9d8628` and `647ea0b`, pushed to origin/master,
-and the parent gitlink is staged. Controlled visual comparisons are complete
-for the reported elements, with small remaining pixel differences. The previous document's
-complete claim and explanation that GL writes depth with depth testing off
-were incorrect and are superseded here.
+Follow-up work after the user tested the two delivered features. Two threads:
 
-## Implemented corrections
+1. **Panel (item 4)**: the display Keep/Revert confirmation never appeared when
+   a mode change hid or clipped the panel; the `(?)` markers sat below the
+   checkboxes; the Input tab's text/table layout was broken.
+2. **Legacy lighting (item 3)**: while driving, the lighting looked like a short
+   range around the vehicle, slightly distant objects were not lit, and the
+   player car's lighting looked wrong. The user tied it to the PGXP options and
+   asked for sun height/rotation controls plus the rest of
+   `developer_modern_mesh.ini` in the GUI.
 
-- `PsyX_render.cpp` maps the white sentinel to `PSYX_VK_TEX_WHITE`, except pure
-  RGBA draws. `psx.frag` decodes the same white 0xffff word as GL (RGB 248 and
-  alpha 127); it no longer samples unrelated VRAM for untextured primitives.
-- `CreatePsxResources` preserves the stencil capability selected during render
-  pass creation instead of erasing it with memset. Pipeline masks/operations
-  reproduce GL reference 1, write mask 0xff and separate comparison masks.
-  Depth-disabled normal and DrawPrim variants both retain stencil.
-- Main and resumed passes store stencil and have matching dependencies covering
-  colour and early/late depth/stencil attachment accesses. This fixes the
-  render-pass compatibility VUID observed with Khronos validation.
-- Game mode prefers UNORM presentation for PSX display-space blending; the
-  standalone modern fixture retains its sRGB preference. Constant blend alpha
-  is 0.5, matching the actual GL call. Depth writes require depth testing.
-- `DeveloperVkFixture.cpp` runs PSX self-test with gameMode enabled and a larger
-  report. Tests cover empty-VRAM white primitives in all three PSX texture
-  formats, five blend modes, masking through two pass restarts, partial frames,
-  existing CLUT/offscreen checks and VRAM export.
+Both are implemented and verified. Nothing is committed: the parent tree holds
+the knowledge edits plus `utils/*` changes, and the PsyCross fork working tree
+holds the renderer changes (no gitlink bump). See
+[`changes/2026-09-21/lighting-and-panel-followup/index.md`](changes/2026-09-21/lighting-and-panel-followup/index.md).
 
-## Validation actually executed
+## Panel changes
 
-- `scripts/compile_vk_shaders.ps1`: succeeded, generated SPIR-V and embedded header.
-- Visual Studio MCP `Release_dev|x64` builds: latest succeeded, zero failures.
-- `REDRIVER2_dev.exe -vkpsxtest`: log reports PASS. White RGB 248; all five
-  blend checks worst error <= 1; stencil protected/outside pixels correct;
-  existing texture/offscreen checks pass; VRAM export 1048594/1048594 bytes.
-- Khronos layer is installed at `G:\VulkanSDK\1.4.357.0`, registered and loaded.
-  The renderer already enables it when available. Before correction the game
-  emitted `VUID-vkCmdDraw-renderPass-02684`; the inspected post-fix game output
-  had layer-enabled confirmation and no validation error/VUID.
-- Live Vulkan captures showed the full map without shadow bleed, white compass,
-  green Damage portion, coloured Felony bar, police cones and brighter flash.
-  Loading art with a filled red progress bar was observed.
-- Controlled HUD captures at the same spawn, CameraCnt=4 and injected cop state
-  show matching Damage/Felony, compass and police indicator/flash structure.
-  Mean absolute RGB difference was 2.4042/255 in the HUD rectangle and
-  2.8266/255 in the minimap rectangle (max 51 and 83 respectively). These are
-  visual parity checks, not pixel-identical results; world traffic differs.
-- Natural CloseShutters captures at h=96 show both black bands and the same
-  loading image on GL and Vulkan. Full-frame mean RGB difference 0.8747/255,
-  maximum 4. A prior artificial jump from h=0 to h=96 produced an asymmetric
-  Vulkan frame; do not use injected animation jumps as natural-run evidence.
-- The shutter captures used temporary source probes (GL before EndScene, Vulkan
-  after EndScene). Probes were removed; loadview.c has no content diff. Final
-  Release_dev|x64 build after removal succeeded, zero failed projects.
-- `git diff --check` and submodule diff check passed before commit. Upstream
-  releases page checked: baseline remains 8.0 at b2d8857.
-- The partial-presentation test passed for the actual acquired-image sequence;
-  it does not guarantee coverage of every swapchain image or establish general
-  previous-frame persistence. The renderer still loads individual images.
+- `DrawDisplayConfirmWindow` is a separate ImGui window anchored to the
+  bottom-left of the applied display size, drawn by `BuildOverlayWidgets`
+  whether or not the panel is open and *after* it so it is never covered.
+  `UpdateOverlayInputState` shows the cursor and captures input while armed.
+  Observed live: the window appeared on a fullscreen toggle, counted down, and
+  the expiry reverted the mode without writing `developer_graphics.ini`.
+- `CheckboxWithHelp` / `SliderFloatWithHelp` / `SliderIntWithHelp` put the `(?)`
+  at the end of the control label, moving it to its own line only when the label
+  fills the line. Applied across every tab; prose blocks keep their marker on a
+  separate line.
+- The Input tab table is now `Action | Binding | Also bound to | Reset`, with
+  the conflict note in its own stretch column so it wraps inside the table
+  instead of widening the binding column past the panel. The capture banner
+  wraps and the reset buttons are fixed-width.
+- The Graphics tab gained **Modern sun and look**: azimuth, height, intensity,
+  ambient, exposure, shadow volume size, legacy light strength and the shadow
+  debug view. New `DeveloperModernMesh_*` getters/setters derive the angles from
+  the live direction vector (F-keys and sliders agree) and persist
+  `developer_modern_mesh.ini`. The PGXP checkboxes now state that the composite
+  needs both options on.
 
-## Working techniques and environment
+## Lighting changes
 
-- Use Visual Studio MCP to select `Release_dev` (Vulkan) or `Release_dev_gl`,
-  pause, assign globals and resume. Vulkan function evaluation
-  `PsyX_TakeScreenshot()` works while paused and writes
-  `bin/Release_dev/SCREENSHOT.BMP`. The GL function evaluation timed out; use
-  the normal-running capture tick for GL and verify file timestamps.
-- `DeveloperDebugStart` capture globals also work while rendering gameplay:
-  `g_captureDelayMs=1`, `g_captureTaken=0`. Tick occurs before presentation.
-- Use System.Drawing to convert BMP to PNG for `view_image`; system Python has
-  no Pillow. Captures are local ignored artifacts under
-  `src_rebuild/build/ui-parity-20260919/`.
-- Native computer control was unavailable (pipe error); the user-authorized
-  computer-control MCP worked for running windows. Window tools can hang while
-  the debuggee is paused, so prefer renderer screenshot function evaluation.
-- For frozen HUD capture set pauseflag=1, CameraCnt to a fixed phase, gShowMap=0,
-  player_position_known=1, CopsCanSeePlayer=1, car_data[0].felonyRating=5000,
-  PlayerDamageBar.position=2000 and FelonyBar.position=4096. Paused physics does
-  not update bar positions automatically. Police sight cones require a cop
-  control flag or a live pursuer car; white dot blinks with CameraCnt & 7.
-- `-vkpsxtest` command-line dispatch currently ignores the test return status;
-  inspect its PASS/FAIL log, not just the process exit code.
-- `opencode.jsonc` is an unrelated pre-existing user edit; leave it untouched.
+- The shadow volume and the sun fade centre **follow the player vehicle** (the
+  camera when no car is active) instead of a fixed spawn anchor; the set is
+  pushed every frame.
+- The reconstructed normal is a **five-tap cross** of the neighbour world
+  positions with an edge test (`> 0.0015` depth difference keeps the fallback up
+  normal), replacing the single-pixel `dFdx/dFdy` normal that flickered on
+  moving vehicles.
+- The backdrop cutoff moved `0.995 -> 0.999`, and the sun term now fades with
+  the reconstructed camera distance between `2x` and `4x` the shadow volume
+  half-size, read from `1 / shadowMatrix[0][0]`. Identical logic in the GLSL
+  1.30 string and `psx_composite.frag` (SPIR-V regenerated).
 
-## Enhanced-path validation follow-up
+## The crash this exposed
 
-A final launch with modern meshes active exposed two additional errors:
-VUID-VkImageMemoryBarrier-image-03320 (depth-only barrier on combined D24/S8)
-and VUID-vkCmdDraw-None-09600 (copy destination never transitioned to transfer).
-RecordGameModernSceneDepthCopy now transitions both aspects, copies only depth,
-and discards/prepares the fully overwritten destination before each copy.
-Commit `647ea0b` contains this follow-up. The build passed; the post-fix run
-confirmed the validation layer enabled, imported all eight modern fixtures with
-modern meshes and shadows enabled, and emitted no validation error/VUID in the
-inspected debug output. Modern enabled state was restored to 0 (its prior value),
-shadows remained 1, and the debuggee was stopped. Earlier clean-run statements
-apply only to those inspected runs.
+Pushing the light set every frame dereferenced `hd.where.t` unconditionally;
+the pointer is absent while a level/mission/replay re-initialises, and the game
+hit an access violation at offset `0x8`. Both the per-frame path and
+`PositionGallery` now fall back to the camera on a null pointer. After the fix
+the game ran under the debugger for several minutes with no break.
 
-## Artifacts and remaining limits
+## Executed evidence
 
-- Captures: `gl-hud4.png`, `vk-hud4.png`, `gl-shutters96.png`,
-  `vk-shutters-natural96.png`, `vk-loading.png`, `vk-map.png` in the ignored
-  capture directory above. The file named gl-loading.bmp is stale from a timed
-  out evaluation and is NOT GL evidence.
-- No gameplay changes remain. `opencode.jsonc` was not staged or modified.
-- Cross-platform builds, the D32-only stencil fallback and a general
-  previous-presented-image history mechanism remain outside this validated run.
-  Investigate explicit frame history if a natural partial-update sequence
-  reproduces corruption; do not claim the current LOAD operation guarantees it.
+- `Release_dev|x64` and `Release_dev_gl|x64`: 0 failed projects.
+- `-vkpsxtest`: `psx self-test: PASS` (`main depth format 129 stencil=1`).
+- The GL build ran with `legacyShadowPass=1 legacyLightPass=1` and no
+  shader-compile error in `REDRIVER2.log`, i.e. the new GLSL composite compiles
+  and runs.
+- Debug view 6 (normal): ground/road up-facing, wall facades sideways, 1-2 px
+  discontinuities at geometric edges. Debug view 10 (sun coverage): the whole
+  visible street, buildings, vehicles and trees are covered, the sky is not.
+- `git diff --check` clean.
+
+## Working techniques and environment (updated)
+
+- **Scripted clicks do reach the ImGui panel** once the game window is
+  frontmost (`windows-mcp` `App switch` first, then `Click` at
+  `image x 1.791667`); the earlier "clicks never arrive" note was a focus
+  problem. The tab row is a single merged OCR box, so click by the screenshot's
+  measured tab centres (the current layout: Graphics ~1370, Input ~1431,
+  Game Debug ~1516 screen x at 3440x1440). A synthetic click on a binding
+  button was not observed to start a capture, so that banner stays
+  code-verified.
+- The display resolution in this environment **flips between 3440x1440 and
+  2560x1600 on its own** (Parsec/Meta/SudoMaker virtual display adapters are
+  installed; killing a fullscreen game does not restore the desktop mode). Do
+  not treat a resolution change as a game bug, and do not try to force a mode
+  with `ChangeDisplaySettings` - the target mode may not be enumerable.
+- The **GL build has no DLLs in `bin/Release_dev_gl`**; copy
+  `SDL2.dll`, `SDL2_2.dll` and `OpenAL32.dll` from `bin/Release_dev` to run it
+  (its config/ini files are separate and were stale, so seed
+  `developer_modern_mesh.ini` before judging the composite).
+- The composite's debug modes remain the fastest diagnosis: 1 depth, 2 frustum,
+  3 shadow map, 4 proj/depth, 5 `ndl`, 6 normal, 7 light scale, 8 two-channel
+  depth, 9 two-channel distance, 10 sun coverage. Set them in
+  `developer_modern_mesh.ini` and relaunch; the panel's slider also sets them
+  live. **Reset `shadowdebug=0` afterwards** - the game rewrites the file.
+- `-vkpsxtest` writes its PASS/FAIL to `vk_fixture.log` next to the exe, not to
+  `REDRIVER2.log`, and ignores its own exit status.
+- The self-test, the modern fixtures and the composite all need the game to
+  reach the attract mode; expect ~15-25 s after launch before a capture is
+  meaningful.
+
+## Next candidate work
+
+- Shadow-centre **texel snapping** (quantise the light-space centre to the
+  shadow-map texel grid) to remove any shimmer as the volume follows the car -
+  identified, not implemented.
+- The R5 shadow receive difference between backends (VK 7722 px vs GL 2264 px,
+  IoU 29.2%) and point-light receptivity / legacy casters for the shadow map
+  remain open from the earlier workstreams.
+- Roadmap planned items 07 (inspector navigation), 08 (OpenDriver2Tools
+  interoperability), 09 (model export/re-import), 11 (draw distance/LOD/stream
+  budgets), 12 (quality profiles) and 17 (high-FPS timestep, documented only).

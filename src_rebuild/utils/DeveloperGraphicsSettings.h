@@ -15,6 +15,12 @@ struct DeveloperGraphicsSettings
 	int exportBaseColours;
 	int overrideProportionalAlpha;
 	int modernRenderer;
+	int dynamicLights;
+	int widescreenOverlays;
+	int fastLoadingScreens;
+	int fullscreen;
+	int windowWidth;
+	int windowHeight;
 };
 
 DeveloperGraphicsSettings DeveloperGraphicsSettings_ReadRuntime();

@@ -54,3 +54,13 @@ tags: [okf, rules]
 
 - [Verify renderer parity with state and pixel evidence](renderer-parity-evidence.md):
   check API semantics, actual bridge paths and controlled captures.
+- [Write composite results instead of blending above 1.0](renderer-composite-writes.md):
+  sample the scene colour for tinting composites, and treat the PSX depth top
+  band as backdrop rather than geometry.
+- [Back up the generated Visual Studio projects before regenerating](visual-studio-project-regeneration.md):
+  `premake5 vs2022` deletes the hand-added `Release_dev_gl` and
+  `Release_dev_playground` configurations, and new `utils/` sources are only
+  compiled after a regeneration or a manual project edit.
+- [Write developer settings files through DeveloperSettingsFile_WriteKeys](developer-settings-files.md):
+  preserve unknown keys and comments, drop what the owner no longer wants, and
+  keep the previous contents as `.bak` so a failed save cannot lose the file.

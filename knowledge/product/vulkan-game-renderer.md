@@ -47,7 +47,15 @@ delivery history and evidence are in
 - **Framebuffer persistence.** The main pass preserves the previous frame and
   clears only when the game asks for it (`GR_Clear`, i.e. `activeDrawEnv.isbg`).
   The loading screen depends on this: it draws its art once and then redraws only
-  the progress bar.
+  the progress bar. Persistence is **per swapchain image**: each acquired image
+  keeps its own previous content, which is not the same as an explicit copy of
+  the immediately previous frame. The game's partial-update paths redraw their
+  base content on every image before relying on it (the loading art is presented
+  for 32-64 frames, more than the swapchain depth), so no corruption has been
+  observed; a future path that draws a base frame once and then partially
+  updates more frames than the swapchain holds would need an explicit frame
+  history. See
+  [`changes/2026-09-20/vulkan-renderer-debt`](../changes/2026-09-20/vulkan-renderer-debt/index.md).
 - **Clip space.** GL-style matrices are converted per vertex (`y = -y`,
   `z = (z + w) * 0.5`); the viewport and scissor map GL's bottom-left origin to
   Vulkan's top-left.
@@ -73,8 +81,16 @@ delivery history and evidence are in
 - Animated-character/vehicle-deformation migration is a non-goal; moving
   entities render through the normal PSX stream.
 - MoltenVK/macOS is wired in code and Premake but has not been built on a Mac.
-  The `D32_SFLOAT` stencil-less depth fallback is compiled but unexercised on
-  NVIDIA hardware that always exposes a combined format.
+  The `D32_SFLOAT` stencil-less depth fallback is exercised by setting
+  `PSYX_VK_DEPTH_FORMAT=d32`; the self-test then reports
+  `main depth format 126 stencil=0`, asserts that the PSX mask bit degrades to a
+  no-op, and still passes every other check. The game renders normally under the
+  forced fallback with the validation layer enabled and no VUID.
+- Legacy shadow reception is implemented on both backends but is not yet
+  equivalent: at a low sun in the modern gallery scene, Vulkan's receive term
+  changed 7722 pixels of the sampled ground band versus OpenGL's 2264 (2257
+  shared, IoU 29.2 %), and OpenGL additionally darkens the legacy tree canopy
+  where Vulkan barely does. Recorded as an R5 follow-up, not a blocked feature.
 - CPU/GPU frame-time distribution, peak memory and the Linux/web/Android builds
   have not been profiled. At the time of writing both backends present at the
   game's fixed 30 Hz PSX timestep (~30 FPS / 33.4 ms), so that equality shows
