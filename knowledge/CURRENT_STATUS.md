@@ -142,6 +142,20 @@ Delivered in order, each verified on the game window:
   per-vertex depth (otherwise every legacy vertex takes the 2D path at a
   constant depth) and PGXP Z-buffer gates depth writes. The Graphics tab states
   this on both checkboxes.
+- World/overlay composition (2026-09-21): the earlier forced 2D-depth fix was
+  replaced after user testing exposed opaque holes behind translucent menus,
+  flare rectangles and angle-dependent scene loss. The game marks OT bucket 10
+  as the final-overlay boundary; PsyCross splits even a state batch crossing
+  that exact vertex, composes the legacy world and modern meshes, then blends
+  lens flare, fades and UI over the result. No draw is classified by its first
+  vertex's `scr_h`, and legacy depth behaviour is preserved. OpenGL restores
+  texture bindings on units 0..4 and the active unit before legacy drawing
+  resumes; Vulkan preserves VRAM generations and resumes its load pass for the
+  overlay tail. This boundary is supplied by the single-view gameplay path;
+  split-screen retains the previous end-of-frame fallback.
+  Both Windows builds and the expanded Vulkan blend/readback test pass; live
+  pause transparency and four Vulkan camera orientations were inspected.
+  See [composition regression](changes/2026-09-21/modern-overlay-composition/index.md).
 - Bounded glTF 2.0/GLB importer (`utils/GltfLoader.*`) with six owned Meshy
   fixtures under `assets/modern_fixtures/` plus `provenance.md`.
 

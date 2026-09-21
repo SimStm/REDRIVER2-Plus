@@ -464,6 +464,13 @@ where release policy permits it.
 
 ### Fixed
 
+- Enhanced rendering now composes modern meshes before the final gameplay
+  overlays on Vulkan and OpenGL, preserving meshes behind translucent menus
+  and preventing UI/lens-flare pixels from entering the world lighting copy.
+  Replaces the earlier forced 2D-depth workaround, which could obscure the
+  world depending on view angle and make flare rectangles affect lighting.
+  The explicit OT boundary also handles batches containing both 2D and 3D
+  primitives; OpenGL restores texture bindings before drawing the overlay tail.
 - Vulkan modern scene-depth copies now transition both depth/stencil aspects
   together and initialize the destination transfer layout before copying,
   correcting Khronos validation errors 03320 and 09600 in the enhanced path.

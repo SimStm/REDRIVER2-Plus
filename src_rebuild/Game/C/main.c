@@ -1634,6 +1634,13 @@ void DrawGame(void)
 		DrawPauseMenus();
 
 		RenderGame2(0);
+
+#ifndef PSX
+		// Camera and instances must be ready before the OT reaches the final
+		// overlays (lens flare at 10, fades at 8, HUD/map/menu at 0..1).
+		DeveloperModernMesh_Update();
+		PsyX_SetModernSceneBoundary(current->ot + 10);
+#endif
 		SwapDrawBuffers();
 	}
 	else
@@ -1657,7 +1664,8 @@ void DrawGame(void)
 
 	// The modern fixtures must use the camera the scene was actually rendered
 	// with, which is only final after RenderGame2 has run.
-	DeveloperModernMesh_Update();
+	if (NumPlayers != 1 && !NoPlayerControl)
+		DeveloperModernMesh_Update();
 
 	if (!FadingScreen)
 		PsyX_EndScene();

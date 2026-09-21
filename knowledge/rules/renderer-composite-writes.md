@@ -47,6 +47,19 @@ gates depth writes (otherwise the legacy scene writes no depth at all). State
 this in any UI that exposes them; with either off the composite finds no world
 pixels.
 
+**When** integrating a modern pass with a legacy painter-ordered stream,
+**then** compose before explicitly identified final overlays. Let the game
+supply the semantic boundary and keep PsyCross generic. Preserve the legacy
+depth policy and the order of world effects; split a state batch at the exact
+boundary vertex if necessary. A batch's first `scr_h` cannot classify its
+remaining vertices: the batch key does not include the projection path.
+
+Never force constant 2D depth writes to make translucent UI occlude modern
+meshes. The underlying mesh colour must exist before the overlay blends; depth
+rejection removes it instead. Backgrounds and world effects can also take the
+2D path, so treating all of them as foreground occluders can erase the scene.
+Keep UI out of the world colour/depth copy by ordering, not by fake depth.
+
 Evidence: 2026-09-20 legacy lighting receptivity. With the multiply blend and
 `legacyLightReceptivity=2.0`, two frames with the term on and off were identical
 at every sampled surface while the `legacyScale` and `ndl` probe modes showed
@@ -54,4 +67,7 @@ non-zero values, which is what identified blending as the cause. The depth bands
 were measured with the composite's two-channel depth probe (mode 8) after the
 sky was observed brightening by `+29%`. The five-tap normal and the PGXP
 dependency were confirmed on 2026-09-21 by the mode 6 (normal) and mode 10
-(sun coverage) captures and by the user's PGXP A/B report.
+(sun coverage) captures and by the user's PGXP A/B report. The earlier overlay
+depth rule was disproved by the user's next test: removing the bollard beneath
+a translucent panel is not correct blending. The replacement uses an explicit
+OT boundary; see [composition regression](../changes/2026-09-21/modern-overlay-composition/index.md).

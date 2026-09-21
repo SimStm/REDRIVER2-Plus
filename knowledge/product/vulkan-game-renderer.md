@@ -63,6 +63,31 @@ delivery history and evidence are in
   swapchain so the hardware store does not double-encode; the offscreen target is
   UNORM and stays raw.
 
+## Overlays and the modern pass
+
+Single-view gameplay supplies `PsyX_SetModernSceneBoundary(current->ot + 10)`
+after updating the modern camera/instances and before submitting the OT.
+PsyCross records the exact vertex position, including when it falls inside a
+state batch: legacy world first, lighting/shadow composite and modern meshes
+second, final overlays last. Bucket 10 includes lens flare; fades at 8 and the
+HUD, map and pause menu at 0..1 follow it. World sprites keep their original OT
+order and depth policy.
+
+Vulkan records two contiguous PSX draw ranges around the modern pass, retaining
+VRAM upload generations across the boundary. The overlay range rebinds PSX
+vertices/descriptors and can restart the loaded render pass for a VRAM transfer.
+OpenGL composes immediately at the boundary and restores texture units 0..4,
+active texture, program, VAO and the other saved draw state. End-of-frame
+composition remains the fallback for callers without a boundary (including
+the existing split-screen path).
+
+Do not restore the previous always-pass 2D depth workaround. Screen-space
+encoding does not identify an overlay, a batch can mix 2D and 3D vertices, and
+a translucent panel needs the mesh colour beneath it before blending. The
+previous workaround hid that colour and let background/effect rectangles
+poison the world depth. See the
+[regression record](../changes/2026-09-21/modern-overlay-composition/index.md).
+
 ## Configuration
 
 - `developer_graphics.ini` holds the developer graphics settings (bilinear

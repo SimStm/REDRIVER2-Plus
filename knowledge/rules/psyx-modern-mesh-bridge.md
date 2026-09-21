@@ -42,8 +42,10 @@ default):
    `Apply_InvCameraMatrix*`.
 3. Scale the vertex before the projection the same way the shader does:
    `x*(C2_H/(128*dispW))`, `y*-(C2_H/(128*dispH))`, `z*(1/128)`.
-4. Draw after the legacy scene is complete but before the frame is swapped
-   (`GR_EndScene`), while framebuffer 0 still owns the legacy colour and depth.
+4. Draw after the legacy world but before final overlays, while framebuffer 0
+   still owns the legacy colour and depth. Single-view gameplay supplies the
+   exact OT boundary through `PsyX_SetModernSceneBoundary`; `GR_EndScene` is
+   only the fallback for callers without a boundary.
    Enable `GL_DEPTH_TEST`/`GL_LEQUAL`/depth write and disable culling/blend for
    an opaque unlit mesh.
 5. **Restore the caller's render state, especially the bound VAO and
@@ -56,7 +58,8 @@ default):
 7. Keep the public API C-compatible and generic in PsyCross; keep placement,
    the scene gate and the toggle in `src_rebuild`. Do not edit the gitlink.
 8. **Anchoring must use the frame's final camera.** Update the instances after
-   the legacy scene camera is built (`DrawGame`, after `RenderGame2`), not at the
+   the legacy scene camera is built (`DrawGame`, after `RenderGame2`, before
+   `SwapDrawBuffers` submits the OT), not at the
    start of `StepGame`. The game recomputes `camera_position`/`inv_camera_matrix`
    during the scene render, so an earlier read uses the previous frame and the
    mesh visibly swims when the camera moves.
