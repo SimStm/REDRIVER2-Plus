@@ -13,6 +13,11 @@ Follow the [discussion maintenance rule](../rules/discussion-records.md).
 
 ## Subjects
 
+- [Engine migration decision](engine-migration/index.md): adopted Diligent,
+  FMOD Core, PopcornFX, converted assets, independent ticks and complete PsyCross
+  removal; [roadmap](../roadmap/planned/engine-migration.md) owns execution.
+  **Adopted 2026-10-08; implementation pending.**
+
 - [Renderer modernization](renderer-modernization/index.md): PsyCross's role,
   modern scene submission, PBR materials, lighting, graphics backends, custom
   assets, and a staged sequence of experiments. **Implemented for the Vulkan

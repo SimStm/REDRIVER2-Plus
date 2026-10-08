@@ -10,6 +10,12 @@ where release policy permits it.
 
 ### Added
 
+- Adopted engine-migration roadmap and five implementation issue briefs covering
+  project-owned fixed simulation ticks/replay compatibility, original-content
+  conversion, Diligent rendering, FMOD Core, PopcornFX and progressive PsyCross
+  removal. Native visual changes use targeted tests while mechanics retain
+  deterministic acceptance; no engine migration is implemented by this plan.
+
 - The opt-in performance log (`PSYX_PERF_LOG=1`) now reports `submit_ms`, the
   mean CPU time of the frame-submission path (`GR_SwapWindow` plus the OpenGL
   overlay). Measured at 1280x720: ~6.4 ms on Vulkan, where the whole frame is

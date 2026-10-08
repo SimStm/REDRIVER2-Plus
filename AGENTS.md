@@ -1,5 +1,49 @@
 # Agent Guide
 
+## Active engine migration direction
+
+On `feat/new-engine`, start at
+[`knowledge/roadmap/planned/engine-migration.md`](knowledge/roadmap/planned/engine-migration.md)
+and [`knowledge/engine-migration/`](knowledge/engine-migration/index.md).
+The user adopted Diligent Engine/DiligentFX, FMOD Core and PopcornFX, original
+content conversion informed by OpenDriver2Tools, project-owned simulation/services
+and eventual complete PsyCross removal. All E00-E07 stages are planned.
+Implement only the issue/block subsequently requested; this roadmap is not an
+active authorization to execute every stage.
+
+The previous native Vulkan rework is preserved on `feat/vulkan-native-rework`
+at `e68b6ea6`; do not resume its R03 or merge the whole branch into this one.
+Earlier hybrid renderer/high-FPS/legacy caster plans are superseded execution
+directions here, not prerequisites. Existing source still uses PsyCross.
+Follow [the migration rule](knowledge/rules/engine-migration-boundaries.md).
+
+Preserve authoritative gameplay, math, mission/cutscene/replay semantics and
+regional simulation behavior. Fixed ticks must be independent of presentation
+FPS and CPU speed; preserve NTSC/PAL cadence initially, rather than changing
+physics to 60/120Hz or silently resampling replay tapes. Presentation consumes
+snapshots/events and must not mutate gameplay state or its RNG.
+
+Use converted package inventories, deterministic game-state checks and targeted
+native pixel/resource tests. Modern lighting/filtering/VFX need not match every
+legacy pixel. A legacy image, successful build or lack of crashes does not prove
+native correctness. Preserve explicit errors, bounded ownership and synchronization.
+No automatic native-scene fallback; expected loading is a separate state.
+
+Remove dependencies only after their consumers migrate, including UI/maps/effects,
+audio, GTE math, clocks/input/streaming and vendored tools. During the transition
+use the existing project PsyCross fork; new independent services belong in the
+project, not in new PsyCross APIs. Preserve separately selected OpenGL/platform
+paths until their replacements or an explicit supported-target decision.
+Keep [OpenGL tracking](knowledge/roadmap/planned/port-vulkan-to-opengl-compatibility.md)
+independent of Vulkan execution. No backend port is implied by this planning task.
+
+Routine checks may use direct builds/project CLI/local RenderDoc1.41. Observe
+the same process across tool yields, retain progress/failure exits and use
+debugger MCPs for stack/state inspection. Regenerate isolated build outputs for
+this branch; the existing generated projects/executables may belong to the rework.
+Exclude `knowledge/outdated-ideas/**` from routine discovery; old links do not
+authorize archived-content retrieval. No original assets/proprietary SDKs in Git.
+
 ## Project knowledge (OKF)
 
 Canonical project knowledge lives in [`knowledge/`](knowledge/index.md). Read `knowledge/index.md` and `knowledge/rules/` before changing lint, tokens, or booking naming. When you learn a repeating constraint, add a rule under `knowledge/rules/` (see `knowledge/rules/self-learning.md`).
@@ -100,8 +144,10 @@ point math, timing, or rendering can affect compatibility.
 - Premake 5 generates project files. Generated output lives below
   `src_rebuild/build/`, `src_rebuild/project_*`, and `src_rebuild/bin/`; edit
   Premake scripts or source, not generated IDE files.
-- Desktop rendering uses OpenGL through PsyCross. SDL2 provides the window and
-  input layer; OpenAL Soft provides audio; libjpeg is used by the game.
+- Current desktop rendering defaults to Vulkan through PsyCross, with separately
+  selectable OpenGL; Diligent/FMOD/PopcornFX are planned replacements. SDL2
+  provides the window/input layer; OpenAL Soft provides audio; libjpeg is used
+  by the game.
 - Supported build targets include Windows, Linux, Emscripten/web, and Android
   NDK. A change that is desktop-only must be guarded in Premake and source so
   it does not break the other targets.
@@ -127,8 +173,9 @@ point math, timing, or rendering can affect compatibility.
 
 ## MCP tooling and interactive debugging
 
-Check which MCP servers the session has available before documentation,
-debugging, or run-the-game work, and use them when they are configured:
+Check available documentation/debugging tools. Prefer direct project build/run
+and local RenderDoc1.41 analysis for routine checks when they avoid RPC limits;
+use configured MCPs where their capabilities help:
 
 - **context7** - query current third-party API documentation instead of relying
   on memory when touching SDL2, Dear ImGui, Vulkan, OpenAL, or other libraries.
@@ -173,9 +220,10 @@ screenshots to learn the state instead of waiting on the process handle.
   for PsyCross changes. See `knowledge/rules/psycross-fork.md`.
 - PsyCross is a separate Git repository. Review its status independently with
   `git -C src_rebuild/PsyCross status`.
-- Keep generic hooks in PsyCross and game-specific UI or behaviour in
-  `src_rebuild`. Public PsyCross changes must retain C-compatible declarations
-  where they are consumed by C or mixed C/C++ game code.
+- Keep generic hooks for existing compatibility consumers in PsyCross and
+  game-specific UI/behaviour in `src_rebuild`. New migration services belong in
+  project-owned modules. Public PsyCross changes must retain C-compatible
+  declarations where consumed by C or mixed C/C++ game code.
 
 ## Developer graphics panel
 

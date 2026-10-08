@@ -7,6 +7,11 @@ tags: [okf, rendering, vulkan, opengl]
 
 # Write composite results instead of blending above 1.0
 
+Scope note (2026-10-08): PSX depth bands and this composite's old projection are
+legacy-only contracts. Diligent uses explicit native materials/passes under
+[engine migration](../roadmap/planned/engine-migration.md); retain the old consumer
+until migrated, without extending it as the new renderer's foundation.
+
 **When** a full-screen composite multiplies or tints the already-rendered scene,
 **then** sample a copy of the scene colour and write the result, rather than
 expressing the tint as a blend factor. Vulkan and OpenGL clamp the source colour

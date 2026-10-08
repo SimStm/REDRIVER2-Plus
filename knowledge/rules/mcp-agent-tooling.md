@@ -7,9 +7,16 @@ tags: [okf, tooling, debugging, workflow]
 
 # Use configured MCP servers for docs, debugging, and game runs
 
+The 2026-10-08 engine migration workflow permits direct project builds/run/capture
+and local RenderDoc1.41 for routine validation. Use MCP debugger state inspection
+where helpful; an RPC response limit is not a process failure. Observe the same
+owned process across yields with logs/progress, real failure exits and cleanup.
+Generate isolated branch-correct build outputs before running an executable.
+
 **When** a task needs library documentation, a build/debug cycle, or a running
-game, **then** check which MCP servers the session exposes and use them instead
-of falling back to memory, terminal builds, or blind input injection.
+game, **then** check available tools and use the most reliable documented path.
+Consult current primary API documentation rather than memory; direct builds are
+allowed. Do not infer reliable gameplay input from blind injection.
 
 - **context7** answers third-party API questions with current documentation
   (SDL2, Dear ImGui, Vulkan, OpenAL, libjpeg). Prefer it over recalling API

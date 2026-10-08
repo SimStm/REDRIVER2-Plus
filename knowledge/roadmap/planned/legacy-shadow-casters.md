@@ -2,10 +2,16 @@
 type: Roadmap
 title: Legacy geometry as shadow casters
 status: planned
+superseded_by: engine-migration
 tags: [rendering, shadows, vulkan, opengl, performance]
 ---
 
 # Legacy geometry as shadow casters
+**Execution superseded on feat/new-engine (2026-10-08).**
+[Engine migration](engine-migration.md) now owns this scope and its acceptance.
+The following proposal is retained as historical context, not an active order,
+permission to extend legacy rendering, or a requirement for exact legacy pixels.
+Current source/product records, not this proposal, establish implemented behavior.
 
 ## Problem
 

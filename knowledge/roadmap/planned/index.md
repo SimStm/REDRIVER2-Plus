@@ -1,157 +1,54 @@
 ---
 type: Catalog
 title: Planned features
-description: Feature proposals that are not implementation evidence.
+description: Active engine migration and retained superseded references.
 tags: [okf, roadmap, planned]
 ---
 
 # Planned features
 
-Each feature in this directory is a proposal. It must not be described as
-implemented, available, or shipped during repository analysis.
+Plans describe intent, not available behavior. Follow the [lifecycle](../index.md)
+and confirm implementation against source/product evidence.
 
-Create one `<slug>.md` record per planned feature according to the lifecycle
-in the [roadmap catalog](../index.md).
+## Active adopted umbrella
 
-## Recommended execution sequence
+[Engine migration](engine-migration.md) is the single execution owner for
+`feat/new-engine`: Diligent/DiligentFX, FMOD Core, PopcornFX, converted original
+content, project-owned fixed ticks/services and final PsyCross removal.
+All E00-E07 stages are planned; begin with E00/E01 when implementation is requested.
+Read the [stage catalog](../../engine-migration/index.md),
+[issue briefs](../../engine-migration/issue-briefs.md) and
+[validation policy](../../engine-migration/validation.md).
 
-The numbers below are suggested scheduling priorities, not release versions.
-Every record contains its own milestone sequence, prerequisites, non-goals,
-acceptance criteria and validation plan. Dependencies inside the record take
-precedence over the simple reading order.
+The user's five implementation issues map to services/ticks, Diligent/assets,
+FMOD, full mechanics/presentation and final removal. FMOD Studio, RmlUi,
+authoring editors and supplementary physics are captured as later extensions.
 
-1. **04 — [Source-aware asset catalog and material identity](../done/asset-catalog-identity.md)**:
-   implemented 2026-09-15.
-2. **05 — [Batch texture export with model references](../done/object-texture-batch-export.md)**:
-   implemented 2026-09-17.
-3. **06 — [Whole-object selection across renderer categories](../done/inspector-selection-coverage.md)**:
-   implemented 2026-09-16.
-4. **07 — [Inspector navigation and independent previews](inspector-camera-preview.md)**
-5. **08 — [OpenDriver2Tools interoperability and legacy overrides](modding-toolchain-integration.md)**
-6. **09 — [Model export and validated re-import](model-export-import-roundtrip.md)**
-7. **10 — [Runtime settings GUI and safe persistence](../done/runtime-settings-gui.md)**: implemented 2026-09-20.
-8. **11 — [Draw distance, LOD and streaming budgets](draw-distance-streaming.md)**
-9. **12 — [Measured graphics improvements and quality profiles](graphics-quality-profiles.md)**
+[Deferred OpenGL compatibility](port-vulkan-to-opengl-compatibility.md) remains
+independent, unscheduled and does not block Vulkan development.
 
-## Playground and renderer modernization track
+## Superseded execution references
 
-The user adopted this track on 2026-09-15 with the playground first. Labels
-13 and 14 extend the catalog without renumbering existing records; they do not
-require completing every unrelated entry above before starting this track.
+These records are retained for source context, not a competing execution order
+or instructions to extend the old rendering path:
 
-1. **13 — [Playable testing playground](../done/playable-testing-playground.md)**:
-   implemented 2026-09-15. The resident driving fixture is available on the
-   existing renderer, and its P1-P4 handoff is in place; P5 added Take a Ride
-   access.
-2. **14 — [Renderer modernization](renderer-modernization.md)**:
-   use that fixture for modern meshes, PBR, lighting and measured pipeline/backend
-   work. R2 waits for verified playground P1-P4; R1 audits can happen earlier.
-   The backend port (R7b) is delivered - see the completed
-   [Vulkan game renderer](../done/vulkan-game-renderer.md) record.
-   The legacy lighting receptivity follow-up is implemented - see the completed
-   [Legacy lighting receptivity](../done/legacy-lighting-receptivity.md) record.
-3. **18 — [Legacy geometry as shadow casters](legacy-shadow-casters.md)**:
-   the modern shadow map currently contains only the imported modern meshes, so
-   legacy buildings, trees and cars cast nothing. Needs a depth-only pass over
-   the legacy geometry on both backends; the Vulkan `submit_ms` baseline
-   (~6.4 ms CPU per frame) is the cost reference.
-4. **19 — [Point-light sources and receptivity](point-light-sources.md)**:
-   the game publishes one directional sun, so the legacy receptivity term has
-   nothing else to consume. Requires choosing and authoring point-light sources
-   from game state (headlights, sirens, lamps) and extending the composite term
-   to them on both backends.
+- [Hybrid renderer modernization](renderer-modernization.md).
+- [Old high-FPS timestep proposal](high-fps-timestep.md); E01 now owns ticks/replays.
+- [Old tooling interoperability](modding-toolchain-integration.md) and
+  [model export/import](model-export-import-roundtrip.md); E02 owns native conversion.
+- [Old draw-distance proposal](draw-distance-streaming.md).
+- [Legacy shadow casters](legacy-shadow-casters.md) and
+  [legacy point-light receptivity](point-light-sources.md).
+- [Old graphics-quality profiles](graphics-quality-profiles.md).
 
-The playground has no dependency on modern rendering. JSON authoring, an editor
-and cross-city assets are outside its initial scope. Original-city regression
-scenes remain required alongside controlled playground tests. See the linked
-discussions inside both records for the reasoning and adopted decision.
+The independent original-native rework lives on
+[`feat/vulkan-native-rework`](https://github.com/SimStm/REDRIVER2-Plus/tree/feat/vulkan-native-rework).
+Its R03 acceptance is not a prerequisite here.
 
-## Frame pacing track
+## Independent tooling and implemented surfaces
 
-1. **17 — [High-FPS rendering with fixed 30 Hz simulation](high-fps-timestep.md)**:
-   decouple the render rate from the fixed 30 Hz simulation, separate sim and
-   render counters, and add render-side interpolation, so the game can present
-   at 60+ FPS without changing replay, mission, AI or physics timing. Primary
-   low-risk validation is a Take a Ride session on any city/map - not only the
-   playground - which exercises physics, traffic, scenery and cop behaviour
-   without involving replays or missions. Evidence and reasoning in the
-   [high-FPS discussion](../../discussions/high-fps-timestep/index.md).
-
-## Completed
-
-- **04 — [Source-aware asset catalog and material identity](../done/asset-catalog-identity.md)**:
-  implemented 2026-09-15; see
-  [`knowledge/product/asset-catalog-identity.md`](../../product/asset-catalog-identity.md).
-- **13 — [Playable testing playground](../done/playable-testing-playground.md)**:
-  implemented 2026-09-15; see
-  [`knowledge/product/playable-testing-playground.md`](../../product/playable-testing-playground.md).
-- **00 — [Mod-system branch PR readiness](../done/mod-system-pr-readiness.md)**:
-  implemented 2026-09-15; see
-  [`knowledge/product/mod-system-pr-readiness.md`](../../product/mod-system-pr-readiness.md).
-- **01 — [Texture alpha and PSX blending correctness](../done/texture-alpha-semantics.md)**:
-  implemented 2026-09-15; see
-  [`knowledge/product/texture-alpha-semantics.md`](../../product/texture-alpha-semantics.md).
-- **02 — [Texture flicker diagnosis and sampling stability](../done/texture-flicker-diagnostics.md)**:
-  implemented 2026-09-15; see
-  [`knowledge/product/texture-flicker-diagnostics.md`](../../product/texture-flicker-diagnostics.md).
-- **03 — [Append-only texture registration and safe manifest merging](../done/texture-manifest-merge.md)**:
-  implemented 2026-09-15; see
-  [`knowledge/product/texture-manifest-merge.md`](../../product/texture-manifest-merge.md).
-- **06 — [Whole-object selection across renderer categories](../done/inspector-selection-coverage.md)**:
-  implemented 2026-09-16; see
-  [`knowledge/product/inspector-selection-coverage.md`](../../product/inspector-selection-coverage.md).
-- **05 — [Batch texture export with model references](../done/object-texture-batch-export.md)**:
-  implemented 2026-09-17; see
-  [`knowledge/product/object-texture-batch-export.md`](../../product/object-texture-batch-export.md).
-- **15 — [Texture export alpha fidelity](../done/texture-export-alpha-fidelity.md)**:
-  implemented 2026-09-17; see
-  [`knowledge/product/texture-export-alpha-fidelity.md`](../../product/texture-export-alpha-fidelity.md).
-- **16 — [Semi-transparent texture overrides](../done/semi-transparent-texture-overrides.md)**:
-  implemented 2026-09-17 (opt-in proportional alpha, compatibility default); see
-  [`knowledge/product/semi-transparent-texture-overrides.md`](../../product/semi-transparent-texture-overrides.md).
-- **[Vulkan game renderer](../done/vulkan-game-renderer.md)** (renderer item 14,
-  R7b): implemented 2026-09-19; see
-  [`knowledge/product/vulkan-game-renderer.md`](../../product/vulkan-game-renderer.md).
-
-The order labels of the remaining entries are unchanged, so the sequence has
-intentional gaps at 01, 02, 03, 05, 06, 15 and 16.
-
-## Current-branch merge boundary
-
-> Order 00 was completed on 2026-09-15 (PR
-> [#2](https://github.com/SimStm/REDRIVER2-Plus/pull/2), merge `5f1da8a2`).
-> The guidance below is the historical merge boundary for the mod-system
-> foundation; the next planned order is 07.
-
-Start with order 00 as an audit, not a requirement to complete orders 01–12.
-Transparent-PNG rendering is an existing correctness defect and should be
-fixed before merging the current texture-override foundation. Classify the
-reported flicker before merge: binding/depth regressions block it; measured
-filtering-quality improvements can be a follow-up. Manifest append is strongly
-recommended if the PR promises a complete export-to-mod workflow.
-
-Universal selection, source-model batch export, previews, model re-import,
-new configuration controls and increased draw distance can ship in later PRs.
-The current foundation must state its diagnostic picking and export limits.
-Do not delete unrelated local data to obtain a clean PR; stage only scoped
-changes after inspecting tracked and untracked files.
-
-## Assigning a bounded task to an agent
-
-Example request:
-
-> Read knowledge/roadmap/planned/inspector-camera-preview.md and the applicable
-> project instructions. Implement only milestones 1–2, preserving unrelated
-> local changes. Report tests, remaining risks and the next milestone. Do not
-> mark the whole feature implemented unless all acceptance criteria are met.
-
-Replace the filename and milestones for the intended task. Before coding,
-the agent must verify that prerequisites are actually implemented; a planned
-record is not evidence that its dependency exists. Separate dependent work
-into reviewable changes rather than asking an agent to implement the whole
-roadmap implicitly.
-
-For partial delivery, retain `status: planned` and record completed milestones
-with evidence without implying the whole feature is done. Once complete,
-create the matching product document and follow the move-to-`done/`
-lifecycle, updating this catalog's links at the same time.
+[Inspector navigation/previews](inspector-camera-preview.md) remains a future
+tooling proposal; integrate it with the new resource boundary when commissioned.
+Other implemented surfaces retain their product records in [done/](../done/index.md).
+No plan becomes a completed feature until it has executed acceptance and a product
+document. Update current status/handoff and changelog after each delivered block.

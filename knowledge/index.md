@@ -20,3 +20,13 @@ This directory follows the [Open Knowledge Format](https://github.com/GoogleClou
 | [`changes/YYYY-MM-DD/<name>/`](changes/2026-09-15/asset-catalog-identity/index.md) | Why a specific change landed, on the date it shipped. |
 
 Cross-links between documents are encouraged. Do not put secrets here.
+
+## Active direction on feat/new-engine
+
+Start at [engine migration](roadmap/planned/engine-migration.md) and
+[its stage/validation catalog](engine-migration/index.md). Diligent, FMOD Core,
+PopcornFX, converted original content and independent simulation ticks are
+planned; current source still depends on PsyCross. Earlier hybrid graphics and
+timing plans are retained as superseded references, not the execution sequence.
+The separate native Vulkan rework is preserved on `feat/vulkan-native-rework`.
+See [current branch status](CURRENT_STATUS.md) before making implementation claims.

@@ -8,6 +8,10 @@ tags: [discussions, timing, frame-rate, replays, missions, psycross]
 ---
 
 # High-FPS rendering with fixed 30 Hz simulation
+2026-10-08 decision: this prior exploration's execution direction is superseded
+by [the adopted engine migration](../../roadmap/planned/engine-migration.md) on
+feat/new-engine. Retain its evidence/rationale as context; its earlier proposals
+do not govern the new stack or require completion of the separate Vulkan rework.
 
 ## Context and decision status
 

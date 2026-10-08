@@ -2,11 +2,16 @@
 type: Roadmap
 title: Draw distance, LOD and streaming budgets
 status: planned
-execution_order: 11
+superseded_by: engine-migration
 tags: [roadmap, rendering, streaming, performance]
 ---
 
 # Draw distance, LOD and streaming budgets
+**Execution superseded on feat/new-engine (2026-10-08).**
+[Engine migration](engine-migration.md) now owns this scope and its acceptance.
+The following proposal is retained as historical context, not an active order,
+permission to extend legacy rendering, or a requirement for exact legacy pixels.
+Current source/product records, not this proposal, establish implemented behavior.
 
 ## Problem
 

@@ -2,11 +2,16 @@
 type: Roadmap
 title: Measured graphics improvements and quality profiles
 status: planned
-execution_order: 12
+superseded_by: engine-migration
 tags: [roadmap, graphics, performance]
 ---
 
 # Measured graphics improvements and quality profiles
+**Execution superseded on feat/new-engine (2026-10-08).**
+[Engine migration](engine-migration.md) now owns this scope and its acceptance.
+The following proposal is retained as historical context, not an active order,
+permission to extend legacy rendering, or a requirement for exact legacy pixels.
+Current source/product records, not this proposal, establish implemented behavior.
 
 ## Problem
 

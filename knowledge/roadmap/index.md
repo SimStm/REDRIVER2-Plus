@@ -7,6 +7,11 @@ tags: [okf, roadmap]
 
 # Roadmap
 
+The active adopted umbrella on `feat/new-engine` is
+[engine migration](planned/engine-migration.md), with E00-E07 acceptance blocks.
+Earlier graphics/timing roadmaps are superseded execution directions; completion
+records still describe the source baseline, not the planned new engine.
+
 This directory records feature intent and completion history. It is not a
 source of truth for code currently present in the repository.
 

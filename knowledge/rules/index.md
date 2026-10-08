@@ -7,6 +7,10 @@ tags: [okf, rules]
 
 # Rules
 
+- [Follow the new engine migration boundary](engine-migration-boundaries.md):
+  project-owned fixed ticks, converted assets and Diligent/FMOD/PopcornFX;
+  deterministic mechanics and targeted native evidence, progressive PsyCross removal.
+
 - [Maintain evolving discussion records](discussion-records.md): update the
   same topic as decisions evolve, separating exploration from roadmap adoption
   and implemented behaviour.

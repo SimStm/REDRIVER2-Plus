@@ -2,10 +2,16 @@
 type: Roadmap
 title: Point-light sources and receptivity
 status: planned
+superseded_by: engine-migration
 tags: [rendering, lighting, vulkan, opengl]
 ---
 
 # Point-light sources and receptivity
+**Execution superseded on feat/new-engine (2026-10-08).**
+[Engine migration](engine-migration.md) now owns this scope and its acceptance.
+The following proposal is retained as historical context, not an active order,
+permission to extend legacy rendering, or a requirement for exact legacy pixels.
+Current source/product records, not this proposal, establish implemented behavior.
 
 ## Problem
 

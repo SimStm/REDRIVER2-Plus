@@ -2,11 +2,16 @@
 type: Roadmap
 title: High-FPS rendering with fixed 30 Hz simulation
 status: planned
-execution_order: 17
+superseded_by: engine-migration
 tags: [roadmap, timing, frame-rate, renderer, replays]
 ---
 
 # High-FPS rendering with fixed 30 Hz simulation
+**Execution superseded on feat/new-engine (2026-10-08).**
+[Engine migration](engine-migration.md) now owns this scope and its acceptance.
+The following proposal is retained as historical context, not an active order,
+permission to extend legacy rendering, or a requirement for exact legacy pixels.
+Current source/product records, not this proposal, establish implemented behavior.
 
 ## Problem
 

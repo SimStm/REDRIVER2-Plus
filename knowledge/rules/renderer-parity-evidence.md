@@ -7,6 +7,11 @@ tags: [okf, rendering, validation, vulkan]
 
 # Verify renderer parity with state and pixel evidence
 
+Scope note (2026-10-08): exact backend parity applies when repairing translation
+of existing graphics state. [Engine migration](../engine-migration/validation.md)
+preserves game-state/content contracts while allowing specified new presentation;
+it does not require universal PSX-to-Diligent image equality.
+
 **When** translating graphics state between backends, **then** inspect the
 reference backend's complete state and check API semantics before diagnosing a
 visual defect. GL_DEPTH_TEST disables both testing and depth writes when off;

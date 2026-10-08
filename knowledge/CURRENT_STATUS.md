@@ -1,365 +1,147 @@
 ---
 type: Status
 title: Project status
-description: Source of truth for everything implemented in this fork and where each surface stands.
+description: Current branch implementation, preserved rework and adopted engine migration.
 tags: [okf, status]
 ---
 
 # Current status
 
-> Updated: 2026-09-21
-> Role: **source of truth for what has been implemented in this project.**
-> Add a short, factual entry here whenever you finish implementing something, so a
-> new session can see the whole surface without reading every change record.
-> [`RECENT_CONTEXT.md`](RECENT_CONTEXT.md) complements this file: it holds the
-> last interactions in detail, while this file holds the cumulative picture.
-> Confirm anything you act on against the source and `git status` - this is a
-> summary, not evidence.
+> Updated: 2026-10-08.
+> Source of truth for implemented surfaces on the current branch; verify source/Git.
+> [RECENT_CONTEXT](RECENT_CONTEXT.md) records the next task and session handoff.
 
-## What this project is
+## Branch and adopted plan
 
-REDRIVER2 is a clean-room C/C++ reimplementation of the PlayStation game
-*Driver 2*, not an emulator. Game logic was reconstructed from symbols and
-disassembly; PsyCross provides the PSX/Psy-Q compatibility layer (rendering,
-input, audio, CD, GTE) and the desktop platform integration.
+`feat/new-engine` starts from parent `2e93f215c54e61dd1bbb5d26e439c25303466709`,
+the existing `master` baseline, through a newly created local `main` alias.
+Remote `master`/default branch was not renamed. PsyCross is clean at the baseline
+gitlink `37d399dfd4584df746647cba4d2d832bc27f0922`, from the project fork.
 
-- Game code: `src_rebuild/Game/` (`C/`, `engine/`, `Frontend/`, `ASM/`).
-- Backend/platform layer: `src_rebuild/PsyCross/` - a Git **submodule pinned to
-  the project fork** `git@github.com:SimStm/PsyCross.git` (tracked branch
-  `origin/master`). The fork, never `OpenDriver2/PsyCross`, is the build
-  source: it carries the Vulkan backend and MoltenVK/portability work upstream
-  lacks. Project-specific renderer changes are committed there and recorded by
-  staging the gitlink in the parent (`knowledge/rules/psycross-fork.md`).
-- Developer tools: `src_rebuild/utils/`, `scripts/`, `PSXToolchain/`.
-- Runtime data: `data/` (local game assets; do not modify or redistribute).
-- Build generation: Premake 5 (`src_rebuild/premake5.lua`,
-  `premake5_psycross.lua`); generated output is not tracked.
-- Targets: Windows, Linux, Emscripten/web, Android NDK, PSX. `GAME_REGION` is
-  `NTSC_VERSION` by default.
+The former dirty native Vulkan work is committed/pushed separately at
+`e68b6ea6b1e30543af77d6244c109f7993ff65cf` on
+[`feat/vulkan-native-rework`](https://github.com/SimStm/REDRIVER2-Plus/tree/feat/vulkan-native-rework).
+That snapshot includes source/tests/tooling/knowledge/archive moves and the fork
+gitlink `ae83dd229f2c4a287575fb4cb853006996d9eef8`, already published in the fork.
+R00-R02 Windows scopes are documented there; R03 is incomplete/R04 unstarted.
+Those native APIs/results are not part of this branch's current implementation.
+Ignored captures/private helpers/builds remain local and do not travel with Git.
 
-## Renderer
+Implemented here: [engine-migration planning](roadmap/planned/engine-migration.md),
+E00-E07 stage contracts, five issue briefs, validation policy and updated agent/
+catalog guidance. **No new engine behavior is implemented.** Current source still
+requires PsyCross. Diligent/DiligentFX, FMOD Core, PopcornFX, converted packages,
+independent ticks and eventual removal are planned. Earlier hybrid graphics/
+timing plans are superseded execution directions here.
 
-### Vulkan game renderer (default on desktop)
+## Project and current services
 
-`redriver2_psxpc.cpp` defaults `useVulkan = 1` on desktop; `-opengl` opts out,
-`-vulkan` is still accepted, and PSX/Android/Emscripten keep OpenGL. The
-`GR_*` contract maps onto `PsyX_Vk_Game*` in `PsyX_Vk.cpp`.
+REDRIVER2 is reconstructed Driver 2 game logic, not an emulator. Physics,
+collision, AI, missions and replays live primarily under `src_rebuild/Game/`,
+but still call PsyCross math/GTE, clocks, pad, SPU/CD/streaming and GPU services.
+Main-loop simulation and drawing share `FilterFrameTime`/`VSync`; replay repeats
+and counters remain frame/tick indexed. Independent high-FPS presentation is not
+implemented. Future E01 preserves regional semantics before changing clock owners.
 
-Delivered in order, each verified on the game window:
+PsyCross remains a separate submodule from `git@github.com:SimStm/PsyCross.git`.
+Do not substitute upstream or infer removal from a roadmap. Existing C++11 and
+Windows/Linux/web/Android/PSX guards remain. SDK/compiler/target compatibility
+for the new stack is pending E00, not established by cross-platform advertising.
 
-- PSX path: `psx.vert`/`psx.frag` reproduce the emulated PSX pipeline (GL-to-
-  Vulkan clip conversion, in-shader CLUT, texture window, dither, bilinear
-  filter), with an `R32G32_SFLOAT` VRAM image over the CPU `unsigned short vram`
-  mirror and five blend pipelines. `-vkpsxtest` renders synthetic PSX quads and
-  asserts the readback (`16-bit worst=0`, `4-bit CLUT worst=0`, offscreen
-  samples, `vram export 1048594/1048594`).
-- Game path: vertex capacity raised to 65536, game texture slots 64 -> 512, the
-  scissor Y mapped to Vulkan's top-left origin (restored the minimap).
-- Framebuffer persistence: the main pass colour attachment uses `LOAD_OP_LOAD`
-  with a `PRESENT_SRC` initial layout and clears via `vkCmdClearAttachments`
-  only when `GR_Clear` asked for it. This preserves each acquired image; it
-  does not explicitly copy the immediately preceding presented image.
-- Depth/stencil: `D24_UNORM_S8_UINT` preferred; the PSX primitive mask bit is
-  implemented as per-blend-mode stencil-write pipeline variants.
-- Depth writes require the depth test, matching OpenGL. Stencil capability now
-  survives PSX resource initialization; reference/write/compare masks and
-  operations match `GR_SetStencilMode`, including depth-disabled draws. Both
-  main and resumed passes store stencil, with compatible dependencies.
-- Untextured PSX primitives use an explicit white texture selector, reproducing
-  GL's decoded 0xffff colour/alpha independently of VRAM. Game rendering prefers
-  UNORM presentation for display-space blending and matches GL's constant alpha.
-- Expanded `-vkpsxtest` covers the white-texture bridge, all five blend modes,
-  stencil across two pass restarts and several partial presentations. The latest
-  Windows run passed; the partial test does not guarantee every swapchain image
-  was acquired, so it is not proof of general previous-frame persistence.
-- Offscreen render-to-VRAM (`GR_SetOffscreenState`) closes the Tanner shadow;
-  `GR_StoreFrameBuffer`/`GR_VkMirrorFrameToVRAM` feed framebuffer-reading
-  effects such as the sun lens flare; `GR_SaveVRAM` (F10) works on both backends.
-- Flush-order correctness: vertex uploads append (each draw is offset by its
-  upload's base) and `GR_CopyVRAM` queues its rectangle plus pixels
-  (`PsyX_Vk_GameCopyVRAM`), replayed in generation order while draws are
-  recorded, closing/reopening the main pass around each replay. This is what
-  makes the streaming overhead map draw correctly.
-- Modern mesh on Vulkan: `PsyX_ModernMesh.cpp` dispatches to
-  `PsyX_Vk_GameModernMesh*`; `psx_modern.vert/.frag`, `fullscreen.vert` and
-  `psx_composite.frag` reproduce the GTE-encoded vertex path and the GGX/Schlick
-  PBR path, composited over the PSX pass with the scene-depth shadow term. The
-  shared `ModernUBO` (std140) layout must match in all three shaders.
-- Modern scene-depth copies transition both depth/stencil aspects and prepare
-  the destination transfer layout. A later enhanced-path run exposed VUIDs
-  03320/09600; commit `647ea0b` corrects the missing transitions. The subsequent
-  inspected enhanced run had the validation layer enabled and no error/VUID.
-- Resize: both the resize and out-of-date paths go through
-  `RecreateSwapchain()` (framebuffers, views and the depth image are rebuilt).
-- Minimize/restore (2026-09-21): a minimized window has a `0x0` surface, so an
-  out-of-date present used to destroy the swapchain and fail to create a
-  replacement, leaving `VK_NULL_HANDLE` and an access violation inside the
-  graphics driver on the next acquire. `ResolveSwapchainExtent()` now decides
-  before anything is destroyed, `PsyX_Vk_RenderFrame` skips minimized frames
-  and recovers a null swapchain instead of acquiring from it, and the restore
-  re-creates the swapchain at the valid size. Verified under the debugger:
-  repeated minimize/restore, no exception and no validation error, and
-  `-vkpsxtest` still passes. See
-  [`changes/2026-09-21/vulkan-minimize-swapchain-crash`](changes/2026-09-21/vulkan-minimize-swapchain-crash/index.md).
-- Frame-fence deadlock (2026-09-21): the fence is reset immediately before the
-  submit that signals it again instead of at the top of the frame, so an
-  out-of-date acquire (which returns early) no longer leaves the next frame
-  blocked forever in `vkWaitForFences`; a failed submit signals the fence.
-  Reproduced with a temporary acquire log (minimize, restore, out-of-date
-  acquire, recreate, no further frame) and verified fixed with 46 s and 60+ s
-  iconized intervals on `Release_dev|x64`, plus `-vkpsxtest`. See
-  [`changes/2026-09-21/vulkan-frame-fence-deadlock`](changes/2026-09-21/vulkan-frame-fence-deadlock/index.md).
-- Backend-agnostic opt-in perf log (`PSYX_PERF_LOG` -> `psyx_perf.log`). Each
-  sample carries the wall-clock rate and, since 2026-09-21, `submit_ms`: the
-  frame-submission CPU cost measured around `GR_SwapWindow` (plus the OpenGL
-  overlay). Measured at 1280x720: ~6.4 ms on Vulkan (the backend records the
-  whole frame, ImGui included, at present time) versus ~0.18 ms on OpenGL.
-  Uncapping present (`PSYX_VK_PRESENT_MODE=immediate`) and `vsync=0` on OpenGL
-  all stay at 30.0 FPS, confirming the game's emulated PSX vblank is the
-  ceiling; the fixture window sustains ~660-900 FPS (1.1-1.5 ms/frame, 12
-  draws) as the raw pipeline reference. The game frame's own GPU time is not
-  isolated (needs Vulkan timestamp queries). See
-  [`changes/2026-09-21/frame-submission-profiling`](changes/2026-09-21/frame-submission-profiling/index.md).
-- Shadow receive parity (2026-09-21): the earlier Vulkan `7722` vs OpenGL
-  `2264` pixel difference (IoU 29.2 %) was measurement drift, not a renderer
-  defect - the two installs had different sun direction, `shadowextent`
-  (2500 vs 6991) and spawn, and the street scene's moving traffic makes a
-  per-pixel metric noise-dominated. With aligned developer state in the
-  traffic-free playground the shadowed-pixel sets reach **IoU 0.985** (4816 vs
-  4823 pixels, noise floor 2499), and enabling shadows moves the
-  backend-to-backend difference by 10 pixels of 921600. The OpenGL install's
-  developer state is now aligned with Vulkan's. See
-  [`changes/2026-09-21/shadow-receive-parity`](changes/2026-09-21/shadow-receive-parity/index.md).
-- Renderer-debt closure (2026-09-20): the stencil-less `D32_SFLOAT` fallback is
-  selectable with `PSYX_VK_DEPTH_FORMAT=d32` (self-test asserts the mask-bit
-  no-op degradation); a fresh `-opengl` parity capture differs from Vulkan by
-  mean 4.08/255 with 0.22 % of channels > 16. See
-  [`changes/2026-09-20/vulkan-renderer-debt`](changes/2026-09-20/vulkan-renderer-debt/index.md).
-- Previous-frame history was investigated, not implemented: `LOAD_OP_LOAD`
-  preserves each swapchain image individually, and sampled natural
-  partial-update frames (loading art + bar via a `ShowLoading` breakpoint)
-  showed complete, identical art with a progressing bar. No natural corruption
-  reproduced.
-- Experimental standalone Vulkan developer window: `-vkfixture` (with
-  `-vkcapture N`, `-vkshot <path>`, `-vknogui`) renders eight Meshy GLBs plus
-  four analytic spheres; SPIR-V is embedded and regenerated with
-  `scripts/compile_vk_shaders.ps1`.
+## Existing renderer baseline
 
-### Modern mesh / renderer modernization
+Desktop defaults to Vulkan through PsyCross, with separately selected OpenGL.
+This is the existing PSX primitive/hybrid rendering architecture, not Diligent.
+[Product behavior](product/vulkan-game-renderer.md) and corresponding source
+govern actual support; earlier dated validation is not rerun by this summary.
 
-- Persistent C-compatible mesh API (`PsyX_ModernMesh_*`) drawn through the
-  legacy `Projection3D` in the shared colour/depth buffer, so modern meshes
-  occlude with the legacy scene; F10 toggles it.
-- Reference Forward PBR (R4), up to eight lights, 2048x2048 shadow map whose
-  casters and receivers include the legacy scene (R5), normal-based ambient
-  occlusion, and the classic/enhanced switch persisted in
-  `developer_graphics.ini` (`developer_modern_mesh.ini` holds the mesh tuning).
-- Legacy lighting receptivity (2026-09-20, refined 2026-09-21): the modern light
-  set now also shades the already-rendered legacy scene on both backends. The
-  composite samples a copy of the framebuffer colour (a blend cannot brighten
-  past the fixed-point clamp), reconstructs a normal from a five-tap cross of
-  the neighbour world positions with an edge test, and applies
-  `colour * (1 + strength * N·L * light)`, gated to `depth < 0.999` and faded
-  out with distance at `2x`-`4x` the shadow volume half-size. The shadow volume
-  and fade centre follow the **player vehicle**, not the spawn; the light set is
-  pushed every frame and falls back to the camera when `hd.where.t` is absent
-  during level/mission transitions. `legacyLighting` (default 0) and
-  `legacyLightReceptivity` (default `0.350`) persist in
-  `developer_modern_mesh.ini`; the Graphics panel, its **Modern sun and look**
-  group (azimuth, height, intensity, ambient, exposure, shadow size, debug view)
-  and F9 control it. Measured `+10%..+34%` on legacy surfaces depending on the
-  sun angle, sky unchanged; see
-  [`product/legacy-lighting-receptivity.md`](product/legacy-lighting-receptivity.md)
-  and [`changes/2026-09-21/lighting-and-panel-followup`](changes/2026-09-21/lighting-and-panel-followup/index.md).
-- The composite needs both PGXP options on: PGXP texture mapping writes the
-  per-vertex depth (otherwise every legacy vertex takes the 2D path at a
-  constant depth) and PGXP Z-buffer gates depth writes. The Graphics tab states
-  this on both checkboxes.
-- Shadow-volume texel snap (2026-09-21): `PsyX_ModernShadowSnapCentre()` (shared
-  by both backends) rounds the shadow centre to whole
-  `2 * extent / shadowSize` steps in the plane perpendicular to the light, so
-  the `NEAREST` shadow edges stop swimming while the volume follows the car; the
-  coordinate along the light is untouched. Verified while driving: the raw
-  centre's fractional texel position swept `0.38..0.78` while the snapped one
-  stayed `0.0000`, the snap moved the centre by at most half a texel, and
-  `-vkpsxtest` still passes. See
-  [`changes/2026-09-21/shadow-volume-texel-snap`](changes/2026-09-21/shadow-volume-texel-snap/index.md).
-- World/overlay composition (2026-09-21): the earlier forced 2D-depth fix was
-  replaced after user testing exposed opaque holes behind translucent menus,
-  flare rectangles and angle-dependent scene loss. The game marks OT bucket 10
-  as the final-overlay boundary; PsyCross splits even a state batch crossing
-  that exact vertex, composes the legacy world and modern meshes, then blends
-  lens flare, fades and UI over the result. No draw is classified by its first
-  vertex's `scr_h`, and legacy depth behaviour is preserved. OpenGL restores
-  texture bindings on units 0..4 and the active unit before legacy drawing
-  resumes; Vulkan preserves VRAM generations and resumes its load pass for the
-  overlay tail. This boundary is supplied by the single-view gameplay path;
-  split-screen retains the previous end-of-frame fallback.
-  Both Windows builds and the expanded Vulkan blend/readback test pass; live
-  pause transparency and four Vulkan camera orientations were inspected.
-  See [composition regression](changes/2026-09-21/modern-overlay-composition/index.md).
-- Bounded glTF 2.0/GLB importer (`utils/GltfLoader.*`) with six owned Meshy
-  fixtures under `assets/modern_fixtures/` plus `provenance.md`.
+- Vulkan PSX shaders implement CLUT/texture windows/dither/filtering, VRAM mirror,
+  blend/stencil/depth, white untextured primitives and queued VRAM copies.
+  `-vkpsxtest` contains readback/CLUT/offscreen/export/blend regression fixtures.
+- Existing modern mesh API/importer/PBR/shadow composite shares the PSX projection
+  and depth. Its legacy lighting receptivity is optional, with copied scene color
+  and reconstructed normals. PGXP dependencies remain on that old composite.
+- World/overlay boundary splits gameplay composition from flare/fade/UI tails;
+  split-screen uses its existing limited composition path. This does not prove
+  native mode/category coverage under the new architecture.
+- Prior minimize/restore swapchain and early-return fence deadlock fixes are
+  recorded in [minimize evidence](changes/2026-09-21/vulkan-minimize-swapchain-crash/index.md)
+  and [fence evidence](changes/2026-09-21/vulkan-frame-fence-deadlock/index.md).
+- Persistent swapchain attachments preserve each image independently; general
+  previous-presented-frame history is not implemented.
+- Shadow-volume centers snap to texels while following the vehicle. Controlled
+  historical aligned GL/Vulkan shadow-receive comparison reached IoU 0.985.
+  Legacy city geometry still lacks the planned caster path; only imported modern
+  meshes cast in the baseline shadow map. One published sun is not local-light coverage.
+- Opt-in `PSYX_PERF_LOG` records submission CPU time. Historical 1280x720 Vulkan
+  submission was about6.4ms; a30FPS gate remained after uncapping present. GPU
+  timestamps, peak memory and broad platform measurements remain pending.
+- Standalone `-vkfixture` renders modern GLB/reference fixtures. Its images do not
+  accept whole-game behavior or the new engine.
 
-### Unresolved renderer items
+Existing UI parity/blend/offscreen details remain in
+[UI product](product/vulkan-ui-image-parity.md) and
+[lighting product](product/legacy-lighting-receptivity.md). New migration uses
+targeted native contracts, not universal pixel equality with this old pipeline.
 
-- **Legacy casters and point lights (item 3 remainder)**: the modern shadow map
-  still contains only the imported modern meshes, so legacy buildings, trees and
-  cars cast nothing, and the game publishes exactly one directional sun, so the
-  receptivity term has no point lights to consume. Both are scoped as planned
-  records:
-  [`roadmap/planned/legacy-shadow-casters.md`](roadmap/planned/legacy-shadow-casters.md)
-  and
-  [`roadmap/planned/point-light-sources.md`](roadmap/planned/point-light-sources.md),
-  with the Vulkan `submit_ms` (~6.4 ms) as the cost baseline.
-- **Frame-time split (item 4 remainder)**: the game frame's own GPU time is not
-  isolated; that needs Vulkan timestamp queries around the shadow and main
-  passes. Peak memory and the Linux/web/Android builds are still unprofiled.
-- **UI follow-up (2026-09-20)**: corrected white primitives, stencil and blend
-  state after the user's repeat tests disproved the previous completion claim.
-  Live Vulkan map no longer shows world shadows over it; loading bar, compass,
-  Damage/Felony and police flash/cones were observed. Controlled GL/Vulkan HUD
-  captures and natural CloseShutters at h=96 confirm restored elements; small
-  pixel differences remain (not pixel-exact parity). Fork commit `d9d8628`; see
-  [`product/vulkan-ui-image-parity.md`](product/vulkan-ui-image-parity.md).
-- Khronos validation is installed (`G:\VulkanSDK\1.4.357.0`) and automatically
-  enabled by the backend. It exposed incompatible resumed render passes
-  (`VUID-vkCmdDraw-renderPass-02684`), now fixed. The subsequent inspected game
-  debug output confirmed the layer was enabled and contained no VUID/error.
-- Open after the 2026-09-20 closure: macOS/MoltenVK build and the game frame's
-  own GPU time. The `D32_SFLOAT` fallback, fresh `-opengl` parity run and the
-  shadow comparison now have executed evidence; the shadow receive was
-  re-measured as backend-equivalent (IoU 0.985, see above) and the frame rate
-  was confirmed to be the PSX vblank gate rather than a renderer limit.
-  Legacy lighting receptivity is implemented
-  ([`product/legacy-lighting-receptivity.md`](product/legacy-lighting-receptivity.md));
-  it adds one full-screen colour copy plus draw only while its composite is
-  active, and no frame-time delta on the minimum GPU class is recorded yet.
+## Textures, mods and inspector
 
-## Textures, mods and the inspector
-
-- HD texture mods: discoverable JSON mods under `mods/<id>/manifest.json` with a
-  deterministic `mods/enabled.json` load order; entries match on
-  `(texture, texturePage, textureIndex)`, may carry a `clut` for palette
-  variants, and `modelReferences` as metadata that never changes the key.
-- Opt-in proportional override alpha (default off) makes `BM_AVERAGE` blend the
-  imported PNG alpha instead of the binary 0.5 cutout; opaque, additive and
-  subtractive draws keep the compatibility cutout and the CPU picker mirrors the
-  active mode.
-- Source-aware asset catalog (`AssetCatalog.*`): stable resource identity
-  separate from runtime instances, explicit provenance, many-to-many model to
-  texture/LOD links, and invalidation when slots are reused or the level
-  changes. Covered by the standalone `AssetCatalogTests`.
-- 3D Debug tab: click-based primitive inspection with Face/Material/Component/
-  Logical-object scopes, catalog context, override previews, detail TXT export,
-  single and batch PNG export (deduplicated by identity, cooperative across
-  frames with progress and retry), and a live page-registration cost diagnostic.
-- Diagnostic tooling: configurable selection highlighting, draw-source labels,
-  live car-slot positions, zero-TIM flicker diagnostics and alpha-semantics
-  notes in `knowledge/product/`.
+- Ordered JSON mods and `mods/enabled.json` retain deterministic precedence.
+  Texture keys are name/page/index with optional palette identity; model references
+  remain metadata, separate from override keys.
+- Existing override alpha/cutout/blend semantics and CPU selection mirror the
+  active compatibility policy. Do not silently change these during conversion.
+- `AssetCatalog.*` separates stable resources from transient instances, records
+  provenance and many-to-many model/texture/LOD links, and invalidates reused slots.
+  [Catalog product](product/asset-catalog-identity.md) and standalone tests exist.
+- Inspector supports face/material/component/logical-object scopes, source/override
+  previews, TXT and single/batch PNG exports with deduplication, progress/retry,
+  selection highlights, source labels and car-slot/texture diagnostics.
+  [Selection product](product/inspector-selection-coverage.md) and
+  [batch export](product/object-texture-batch-export.md) record the shipped scope.
+- Versioned offline visual/audio packages and OpenDriver2Tools-based native
+  conversion are not implemented. Existing bounded `GltfLoader.*`/owned modern
+  fixtures can be evaluated for reuse, not assumed to supply the new city pipeline.
 
 ## Gameplay and developer tooling
-- Resident procedural playground (roadmap item 13, P1-P5): generated flat
-  surface, collidable boxes, donor traffic/police/missions disabled, car reset,
-  safe return to the frontend, a `-playground` launch path and a **Playground**
-  entry on the Take a Ride city screen. Fixture id `playground.flatpad.v1`.
-- Debug start snapshots: `developer_debug_start.ini` restores mission, city,
-  vehicle, position, heading, player count and chase at startup; the panel's
-  **Reproduce this state** generates the command line; `scripts/run_debug_start.ps1`
-  captures scenes with overrides on and off.
-- Developer Graphics Panel (F11) with Dear ImGui, persisted to
-  `developer_graphics.ini` (schema 8); Windows and Linux only.
-  - Schema 7 added live checkboxes for `dynamicLights`, `widescreenOverlays` and
-    `fastLoadingScreens` (runtime-settings-gui milestone 2, 2026-09-20). Each
-    help marker names the equivalent `config.ini` key; `config.ini` stays the
-    shipped default and the panel file, applied afterwards, wins. Reader/apply
-    verified by an overlay-corner capture A/B, writer verified by a settings
-    save.
-  - Schema 8 added the **display mode** (milestone 3): a Fullscreen (desktop)
-    checkbox and a Window size combo (current, 1280x720, 1600x900, 1920x1080)
-    through the new `PsyX_ApplyWindowMode`, with a 15 s keep/revert countdown
-    that survives closing the panel (`UpdateDisplayRevert` runs before the
-    visibility check), so a bad mode always reverts. Verified: a persisted
-    1600x900 mode captured a 1600x900 frame; a provisional 1024x600 change kept
-    through `ConfirmDisplayMode` persisted 1024x600, and the same change left
-    unconfirmed reverted to 1600x900 without touching the file; a pick at the
-    same relative point resolved a primitive at both sizes (the viewport and
-     picker read the live window size). The fullscreen branch is not
-     runtime-tested (it would change the machine's display).
-  - Countdown behaviour (2026-09-21): the display confirmation keeps counting
-    while the window is minimized (a safety timer must not pause), but one frame
-    can spend at most `0.25 s` of the budget, so the frame after a debugger
-    stop or hibernation no longer reverts the mode in one step. On Vulkan a
-    minimized window stops producing frames, so the timer holds its remaining
-    value until frames resume after the restore; verified iconized. See
-    [`product/runtime-settings-gui.md`](product/runtime-settings-gui.md).
-  - Panel follow-up (2026-09-21, after user testing): the display confirmation is
-    now its **own ImGui window** anchored to the bottom-left of the applied
-    display size, drawn whether or not the panel is open and after it, with the
-    cursor shown and input captured while armed - the old in-panel banner was
-    invisible when the panel was closed or clipped by the mode change.
-    `CheckboxWithHelp` puts the `(?)` at the end of every checkbox label (its
-    own line only when the label fills the line), the new sun sliders follow the
-    same rule, the Input tab table is `Action | Binding | Also bound to | Reset`
-    with the conflict note in its own wrapping column, and the Graphics tab
-    exposes the whole `developer_modern_mesh.ini` light set under **Modern sun
-    and look**. See
-    [`changes/2026-09-21/lighting-and-panel-followup`](changes/2026-09-21/lighting-and-panel-followup/index.md).
-- Input-binding editor (runtime-settings-gui milestone 4, 2026-09-20): an
-  **Input** tab in the same panel edits the game and menu keyboard/controller
-  tables with click-to-capture, Escape/right-click/Cancel/10 s cancellation,
-  conflict markers and per-action/per-device reset. `DeveloperInputMapping.*`
-  owns the model; `SwitchMappings` reports the active table so an edit only
-  reaches the live mapping when it belongs to it, and input is held for the
-  duration of a capture. Verified with synthetic SDL events through the panel's
-  event handler: a captured `Q` bound game Cross while the live menu mapping
-  stayed `RETURN`, conflicts reported both actions, Escape and timeout
-  cancelled, and reset restored the `config.ini` value (`Up`).
-- Runtime settings GUI completed (milestone 5, 2026-09-20): the Game Debug tab
-  gained a **Content and language** section (content override, Chicago bridges,
-  language, Driver 1 music - each stating its reload/restart requirement - and
-  the restart-only Free camera disabled with the reason via the new
-  `gFreeCameraConfiguration`). Persistence moved onto the shared
-  `DeveloperSettingsFile_WriteKeys` writer, which preserves unknown keys and
-  comments, removes keys the owner no longer wants and writes through
-  `.tmp`/`.bak`, and bindings now persist in `developer_input.ini` as overrides
-  only. Verified: a hand-added comment and unknown key survived a graphics save
-  while missing keys were appended; bindings round-tripped
-  (`input-save=1 input-load=1 cross-default=82 cross-after-load=20`), a reset
-  removed the override line, and the Input tab rendered the seeded override.
-- MCP-assisted agent workflow (2026-09-20): `AGENTS.md` now requires checking
-  for configured MCP servers first - context7 for library documentation,
-  visual-studio-ide-mcp for build/debug of `src_rebuild/build/REDRIVER2.sln`
-  (`Release_dev_gl` OpenGL, `Release_dev` Vulkan), and desktop-control MCPs
-  (computer-control-mcp, windows-mcp) for navigating the running game and
-  screenshots. Terminal game launches are fire-and-forget only, with log and
-  screenshot polling instead of waiting on the process handle.
-- Structural code-quality rules (2026-09-20): a mandatory **Code quality and
-  structure** section in `AGENTS.md` governs new code and maintenance edits -
-  readable idiomatic C++, no spaghetti code or unnecessary global state,
-  separated responsibilities, small cohesive functions, no premature
-  abstractions, no out-of-scope refactors, explicit error handling, and a
-  self-review pass for mixed responsibilities and coupling.
 
-## Knowledge process
+- Resident procedural playground includes flat surface/collidable boxes, disabled
+  donor traffic/missions, reset/frontend return, `-playground` and Take a Ride
+  entry. [Playground product](product/playable-testing-playground.md) records P1-P5.
+- Debug start settings preserve mission/city/vehicle/position/heading/player/chase;
+  the panel generates reproducible command lines. Existing script:
+  `scripts/run_debug_start.ps1`.
+- F11 Developer Graphics Panel uses vendored ImGui1.91.9b (Windows/Linux) and
+  `developer_graphics.ini`, independently from main `config.ini`.
+- Schema8 display controls implement provisional window/fullscreen selection,
+  confirmation/revert and a visible independent confirmation window/input capture.
+  Window sizing/revert was tested historically; fullscreen remains untested.
+  Countdown behavior under minimized frames/debugger stops has documented limits.
+- Input editor captures/cancels keyboard/controller bindings, marks conflicts,
+  supports reset and persists overrides in `developer_input.ini`; game/menu
+  mapping ownership and UI input capture remain required.
+- Content/language/loading/dynamic-light/widescreen controls describe reload/
+  restart requirements. Shared `DeveloperSettingsFile_WriteKeys` preserves
+  unknown keys/comments and uses transactional temporary/backup files.
+  [Runtime settings product](product/runtime-settings-gui.md) has full details.
+- FMOD/PopcornFX, RmlUi, supplementary physics and complete in-game authoring editors
+  are not implemented. ImGui/input/window dependencies must migrate before E07.
 
-- `knowledge/` is an OKF bundle: `rules/` (repeatable constraints), `product/`
-  (how a surface works), `discussions/` (evolving topics with evidence),
-  `roadmap/planned|done` (planning vs completion records), `changes/<date>/`
-  (why a change shipped).
-- This file (`CURRENT_STATUS.md`) is the cumulative implementation summary;
-  `RECENT_CONTEXT.md` is the session-to-session handoff.
-- `CHANGELOG.md` holds release-oriented `## [Unreleased]` entries; the baseline
-  is upstream `8.0` at `b2d8857`.
+## Knowledge and validation state
 
-## Validation commands that actually exist
+English documentation separates planned intent, product behavior, completion
+records and dated change evidence. [Migration validation](engine-migration/validation.md)
+requires deterministic mechanics, conversion inventories and targeted native
+resources/pixels/audio, with actual budgets and platform scope.
 
-| Command | What it proves |
-| --- | --- |
-| VS build `Release_dev\|x64` (or `premake5` + `gmake2`) | the tree compiles |
-| `REDRIVER2_dev.exe -vkpsxtest` | Vulkan PSX readback, CLUT, offscreen, VRAM export |
-| `REDRIVER2_dev.exe -vkfixture -vkcapture N -vkshot <bmp>` | modern fixture render + capture |
-| `REDRIVER2_dev.exe -opengl` / `-vulkan` | backend selection still works |
-| `pwsh -NoProfile -File scripts/run_inspector_tests.ps1` | `AssetCatalogTests`, `InspectorExportTests` |
-| `git diff --check` | whitespace-level hygiene |
-| `git -C src_rebuild/PsyCross status` | fork and gitlink state |
+This planning change ran Git branch/fork/remote verification and documentation
+hygiene/link/contract checks as recorded in
+[the change record](changes/2026-10-08/engine-migration-plan/index.md).
+No fresh game build, gameplay run, GPU capture or audio/VFX test was executed.
+Previously generated projects/executables may belong to the other branch and
+must be regenerated in isolated outputs before any implementation validation.
+
+Existing commands include `git diff --check`, Premake/generated builds,
+`-vkpsxtest`, `-vkfixture`, backend flags and
+`pwsh -NoProfile -File scripts/run_inspector_tests.ps1`. They prove their stated
+baseline scopes only. Inspector export tests require a fresh working directory.

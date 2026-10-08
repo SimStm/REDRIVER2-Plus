@@ -7,6 +7,10 @@ tags: [okf, rendering, psycross, psygpu, depth, meshes]
 
 # Share the legacy projection and depth when adding a modern mesh path
 
+Scope note (2026-10-08): this rule describes repairs to the existing hybrid
+PsyCross bridge only. It does not govern [Diligent migration](../roadmap/planned/engine-migration.md),
+whose native camera/depth and converted assets must be independent of that bridge.
+
 **When** adding a non-PSX (modern) mesh draw to PsyCross, **then** reproduce the
 legacy 3D vertex encoding exactly and draw into the same framebuffer/depth
 buffer. A standard world/view/projection matrix computed independently does not
