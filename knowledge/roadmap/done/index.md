@@ -1,55 +1,28 @@
 ---
 type: Catalog
 title: Completed roadmap records
-description: Completion records linked to authoritative product documentation.
+description: Completed non-archived features with product evidence.
 tags: [okf, roadmap, done]
 ---
 
 # Completed roadmap records
 
-Each record here documents a completed plan. It is historical planning
-metadata, not sole evidence of current behaviour. Every record must link to a
-matching document in [`knowledge/product/`](../../product/index.md).
+A completion record is historical planning metadata, not sole evidence of current
+behaviour. Verify its product note and source. Follow the [lifecycle](../index.md).
 
-Move records here only after implementation and product documentation are
-completed, as described in the [roadmap catalog](../index.md).
+- [Mod-system PR readiness](mod-system-pr-readiness.md)
+- [Texture alpha semantics](texture-alpha-semantics.md)
+- [Texture flicker diagnostics](texture-flicker-diagnostics.md)
+- [Texture manifest merging](texture-manifest-merge.md)
+- [Asset catalog identity](asset-catalog-identity.md)
+- [Object texture batch export](object-texture-batch-export.md)
+- [Inspector selection coverage](inspector-selection-coverage.md)
+- [Texture export alpha fidelity](texture-export-alpha-fidelity.md)
+- [Semi-transparent overrides](semi-transparent-texture-overrides.md)
+- [Playable testing playground](playable-testing-playground.md)
+- [Runtime settings GUI](runtime-settings-gui.md)
 
-- **00 — [Mod-system branch PR readiness](mod-system-pr-readiness.md)**:
-  implemented 2026-09-15; product document
-  [`knowledge/product/mod-system-pr-readiness.md`](../../product/mod-system-pr-readiness.md).
-- **01 — [Texture alpha and PSX blending correctness](texture-alpha-semantics.md)**:
-  implemented 2026-09-15; product document
-  [`knowledge/product/texture-alpha-semantics.md`](../../product/texture-alpha-semantics.md).
-- **02 — [Texture flicker diagnosis and sampling stability](texture-flicker-diagnostics.md)**:
-  implemented 2026-09-15; product document
-  [`knowledge/product/texture-flicker-diagnostics.md`](../../product/texture-flicker-diagnostics.md).
-- **03 — [Append-only texture registration and safe manifest merging](texture-manifest-merge.md)**:
-  implemented 2026-09-15; product document
-  [`knowledge/product/texture-manifest-merge.md`](../../product/texture-manifest-merge.md).
-- **04 — [Source-aware asset catalog and material identity](asset-catalog-identity.md)**:
-  implemented 2026-09-15; product document
-  [`knowledge/product/asset-catalog-identity.md`](../../product/asset-catalog-identity.md).
-- **06 — [Whole-object selection across renderer categories](inspector-selection-coverage.md)**:
-  implemented 2026-09-16; product document
-  [`knowledge/product/inspector-selection-coverage.md`](../../product/inspector-selection-coverage.md).
-- **05 — [Batch texture export with model references](object-texture-batch-export.md)**:
-  implemented 2026-09-17; product document
-  [`knowledge/product/object-texture-batch-export.md`](../../product/object-texture-batch-export.md).
-- **15 — [Texture export alpha fidelity](texture-export-alpha-fidelity.md)**:
-  implemented 2026-09-17; product document
-  [`knowledge/product/texture-export-alpha-fidelity.md`](../../product/texture-export-alpha-fidelity.md).
-- **16 — [Semi-transparent texture overrides](semi-transparent-texture-overrides.md)**:
-  implemented 2026-09-17; product document
-  [`knowledge/product/semi-transparent-texture-overrides.md`](../../product/semi-transparent-texture-overrides.md).
-- **13 — [Playable testing playground](playable-testing-playground.md)**:
-  implemented 2026-09-15; product document
-  [`knowledge/product/playable-testing-playground.md`](../../product/playable-testing-playground.md).
-- **14 — [Vulkan game renderer](vulkan-game-renderer.md)**:
-  implemented 2026-09-19; product document
-  [`knowledge/product/vulkan-game-renderer.md`](../../product/vulkan-game-renderer.md).
-- **[Vulkan UI and image parity](vulkan-ui-image-parity.md)**: implemented
-  2026-09-19 (follow-up to renderer item 14); product document
-  [`knowledge/product/vulkan-ui-image-parity.md`](../../product/vulkan-ui-image-parity.md).
-- **10 - [Runtime settings GUI and safe persistence](runtime-settings-gui.md)**:
-  implemented 2026-09-20; product document
-  [`knowledge/product/runtime-settings-gui.md`](../../product/runtime-settings-gui.md).
+Dedicated former graphics completion/product records were archived by user request.
+Implemented renderer behaviour is summarized in the active
+[current-state note](../../rendering/current-state.md); archiving did not remove code.
+The [native replacement](../planned/native-vulkan-renderer.md) is still planned.

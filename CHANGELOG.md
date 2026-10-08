@@ -10,6 +10,136 @@ where release policy permits it.
 
 ### Added
 
+- Preservation record for the unfinished native Vulkan rework on a separate
+  feature branch, with explicit acceptance limits and local-only evidence notes.
+
+- Native capture reports distinguish fixed static inventory/index partitions
+  from the historical auxiliary draw baseline, preserving failed combined checks
+  and replay diagnostics; host contract regressions cover incomplete inventories.
+
+- Direct RenderDoc1.41 local analysis runner with explicit replay GPU/version
+  checks, phase timings and exception-safe shutdown, avoiding the rdc daemon's
+  30-second script response limit. Direct build/capture/replay workflow now has
+  structured warning provenance and independent validation-enabled native GPU
+  evidence; captured tooling diagnostics remain visible without a clean-flag waiver.
+  Fresh native pixel/resource equivalence evidence is retained. Independent clipped source
+  artwork checks validate west sky interiors and its original single-texel blue
+  cap, clipped static horizontal interiors and a visible vertical face;
+  ten more facade/roof parts and within-draw source occlusion are checked with
+  culling, order and pixel/source-matrix mutation controls.
+  The complete tested facade footprint now includes formerly excluded edges;
+  FP32 viewport prediction resolves the subsequent surface-edge mismatch with
+  native attachment and corruption-control evidence. Bounded depth decisions
+  resolve further exclusions; source-selected fragment traces verify the remaining
+  tested depth decisions and exact ties. Complete clipped-surface checks resolve
+  earlier boundary exclusions; full backdrop pixel checks now include all tested
+  sky edges with source/post coverage, copied corruption and direct replay proof.
+  Complete-view resource/geometry attribution and source-alpha sky-absence checks
+  now cover the full native range inventory, including explicit threshold-discard
+  traces and corruption controls. Source-generated scene competition now checks
+  final colour/ID/depth/sky independently of captured owner selection, with
+  pipeline-state and filled-hole rejection controls. All-candidate primitive
+  references and raw artwork checks now resolve the two tested views' remaining
+  composition pixels, including exact traced depth and corruption proof. Full
+  original-source/region/other-view visual/resource/cost gates remain pending.
+  Captured auxiliary car/wheel producers are identified, while vertical ranges/excluded pixels prevent
+  complete R03 west-region acceptance.
+- Native GPU fractional sRGB sampling characterization with constant-UV patterns,
+  direct pixel readbacks and filter/resource retirement checks. Filtered ideal
+  accuracy now has a strict two-byte gate, plus fractional-mip and large-UV tests.
+- Vulkan capability probe reports actual texel, mip and raster fractional
+  precision to support native sampling diagnosis without changing rendering.
+- RenderDoc1.41 native-region inspection script for configured `rdc-cli`/MCP:
+  native colour/ID/depth exports, bound geometry/artwork hashes and retained
+  initial/per-event diagnostics, with replay version checks. Region acceptance
+  remains pending; replay warnings are reported independently of pixel success.
+  Original-tree two-sided/alpha/depth policy and scoped colour validation are
+  recorded separately from full silhouette/region acceptance.
+- Camera-independent original Chicago region inventory (`-nativeregionprobe`)
+  and incomplete opt-in native drawing (`-nativeregion`), with logical placement
+  identities, shared material ownership, two-sided cutout policy and larger
+  bounded native payloads. Original sky and painted horizon now use copied native
+  backdrop geometry with camera rotation and no world depth test/write.
+  Native textures now support complete trilinear mip chains with linear-light
+  alpha-weighted filtering and bounded ownership of all levels.
+  Runtime filter changes select sampling per instance over retained images,
+  avoiding overlapping texture replacements and temporary legacy fallback.
+  Native GPU logical picking now resolves original model/placement and texture
+  metadata from depth/cutout IDs and asynchronous frame-owned readback.
+  Bounded region accounting reconciles selected/copied/published source objects
+  and material parts, reports original view candidates outside the slice and
+  rejects duplicate or inconsistent publication without old-scene recovery.
+  Controlled camera/FOV/filter/mod and normal physics-input readbacks now pass
+  native pixel/resource checks; terrain seam coverage remains pending.
+  R03 visual/coverage acceptance remains
+  pending; the region is not a completed native rendering mode. Immutable PNG
+  ownership avoids repeated frame copies/hashes; CPU preparation diagnostics and
+  GPU back-facing cutout readbacks verify ownership and culling behaviour.
+- Bounded original static/placement and palette texture decoders, native PNG/CLUT
+  copies with existing mod precedence and reload invalidation, and Vulkan-owned
+  sRGB materials with generational handles, nearest/linear filtering and cutout
+  readback/lifetime tests. Immutable catalog-backed geometry cache, read-only
+  pre-GTE original asset diagnostics (`-nativeassets`) and an owned GLB primitive
+  bridge use the copied native contracts. Indexed original GPU resources now
+  invalidate on palette/content/mod/filter changes, with atomic rollback and
+  a bounded Chicago import fixture (`-nativeassetview`) with upload byte hashes.
+  R02's Windows import slice passes source/GPU, live reload and catalog reuse
+  acceptance; complete static-region coverage remains pending.
+- Opt-in Vulkan indexed analytic world with final game camera, independent native
+  depth and original UI composition, copied scene snapshots, generational mesh
+  handles and fence retirement. F11 reports effective mode/resources/draws;
+  `-vknativetest` adds GPU pixel, resize, reload and rollback checks, and a CPU/C
+  ABI/camera suite covers ownership and platform exclusion guards. R01 is
+  accepted on the tested Windows slice; original-world categories are not migrated.
+- Rendering migration diagnostics for 17 source categories in F11 and an optional
+  coverage log, with explicit legacy/experimental/native separation. Added a
+  read-only Vulkan device/format/sample/memory-budget probe, C/C++ counter tests
+  and the measured R00 baseline with repeatable city/replay/fixture states and
+  native ownership contracts. Full original-scene migration remains pending.
+- Experimental Vulkan original static scenery now shares bounded mesh/texture
+  resources across placements, receives source-normal diffuse lighting and sun
+  shadows, and extends eligible drawing within already loaded regions. F11
+  controls preserve original textures/dither and unsupported legacy fallback.
+  Optional near/distant shadow volumes preserve near detail, blend transitions
+  and reduce complete distant coverage on caster-budget overflow. Streaming and dynamic source
+  adapters remain pending. See
+  [`knowledge/product/world-space-lighting.md`](knowledge/outdated-ideas/2026-10-06-rendering-reset/product/world-space-lighting.md).
+- Resident world-shadow diagnostics distinguish unavailable cells, excluded
+  objects, unsupported models, payload capacity and failed submissions, with mean/peak
+  CPU collection costs and resident region IDs for reproducible route validation.
+  F11 also reports culled geometry, actual coverage and capacity retries.
+- Optional Vulkan static world shadow casters from resident map models, independent
+  of camera/PVS/backface selection. Default off; single-player opaque scenery.
+  See [`knowledge/product/world-space-lighting.md`](knowledge/outdated-ideas/2026-10-06-rendering-reset/product/world-space-lighting.md).
+- Optional Vulkan legacy shadow casting: `legacyshadowcasters` and the Graphics
+  panel toggle add opaque PGXP geometry to the modern directional shadow map,
+  with conservative volume selection, texture cutouts and indexed batching.
+  Default off; camera culling and queued VRAM limit eligible casters. OpenGL
+  port work is deferred. See
+  [`knowledge/product/legacy-shadow-casters.md`](knowledge/outdated-ideas/2026-10-06-rendering-reset/product/legacy-shadow-casters.md).
+- Persistent Vulkan-first development guidance and an unscheduled OpenGL
+  compatibility roadmap: every Vulkan modification records its behaviour,
+  validation and future port work or explicit non-applicability in
+  `knowledge/roadmap/planned/port-vulkan-to-opengl-compatibility.md`.
+
+- Point-light sources for the modern light set and the legacy receptivity term
+  (renderer roadmap point-light-sources): the game now publishes the player's
+  headlights, the light bars of nearby police cars (red/blue in the game's own
+  flash phase) and a validation probe, nearest to the player first and capped at
+  four so both backends shade the same lights. The legacy scene brightens with
+  `N·L` and `clamp(1 - distance / range)²` falloff per light, additive to the
+  sun term; modern meshes shade the same set. Controlled by `pointlights`,
+  `pointlightlimit`, `pointlightrange`, `pointlightintensity`, `headlights`,
+  `sirenlights` and `pointlightprobe` in `developer_modern_mesh.ini`, by the new
+  **Point lights** group in the Graphics panel, and by debug view 11 (point-light
+  coverage). Default off. The light offsets are fractions of the player car's
+  collision box, so the headlights sit at its front corners whatever the car
+  model is, and the defaults (`range 4000`, `intensity 1.5`) light the road
+  around the car visibly. The standalone Vulkan fixture publishes a point light
+  with `-vkpointlight`. Measured: `+10..16%` on the road around the car, gone
+  beyond the light's range, per-pixel Vulkan/OpenGL difference of the added
+  light `0.311/255` mean, unchanged `submit_ms` with two lights at 30.0 FPS. See
+  [`knowledge/product/point-light-sources.md`](knowledge/outdated-ideas/2026-10-06-rendering-reset/product/point-light-sources.md).
 - The opt-in performance log (`PSYX_PERF_LOG=1`) now reports `submit_ms`, the
   mean CPU time of the frame-submission path (`GR_SwapWindow` plus the OpenGL
   overlay). Measured at 1280x720: ~6.4 ms on Vulkan, where the whole frame is
@@ -33,7 +163,7 @@ where release policy permits it.
   on the sun angle, with the sky unchanged. The composite needs both PGXP
   options on, because it reads the depth they write; the panel states this on
   both checkboxes. See
-  [`knowledge/product/legacy-lighting-receptivity.md`](knowledge/product/legacy-lighting-receptivity.md).
+  [`knowledge/product/legacy-lighting-receptivity.md`](knowledge/outdated-ideas/2026-10-06-rendering-reset/product/legacy-lighting-receptivity.md).
 - The Graphics tab exposes the whole modern light set under **Modern sun and
   look**: sun azimuth and height, sun intensity, modern ambient, modern exposure,
   shadow volume size, legacy light strength and a shadow debug view, each with
@@ -68,7 +198,7 @@ where release policy permits it.
   overrides (a binding equal to the `config.ini` value is not written). Runtime
   settings GUI, milestone 4.
 - Developer panel **Content and language** section (Game Debug tab) for
-  `overrideContent`, `disableChicagoBridges`, `languageId` and `driver1music`,
+  `overrideContent`, `disableChicagoBridges`, `languageId` and `driver 1music`,
   each stating when the change applies, plus the restart-only `freeCamera`
   shown disabled with the reason.
 - Developer settings files are now written failure-safely and without losing
@@ -366,6 +496,33 @@ where release policy permits it.
 
 ### Changed
 
+- Reordered native rendering execution to R00-R07, R10, R11, R08, R09 and R12,
+  prioritizing native effects/UI and independent presentation before final image
+  quality and production modern imports. Stage IDs remain stable; dependencies
+  and regression gates follow this order. Absent Chicago water no longer blocks
+  R03; applicable transparency and future Rio water coverage remain required.
+  This planning change does not alter runtime rendering or accept a stage.
+- Native-region validation now records actual tree coverage across additional
+  RenderDoc1.41 views, with opaque colour evidence for all44 original-art parts
+  and36 HD parts. Excluded boundaries and newly observed terrain/camera issues
+  remain explicit pending acceptance work.
+  West source diagnosis distinguishes an empty resident cell from loading;
+  acceptance now requires native pixels/resources on a source-confirmed road.
+- Native Vulkan scene failure no longer draws the old world automatically.
+  Expected loading and real errors have distinct visible diagnostics and frame
+  counters; native recovery retains synchronization and resource ownership.
+  Still-required frontend/HUD/effect/VRAM consumers remain tracked migration work.
+  Existing OpenGL backend selection is preserved separately; unsupported native
+  startup requests fail explicitly. Rendering plan and acceptance criteria now
+  require 100% old-graphics replacement and native pixel/resource evidence.
+
+- Consolidated graphics replacement planning into `knowledge/rendering/`, with
+  thirteen stages for a complete native Vulkan renderer preserving original
+  files, mods and gameplay. Former graphics plans and detailed history were moved
+  to `knowledge/outdated-ideas/`, excluded from routine analysis unless requested.
+  Shared asset/tool contracts and the unscheduled OpenGL compatibility backlog
+  remain active; this documentation change does not alter rendering behaviour.
+
 - Project status is now tracked in two complementary files under `knowledge/`:
   [`CURRENT_STATUS.md`](knowledge/CURRENT_STATUS.md) is the cumulative source of
   truth for everything implemented in this fork and is updated whenever a change
@@ -471,6 +628,43 @@ where release policy permits it.
 
 ### Fixed
 
+- Vulkan fixture command-line failures now propagate to a nonzero process exit
+  instead of reporting success after failed initialization or GPU self-tests.
+
+- Native mixed-height terrain tops now retain canonical depth when a vertical
+  side shares their mesh/material. Bounded ordered indexed ranges preserve source
+  buffers, logical IDs and fence ownership; reproduced grass/sidewalk pixels pass
+  normal/wide source-colour and resource checks. Full-region coverage is pending.
+- Native Vulkan filtered artwork precision: interpolate decoded sRGB texels and
+  alpha in FP32 with bounded UV/mip fetches, preserving nearest/base-only modes
+  and selected implicit LOD. Strict GPU fixtures and fresh RenderDoc1.41 city
+  colour checks pass the original tolerance; full-region acceptance stays pending.
+- Native horizontal terrain overlap no longer changes pixel ownership with
+  triangle depth rounding: equal source-world planes share canonical fragment
+  depth and explicit native draw-order ties, retaining cutout holes, authored
+  paint, nearer occlusion, picking and safe resource retirement. Invalid plane
+  transforms fail explicitly; complete static-region acceptance remains pending.
+
+- Native model/view/projection composition now retains CPU precision while
+  cancelling large city translations, so equivalent world surfaces no longer
+  acquire false depth separation. Source-coordinate and GPU nearer-face/picking
+  regressions pass; coplanar source-overlap terrain seams remain unresolved.
+- Native coplanar road paint no longer breaks into alternating depth-test strips
+  in the reproduced Chicago normal/wide-FOV views. Bounded authored terrain layers
+  share colour/picking depth, preserve cutout holes and nearer occlusion, and leave
+  source geometry/art unchanged. Full R03 region acceptance remains pending.
+- Native GPU asset creation interrupted by a scene reset now rolls back newly
+  created handles, preventing orphan resources outside the cache. Failed submitted
+  material uploads retain command/staging/image/fence ownership until completion
+  is confirmed; unconfirmed shutdown waits also preserve resources for retry.
+- Vulkan resident shadows now reject geometry outside the actual snapped light
+  volumes using real source bounds, preserving boundary-crossing triangles and
+  avoiding unnecessary caster-budget exhaustion. Complete range tiers recover
+  after stable frames; the sampled 40k route now retains distant shadows.
+- Correct Vulkan game-coordinate conversion for imported fixture orientation,
+  terrain grounding, sun and vehicle lights; use explicit shadow extent/centre
+  for sunlight fade, reject negative receiver light depth and filter modern
+  shadow sampling with nine-tap PCF. Expanded streaming and cascades remain planned.
 - The reported Vulkan/OpenGL difference in shadow reception was a measurement
   artefact, not a renderer defect: the two installs had different developer
   state (sun direction, shadow extent 2500 vs 6991, spawn) and the street scene

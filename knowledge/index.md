@@ -15,8 +15,13 @@ This directory follows the [Open Knowledge Format](https://github.com/GoogleClou
 | [`RECENT_CONTEXT.md`](RECENT_CONTEXT.md) | Session-to-session handoff: what the last interactions changed, the techniques and environment notes that mattered, and the next recommended action. |
 | [`rules/`](rules/index.md) | Repeatable constraints (“when X, do Y”). If you discover a pattern that will come up again, add a rule here instead of leaving it in a PR comment. |
 | [`product/`](product/index.md) | How a product surface works and what must be configured. |
+| [`rendering/`](rendering/index.md) | Active rendering baseline and the adopted native Vulkan replacement plan. |
 | [`discussions/`](discussions/index.md) | Evolving technical discussions, evidence, alternatives, diagrams, and unresolved decisions before roadmap adoption. |
 | [`roadmap/`](roadmap/index.md) | Planned-feature records and completed-feature history. These documents are planning metadata, not proof of the current implementation. |
 | [`changes/YYYY-MM-DD/<name>/`](changes/2026-09-15/asset-catalog-identity/index.md) | Why a specific change landed, on the date it shipped. |
 
 Cross-links between documents are encouraged. Do not put secrets here.
+
+`knowledge/outdated-ideas/**` is excluded from routine searches and analysis.
+Read archived contents only on explicit user request; old links do not authorize
+historical retrieval. Follow [the archive rule](rules/rendering-knowledge-and-archive.md).

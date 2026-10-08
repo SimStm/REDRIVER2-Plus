@@ -1,5 +1,6 @@
 #include "driver2.h"
 #include "motion_c.h"
+#include "../utils/DeveloperRenderCoverage.h"
 #include "pedest.h"
 #include "system.h"
 #include "mission.h"
@@ -1897,6 +1898,9 @@ void TannerShadow(LPPEDESTRIAN pDrawingPed, VECTOR* pPedPos, SVECTOR* pLightPos,
 	if (NumPlayers > 1)
 		return;
 
+#ifndef PSX
+	const void* coverageBegin = current->primptr;
+#endif
 	SetDefDrawEnv(&drEnv, 0, current->draw.clip.y, 320, 256);
 
 	dr_env = (DR_ENV*)current->primptr;
@@ -2019,6 +2023,9 @@ void TannerShadow(LPPEDESTRIAN pDrawingPed, VECTOR* pPedPos, SVECTOR* pLightPos,
 
 	addPrim(current->ot + OTSIZE - 1, dr_env);
 	current->primptr += sizeof(DR_ENV);
+#ifndef PSX
+	DeveloperRenderCoverage_RecordLegacy(RENDER_CATEGORY_DECALS, coverageBegin, current->primptr);
+#endif
 }
 
 // [A] - totally custom function but it works pretty much same as original

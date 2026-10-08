@@ -15,6 +15,7 @@ project "PsyCross"
         "PsyCross/**.C", 
         "PsyCross/**.cpp",
         "PsyCross/**.CPP",
+		"PsyCross/**.inl",
     }
 
     includedirs { 

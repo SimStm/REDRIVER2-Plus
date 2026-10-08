@@ -1,0 +1,240 @@
+{
+  "static-coverage": {
+    "draws": 137,
+    "worldDraws": [
+      {
+        "event": 173,
+        "vertices": 12126,
+        "stride": 12,
+        "sha256": "f022d6b1ce2f04a37641e22643238eded4943d6b9c96a9e52de4e4ce92fbb623"
+      }
+    ],
+    "firstReplayMessageCount": 10
+  },
+  "static-atlas": {
+    "draws": 171,
+    "worldDraws": [
+      {
+        "event": 173,
+        "vertices": 65298,
+        "stride": 12,
+        "sha256": "432bd1ab00116220f2f8bacc94ce52ac3675200c809dc2707b06f6a51eebd5e1"
+      },
+      {
+        "event": 287,
+        "vertices": 65298,
+        "stride": 12,
+        "sha256": "432bd1ab00116220f2f8bacc94ce52ac3675200c809dc2707b06f6a51eebd5e1"
+      }
+    ],
+    "firstReplayMessageCount": 10
+  },
+  "static-low-sun": {
+    "draws": 171,
+    "worldDraws": [
+      {
+        "event": 173,
+        "vertices": 65298,
+        "stride": 12,
+        "sha256": "432bd1ab00116220f2f8bacc94ce52ac3675200c809dc2707b06f6a51eebd5e1"
+      },
+      {
+        "event": 287,
+        "vertices": 65298,
+        "stride": 12,
+        "sha256": "432bd1ab00116220f2f8bacc94ce52ac3675200c809dc2707b06f6a51eebd5e1"
+      }
+    ],
+    "firstReplayMessageCount": 10
+  },
+  "static-route-default": {
+    "draws": 157,
+    "worldDraws": [
+      {
+        "event": 207,
+        "vertices": 85896,
+        "stride": 12,
+        "sha256": "039559be24ac23363eb3c6f98d01df4b2b9b4087ee2e65eb9983bef0c57dfa36"
+      },
+      {
+        "event": 357,
+        "vertices": 85896,
+        "stride": 12,
+        "sha256": "039559be24ac23363eb3c6f98d01df4b2b9b4087ee2e65eb9983bef0c57dfa36"
+      }
+    ],
+    "firstReplayMessageCount": 10
+  },
+  "static-route-max": {
+    "draws": 179,
+    "worldDraws": [
+      {
+        "event": 403,
+        "vertices": 6450,
+        "stride": 12,
+        "sha256": "3b10b4dc86de488de1848b411116705300d1a820e730db0f3528604e946b4e53"
+      }
+    ],
+    "firstReplayMessageCount": 10
+  },
+  "static-opt-out": {
+    "draws": 87,
+    "worldDraws": [
+      {
+        "event": 78,
+        "vertices": 12798,
+        "stride": 12,
+        "sha256": "ea5e778705997b2044139ed3f54ca9eca610f831d3be6adc10b2966db599645e"
+      }
+    ],
+    "firstReplayMessageCount": 10
+  },
+  "instanceContract": {
+    "nativeColourDraws": 25,
+    "placementCount": 10,
+    "colourShadowPairs": 50,
+    "allMatched": true,
+    "maximumMatrixError": 1.298263669013977e-06
+  },
+  "fresh146": {
+    "draws": 171,
+    "firstReplayMessages": [],
+    "worldVertexCounts": [
+      65298,
+      65298
+    ]
+  },
+  "sameCaptureReplacement": {
+    "nativeReceiveOffChangedPixels": 83210,
+    "nearOnlyChangedPixels": 80112,
+    "resolution": [
+      1280,
+      720
+    ]
+  },
+  "cpuWindows": {
+    "native-vs-game": {
+      "staticCPUWindows": [
+        348.1,
+        124.2,
+        131.8,
+        120.7,
+        123.7,
+        137.1,
+        132.8,
+        126.6,
+        126.0,
+        122.7
+      ],
+      "shadowCPUWindows": [
+        773.7,
+        791.9,
+        809.2,
+        789.0,
+        786.8,
+        828.9,
+        806.7,
+        804.0,
+        789.8,
+        781.1
+      ],
+      "regions": [
+        "136,135,152,151"
+      ],
+      "capacityWarning": false
+    },
+    "atlas-game": {
+      "staticCPUWindows": [
+        351.6,
+        128.8
+      ],
+      "shadowCPUWindows": [
+        783.1,
+        808.8
+      ],
+      "regions": [
+        "136,135,152,151"
+      ],
+      "capacityWarning": false
+    },
+    "route-default-game": {
+      "staticCPUWindows": [
+        442.7,
+        383.7,
+        256.2,
+        272.8,
+        202.0,
+        568.9,
+        435.1,
+        202.7,
+        222.4,
+        181.6
+      ],
+      "shadowCPUWindows": [
+        811.0,
+        796.3,
+        863.0,
+        864.6,
+        985.6,
+        1017.9
+      ],
+      "regions": [
+        "198,197,214,213",
+        "198,199,214,215",
+        "198,199,182,183"
+      ],
+      "capacityWarning": false
+    },
+    "route-max-game": {
+      "staticCPUWindows": [
+        465.9,
+        260.3,
+        263.3,
+        317.7,
+        247.1,
+        554.3,
+        256.1,
+        491.0,
+        328.3,
+        278.7
+      ],
+      "shadowCPUWindows": [
+        2005.3,
+        2170.2,
+        1820.1,
+        1111.8,
+        1096.9,
+        1102.9,
+        1091.3,
+        1147.5,
+        1109.2,
+        1082.1,
+        1095.9
+      ],
+      "regions": [
+        "198,197,214,213",
+        "198,199,214,215",
+        "198,199,182,183"
+      ],
+      "capacityWarning": true
+    }
+  },
+  "settingsRestored": {
+    "developer_modern_mesh.ini": {
+      "sha256": "9d36a0539c38d777a467ea31d3cf81a96ba6823a43ee6466b786e55a1ef048f4",
+      "restored": true
+    },
+    "config.ini": {
+      "sha256": "65d5130a48a7795f6cf44e2ae86c3bf1b4c4dd73fc20180d4955da15a1c77939",
+      "restored": true
+    },
+    "developer_debug_start.ini": {
+      "sha256": "fd07b4709b364c928a6fb8e268d52876040667ce4239e1f4bfd18f9a1115f2a1",
+      "restored": true
+    },
+    "developer_graphics.ini": {
+      "sha256": "f8534de2d4a5a115c2f820f3706ed7e4436a8a15078ff62123ee469ca1890ee4",
+      "restored": true
+    }
+  }
+}

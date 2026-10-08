@@ -28,6 +28,7 @@
 #include "PsyX/PsyX_render.h"
 #include "../utils/targa.h"
 #include "../utils/hqfont.h"
+#include "../utils/DeveloperRenderCoverage.h"
 
 #define HIRES_FONTS
 
@@ -1061,6 +1062,12 @@ void DrawButton(PSXBUTTON* pBtn, int i)
 // [D] [T]
 void DrawScreen(PSXSCREEN *pScr)
 {
+#ifndef PSX
+	DeveloperRenderCoverage_BeginFrame("frontend", 0);
+	const void* coverageBegin = current->primptr;
+	// Seven persistent background primitives are linked, not allocated here.
+	DeveloperRenderCoverage_RecordDirect(RENDER_CATEGORY_FRONTEND, 7);
+#endif
 	char version_info[32];
 	int numBtnsToDraw;
 	int i;
@@ -1153,6 +1160,8 @@ void DrawScreen(PSXSCREEN *pScr)
 	}
 #else
 
+	DeveloperRenderCoverage_RecordLegacy(RENDER_CATEGORY_FRONTEND, coverageBegin, current->primptr);
+	DeveloperRenderCoverage_EndFrame();
 	EndFrame();
 
 #endif

@@ -3,12 +3,16 @@
 
 #include "PsyX/PsyX_public.h"
 #include "PsyX/PsyX_render.h"
+#include "PsyX/PsyX_native.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <string>
 #include <chrono>
+#include <limits>
+#include <new>
+#include <utility>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -54,6 +58,7 @@ struct ManifestEntry
 	int imageWidth;
 	int imageHeight;
 	int attempted;
+	uint64_t pixelHash; // Detect edits until explicit Reload replaces the active image.
 };
 
 struct ActiveOverride
@@ -96,6 +101,22 @@ int g_manifestFound = 0;
 int g_enabled = 1;
 char g_status[160] = "Mod manifests have not been checked";
 char g_modsDirectory[192] = "mods";
+uint64_t g_nativeRevision = 1;
+bool g_nativeRevisionExhausted = false;
+
+void AdvanceNativeRevision()
+{
+	if (g_nativeRevisionExhausted) return;
+	if (g_nativeRevision == (std::numeric_limits<uint64_t>::max)()) g_nativeRevisionExhausted = true;
+	else ++g_nativeRevision;
+}
+
+uint64_t PixelHash(const unsigned char* pixels, size_t length)
+{
+	uint64_t hash = UINT64_C(14695981039346656037);
+	for (size_t i = 0; i < length; ++i) hash = (hash ^ pixels[i]) * UINT64_C(1099511628211);
+	return hash;
+}
 
 void SetStatus(const char* text)
 {
@@ -671,7 +692,8 @@ bool MakeWidePath(const char* path, wchar_t* widePath, int widePathCapacity)
 	return length > 0 && length <= widePathCapacity;
 }
 
-bool LoadPngRgba(const char* path, unsigned char** pixels, int* width, int* height)
+bool LoadPngRgba(const char* path, unsigned char** pixels, int* width, int* height,
+	size_t maximumBytes = (std::numeric_limits<size_t>::max)())
 {
 	*pixels = NULL; *width = 0; *height = 0;
 	wchar_t widePath[MAX_PATH];
@@ -693,6 +715,7 @@ bool LoadPngRgba(const char* path, unsigned char** pixels, int* width, int* heig
 	if (SUCCEEDED(result)) result = converter->GetSize(&imageWidth, &imageHeight);
 	if (SUCCEEDED(result) && (imageWidth == 0 || imageHeight == 0 || imageWidth > 16384 || imageHeight > 16384)) result = E_FAIL;
 	const size_t byteCount = (size_t)imageWidth * (size_t)imageHeight * 4;
+	if (SUCCEEDED(result) && byteCount > maximumBytes) result = E_OUTOFMEMORY;
 	unsigned char* data = NULL;
 	if (SUCCEEDED(result)) { data = (unsigned char*)malloc(byteCount); if (!data) result = E_OUTOFMEMORY; }
 	if (SUCCEEDED(result)) result = converter->CopyPixels(NULL, imageWidth * 4, (UINT)byteCount, data);
@@ -758,9 +781,10 @@ bool SavePngRgba(const char* path, const unsigned char* pixels, int width, int h
 	return SUCCEEDED(result);
 }
 #else
-bool LoadPngRgba(const char* path, unsigned char** pixels, int* width, int* height)
+bool LoadPngRgba(const char* path, unsigned char** pixels, int* width, int* height,
+	size_t maximumBytes = (std::numeric_limits<size_t>::max)())
 {
-	(void)path; *pixels = NULL; *width = 0; *height = 0; return false;
+	(void)path; (void)maximumBytes; *pixels = NULL; *width = 0; *height = 0; return false;
 }
 
 bool SavePngRgba(const char* path, const unsigned char* pixels, int width, int height)
@@ -792,6 +816,7 @@ bool EnsureImageLoaded(ManifestEntry* entry)
 		return false;
 	}
 	entry->textureId = PsyX_CreateRGBATexture(width, height, pixels);
+	entry->pixelHash = PixelHash(pixels, (size_t)width * height * 4);
 	free(pixels);
 	if (entry->textureId == 0) { SetStatus("PsyCross could not create a mod RGBA texture"); return false; }
 	entry->imageWidth = width;
@@ -1265,6 +1290,7 @@ bool PublishManifestFile(const char* path, const char* originalText, int origina
 
 void HdTextureOverrides_Reset()
 {
+	AdvanceNativeRevision();
 	PsyX_Inspector_ClearSelection();
 	for (int i = g_activeOverrideCount - 1; i >= 0; --i) RemoveActiveOverrideAt(i);
 	g_knownTextureCount = 0;
@@ -1272,6 +1298,7 @@ void HdTextureOverrides_Reset()
 
 void HdTextureOverrides_BeginPage(int texturePage)
 {
+	AdvanceNativeRevision();
 	LoadManifests();
 	for (int i = g_activeOverrideCount - 1; i >= 0; --i)
 		if (g_activeOverrides[i].texturePage == texturePage) RemoveActiveOverrideAt(i);
@@ -1291,6 +1318,7 @@ void HdTextureOverrides_RegisterTexture(int texturePage, int textureIndex, const
 	unsigned short width, unsigned short height)
 {
 	if (!textureName || width == 0 || height == 0) return;
+	AdvanceNativeRevision();
 	LoadManifests();
 	RegisterKnownTexture(texturePage, textureIndex, textureName, tpage, clut, u, v, width, height);
 
@@ -1358,12 +1386,14 @@ void HdTextureOverrides_RegisterTexture(int texturePage, int textureIndex, const
 
 void HdTextureOverrides_SetEnabled(int enabled)
 {
+	if (g_enabled != (enabled != 0)) AdvanceNativeRevision();
 	g_enabled = enabled != 0;
 	PsyX_SetTextureOverridesEnabled(g_enabled);
 }
 
 bool HdTextureOverrides_Reload()
 {
+	AdvanceNativeRevision();
 	static KnownTexture knownTextures[kMaximumKnownTextures];
 	const int knownTextureCount = g_knownTextureCount;
 	memcpy(knownTextures, g_knownTextures, sizeof(KnownTexture) * knownTextureCount);
@@ -2432,4 +2462,55 @@ bool HdTextureOverrides_GetKnownTextureRegion(int texturePage, int textureIndex,
 	}
 
 	return false;
+}
+
+uint64_t HdTextureOverrides_GetNativeRevision()
+{
+	return g_nativeRevisionExhausted ? 0 : g_nativeRevision;
+}
+
+HdNativeImageResult HdTextureOverrides_CopyNativeImage(int texturePage, int textureIndex,
+	unsigned short clut, HdNativeImage& image)
+{
+	image = HdNativeImage();
+	if (g_nativeRevisionExhausted) return HdNativeImageResult::Failed;
+	if (!g_enabled) return HdNativeImageResult::Original;
+	unsigned short defaultClut = 0;
+	if (!HdTextureOverrides_GetKnownTextureRegion(texturePage, textureIndex,
+		NULL, &defaultClut, NULL, NULL, NULL, NULL, NULL, 0)) return HdNativeImageResult::Original;
+	const ManifestEntry* winner = NULL;
+	for (int i = 0; i < g_activeOverrideCount; ++i)
+	{
+		const ActiveOverride& active = g_activeOverrides[i];
+		if (active.texturePage != texturePage || active.textureIndex != textureIndex) continue;
+		const ManifestEntry& entry = g_manifestEntries[active.manifestIndex];
+		if ((entry.hasClut ? entry.clut : (int)defaultClut) == (int)clut) winner = &entry;
+	}
+	if (!winner) return HdNativeImageResult::Original;
+	char path[384];
+	if (!JoinPath(path, sizeof(path), g_mods[winner->modIndex].directory, winner->imagePath, NULL))
+		return HdNativeImageResult::Failed;
+	unsigned char* pixels = NULL;
+	int width = 0, height = 0;
+	// Decode only requested resources, bounded before WIC allocates. Reuse the
+	// active image checksum instead of retaining a duplicate of every mod image.
+	if (!LoadPngRgba(path, &pixels, &width, &height, PSYX_NATIVE_MAX_BYTES)) return HdNativeImageResult::Failed;
+	const size_t bytes = (size_t)width * height * 4;
+	if (width != winner->imageWidth || height != winner->imageHeight || PixelHash(pixels, bytes) != winner->pixelHash)
+	{
+		free(pixels);
+		return HdNativeImageResult::SourceChanged; // Explicit mod reload required.
+	}
+	try
+	{
+		HdNativeImage decoded;
+		decoded.rgba.assign(pixels, pixels + bytes);
+		decoded.width = (unsigned int)width; decoded.height = (unsigned int)height;
+		decoded.revision = g_nativeRevision;
+		CopyText(decoded.modId, sizeof(decoded.modId), g_mods[winner->modIndex].id);
+		image = std::move(decoded);
+	}
+	catch (const std::bad_alloc&) { free(pixels); return HdNativeImageResult::Failed; }
+	free(pixels);
+	return HdNativeImageResult::Ready;
 }

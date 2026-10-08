@@ -1,9 +1,15 @@
 #include "DeveloperGraphicsPanel.h"
 
 #include "DeveloperDebugStart.h"
+#include "DeveloperRenderCoverage.h"
+#include "DeveloperNativeScene.h"
+#include "DeveloperNativeRegion.h"
+#include "PsyX/PsyX_native.h"
 #include "DeveloperGraphicsSettings.h"
 #include "DeveloperInputMapping.h"
 #include "DeveloperModernMesh.h"
+#include "DeveloperStaticScene.h"
+#include "DeveloperWorldShadow.h"
 #include "HdTextureOverrides.h"
 
 #if defined(_WIN32) || defined(__linux__)
@@ -830,8 +836,53 @@ void DrawLegacyContentSection()
 	HelpMarker("config.ini freeCamera installs the debug camera key and mouse handlers while the game initialises, so it cannot be toggled in a running session. Set it in config.ini and restart.");
 }
 
+void DrawNativeInspector(const PsyXNativeStats& stats)
+{
+	ImGui::TextUnformatted("Native render inspector");
+	CheckboxWithHelp("Pick visible object", &g_inspectorPickMode,
+		"Click the world outside this panel. Selection respects native depth, culling and texture cutouts. Sky and HUD are excluded.");
+	if (ImGui::Button("Clear selection")) { PsyX_Native_CancelPick(); PsyX_Inspector_ClearSelection(); }
+	ImGui::SameLine();
+	if (ImGui::Button("Reload mod manifests and images")) HdTextureOverrides_Reload();
+	if (!stats.effective) ImGui::Text("Native frame unavailable: %s",PsyX_Native_ResultName(stats.reason));
+	PsyXNativePickResult pick={};
+	const PsyXNativeResult picked=PsyX_Native_GetPickResult(&pick);
+	if (picked==PSYX_NATIVE_PENDING) { ImGui::TextUnformatted("Waiting for the submitted frame."); return; }
+	if (picked!=PSYX_NATIVE_OK) { ImGui::Text("Selection: %s",PsyX_Native_ResultName(picked)); return; }
+	if (!pick.hit) { ImGui::TextUnformatted("No native world object at this pixel."); return; }
+	DeveloperNativePickSource source={};
+	const PsyXNativeResult resolved=DeveloperNativeRegion_GetPickSource(pick,source);
+	if (resolved!=PSYX_NATIVE_OK) { ImGui::Text("Original source unavailable: %s",PsyX_Native_ResultName(resolved)); return; }
+	char logical[ASSET_CATALOG_ID_CAPACITY]={}, name[ASSET_CATALOG_NAME_CAPACITY]={};
+	AssetCatalog_MakeModelId(source.modelIndex,logical,sizeof(logical));
+	int rendered=-1;
+	AssetCatalog_GetModel(source.renderedModel.index,&rendered,name,sizeof(name),NULL,NULL,NULL);
+	ImGui::Text("Logical instance: %llu",(unsigned long long)pick.identity);
+	ImGui::Text("Original resource: %s",logical);
+	ImGui::Text("Rendered model: %d (%s)",rendered,name[0] ? name : "Unnamed model");
+	ImGui::Text("Source position: %d, %d, %d | yaw: %u/64",source.position[0],source.position[1],source.position[2],source.yaw);
+	ImGui::Text("Source model: %u vertices / %u polygons | material part: %u",source.sourceVertices,source.sourcePolygons,source.part);
+	ImGui::Text("Picked frame: tick %llu | submission %llu",(unsigned long long)pick.simulationTick,(unsigned long long)pick.submittedSerial);
+	unsigned short tpage=0,clut=0,u=0,v=0,width=0,height=0;
+	char textureName[ASSET_CATALOG_NAME_CAPACITY]={};
+	if (HdTextureOverrides_GetKnownTextureRegion(source.artwork.textureSet,source.artwork.textureIndex,
+		&tpage,&clut,&u,&v,&width,&height,textureName,sizeof(textureName)))
+	{
+		char textureId[ASSET_CATALOG_ID_CAPACITY]={};
+		AssetCatalog_MakeTextureId(textureName,source.artwork.textureSet,source.artwork.textureIndex,textureId,sizeof(textureId));
+		ImGui::Text("Original texture: %s",textureId);
+		ImGui::Text("Page: %u | CLUT: %u | source region: %u,%u %ux%u",tpage,clut,u,v,width,height);
+		HdTextureInspectorInfo texture={};
+		if (HdTextureOverrides_FindTextureInfo(tpage,clut,u,v,width,height,&texture) && texture.hasOverride)
+			ImGui::TextWrapped("Active texture override: %s :: %s",texture.modId,texture.overridePath);
+	}
+	ImGui::TextDisabled("Native selection supports logical instances and material parts. Face highlighting and export are pending.");
+}
+
 void DrawThreeDDebugTab()
 {
+	PsyXNativeStats native={}; PsyX_Native_GetStats(&native);
+	if (native.requested) { DrawNativeInspector(native); return; }
 	static bool showHighlight = true;
 	static bool showLabel = true;
 	static float highlightColour[4] = { 0.1f, 0.85f, 1.0f, 0.25f };
@@ -1810,7 +1861,14 @@ int HandleSDLEvent(const SDL_Event* event)
 		// the parent instance instead, so every part of it highlights and exports
 		// together. SDL reports the click count on the event itself.
 		PsyX_Inspector_SetWholeObjectPick(event->button.clicks >= 2);
-		PsyX_Inspector_RequestPick(event->button.x, event->button.y);
+		PsyXNativeStats native={}; PsyX_Native_GetStats(&native);
+		if (native.requested)
+		{
+			PsyX_Inspector_ClearSelection();
+			const PsyXNativeResult result=PsyX_Native_RequestPick(event->button.x,event->button.y);
+			if (result!=PSYX_NATIVE_OK) PsyX_Log_Warning("Native inspector: pick request rejected (%s)\n",PsyX_Native_ResultName(result));
+		}
+		else PsyX_Inspector_RequestPick(event->button.x, event->button.y);
 		return 1;
 	}
 
@@ -1873,8 +1931,41 @@ void DrawDeveloperPanel()
 
 				bool modernShadows = DeveloperModernMesh_GetShadows() != 0;
 				if (CheckboxWithHelp("Modern shadows", &modernShadows,
-					"Directional shadow map. Modern meshes cast; legacy geometry receives the projected shadow. Legacy geometry does not cast yet."))
+					"Directional shadow map. Modern meshes cast; legacy geometry receives the projected shadow. Vulkan can also include opaque legacy casters with the toggle below."))
 					DeveloperModernMesh_SetShadows(modernShadows);
+
+				ImGui::BeginDisabled(PsyX_GetRenderBackend() != PSYX_BACKEND_VULKAN);
+				bool staticUnlit = DeveloperStaticScene_GetEnabled() != 0;
+				if (CheckboxWithHelp("Native static scenery (Vulkan)", &staticUnlit,
+					"Renders eligible resident original buildings with shared colour/shadow geometry. Default off. Requires enhanced rendering, both PGXP options, nearest filtering and no enabled texture overrides. Unsupported materials retain the legacy path. Stored as staticunlit."))
+					DeveloperModernMesh_SetStaticUnlit(staticUnlit);
+				bool staticLighting = DeveloperStaticScene_GetLighting() != 0;
+				if (CheckboxWithHelp("Light native static scenery", &staticLighting,
+					"Uses real face normals for sunlight, ambient fill and local lights. Native buildings receive modern shadows; only direct sunlight is shadowed. Disable for original unlit comparison. Requires Native static scenery."))
+					DeveloperModernMesh_SetStaticLighting(staticLighting);
+				float staticStrength = DeveloperStaticScene_GetLightingStrength();
+				if (SliderFloatWithHelp("Native lighting strength", &staticStrength, 0.0f, 1.0f, "%.2f",
+					"Blends the original pre-shaded art with the new diffuse lighting. Zero preserves original brightness; one applies the full lighting response."))
+					DeveloperModernMesh_SetStaticLightingStrength(staticStrength);
+				int staticLimit = DeveloperStaticScene_GetObjectLimit();
+				if (SliderIntWithHelp("Native scenery object limit", &staticLimit, 1, PSYX_MODERN_MAX_FRAME_INSTANCES, "%d",
+					"Bounds native placements. Geometry and original textures are reused; unsupported or over-budget objects keep the legacy renderer. Default 64."))
+					DeveloperModernMesh_SetStaticSceneLimit(staticLimit);
+				float staticRange = DeveloperStaticScene_GetRange();
+				if (SliderFloatWithHelp("Native scenery range", &staticRange, 10000.0f, 40000.0f, "%.0f",
+					"World-unit range for eligible original buildings in already loaded regions, including beyond the old camera cell list. Does not extend traffic, collision or region loading. Coverage is limited by resident resources and native budgets. Default 18000."))
+					DeveloperModernMesh_SetStaticRange(staticRange);
+				bool worldCasters = DeveloperModernMesh_GetWorldShadowCasters() != 0;
+				if (CheckboxWithHelp("Static world shadow casters (Vulkan)", &worldCasters,
+					"Uses opaque static models from resident map regions, including faces outside the camera. Replaces the legacy caster path while enabled. Vehicles, foliage cutouts and animated objects are excluded. Requires enhanced rendering and modern shadows; single player only. Default off. Stored as worldshadowcasters."))
+					DeveloperModernMesh_SetWorldShadowCasters(worldCasters);
+				ImGui::BeginDisabled(worldCasters);
+				bool legacyCasters = DeveloperModernMesh_GetLegacyShadowCasters() != 0;
+				if (CheckboxWithHelp("Legacy geometry casts shadows (Vulkan)", &legacyCasters,
+					"Adds opaque, depth-tested legacy triangles inside the sun's shadow volume. Requires the enhanced renderer, modern shadows and both PGXP options. Default off. Transparent effects and vertices without reliable depth are skipped; PSX and override texture cutouts are preserved. Stored as legacyshadowcasters."))
+					DeveloperModernMesh_SetLegacyShadowCasters(legacyCasters);
+				ImGui::EndDisabled();
+				ImGui::EndDisabled();
 
 				bool modernAO = DeveloperModernMesh_GetAmbientOcclusion() != 0;
 				if (CheckboxWithHelp("Modern ambient occlusion", &modernAO,
@@ -1917,6 +2008,30 @@ void DrawDeveloperPanel()
 						"Output multiplier of the modern mesh shading. - and = change it in game."))
 						DeveloperModernMesh_SetExposure(exposure);
 
+					bool farShadows = DeveloperModernMesh_GetFarShadows() != 0;
+					if (CheckboxWithHelp("Distant resident shadows (Vulkan)", &farShadows,
+						"Adds a distant shadow volume at the native scenery range while preserving near detail. Requires static world casters. Uses already loaded regions. Triangle pressure reduces complete coverage to 75%, 50%, then near only; recovery probes one tier after 120 successful frames."))
+						DeveloperModernMesh_SetFarShadows(farShadows);
+					if (PsyX_GetRenderBackend() == PSYX_BACKEND_VULKAN)
+					{
+						PsyXModernMeshStats coverage = {};
+						PsyX_ModernMesh_GetStats(&coverage);
+						ImGui::Text("Active shadow volumes: %d | Distant half-size: %.0f", coverage.shadowVolumeCount, coverage.shadowFarExtent);
+						if (worldCasters)
+						{
+							DeveloperWorldShadowStats demand = {};
+							DeveloperWorldShadow_GetStats(&demand);
+							ImGui::Text("Light search cells: %d resident | %d unavailable", demand.residentCells, demand.unavailableCells);
+							ImGui::Text("World triangles: %d / %d | Outside triangles skipped: %d", demand.triangles,
+								PSYX_WORLD_SHADOW_MAX_VERTICES / 3, demand.outsideTriangles);
+							ImGui::Text("Collection attempts: %d | Capacity failures: %d", demand.collectionAttempts, demand.capacityFailures);
+						}
+						if (farShadows && worldCasters && coverage.shadowVolumeCount == 2 && coverage.shadowFarExtent < DeveloperStaticScene_GetRange())
+							ImGui::TextWrapped("Distant range reduced to fit the resident caster budget; complete near coverage is retained.");
+						if (farShadows && worldCasters && coverage.shadowVolumeCount == 1)
+							ImGui::TextWrapped("Distant volume inactive: its size must exceed the near size and fit the resident caster budget.");
+					}
+
 					float shadowExtent = DeveloperModernMesh_GetShadowExtent();
 					if (SliderFloatWithHelp("Shadow volume size", &shadowExtent, 500.0f, 8000.0f, "%.0f",
 						"Half-size of the orthographic shadow volume in world units. Larger values cover more ground at a lower shadow resolution."))
@@ -1931,9 +2046,53 @@ void DrawDeveloperPanel()
 					}
 
 					int shadowDebug = DeveloperModernMesh_GetShadowDebug();
-					if (SliderIntWithHelp("Shadow debug view", &shadowDebug, 0, 10, "%d",
-						"Replaces the frame with a diagnostic view: 1 scene depth, 2 shadow frustum, 3 shadow map, 4 projected vs stored depth, 5 sun term, 6 reconstructed normal, 7 light scale, 8 two-channel depth, 9 two-channel distance, 10 sun coverage. 0 is the normal frame. The 7 key cycles 0-4 in game."))
+					if (SliderIntWithHelp("Shadow debug view", &shadowDebug, 0, 11, "%d",
+						"Replaces the frame with a diagnostic view: 1 scene depth, 2 shadow frustum, 3 shadow map, 4 projected vs stored depth, 5 sun term, 6 reconstructed normal, 7 light scale, 8 two-channel depth, 9 two-channel distance, 10 sun coverage, 11 point-light coverage. 0 is the normal frame. The 7 key cycles 0-4 in game."))
 						DeveloperModernMesh_SetShadowDebugMode(shadowDebug);
+				}
+
+				// Point-light sources and their receptivity term. They are the
+				// only non-sun lights the legacy scene reacts to, so they are
+				// grouped separately from the sun and look values.
+				if (ImGui::CollapsingHeader("Point lights", ImGuiTreeNodeFlags_DefaultOpen))
+				{
+					bool pointLights = DeveloperModernMesh_GetPointLights() != 0;
+					if (CheckboxWithHelp("Legacy point lights", &pointLights,
+						"Publishes point lights from live game state next to the modern sun: the player's headlights and the light bars of nearby police cars. The legacy scene reacts through the same receptivity term, and the modern meshes shade them too. Requires 'Legacy geometry receives modern lighting'. Stored in developer_modern_mesh.ini as pointlights."))
+						DeveloperModernMesh_SetPointLights(pointLights);
+
+					if (pointLights)
+					{
+						int limit = DeveloperModernMesh_GetPointLightLimit();
+						if (SliderIntWithHelp("Point light limit", &limit, 1, PSYX_MODERN_COMPOSITE_POINT_LIGHTS, "%d",
+							"Maximum published point lights, nearest to the player first. The sun is light 0 and is not counted. Both backends shade up to four, so a higher count would only differ between them."))
+							DeveloperModernMesh_SetPointLightLimit(limit);
+
+						float pointRange = DeveloperModernMesh_GetPointLightRange();
+						if (SliderFloatWithHelp("Point light range", &pointRange, 100.0f, 8000.0f, "%.0f",
+							"World-unit range of a published point light: its contribution fades to zero at this distance, which is also how the shader rejects it per pixel."))
+							DeveloperModernMesh_SetPointLightRange(pointRange);
+
+						float pointIntensity = DeveloperModernMesh_GetPointLightIntensity();
+						if (SliderFloatWithHelp("Point light intensity", &pointIntensity, 0.0f, 2.0f, "%.2f",
+							"Multiplier applied to every published point light's colour. It scales only the point lights, not the sun."))
+							DeveloperModernMesh_SetPointLightIntensity(pointIntensity);
+
+						bool headlights = DeveloperModernMesh_GetHeadlights() != 0;
+						if (CheckboxWithHelp("Player headlights", &headlights,
+							"Two lights just above the road and ahead of the player car's bumper, so the road and whatever the car faces are lit."))
+							DeveloperModernMesh_SetHeadlights(headlights);
+
+						bool sirenLights = DeveloperModernMesh_GetSirenLights() != 0;
+						if (CheckboxWithHelp("Police siren lights", &sirenLights,
+							"One light on the roof of each active police car with a siren, red/blue in the phase the drawn flash already uses. Nearest cars are published first within the limit."))
+							DeveloperModernMesh_SetSirenLights(sirenLights);
+
+						bool probe = DeveloperModernMesh_GetPointLightProbe() != 0;
+						if (CheckboxWithHelp("Validation probe light on the player", &probe,
+							"Replaces the game-derived sources with a single known light in front of and above the player car, so a capture shows exactly one published point light and does not depend on traffic."))
+							DeveloperModernMesh_SetPointLightProbe(probe);
+					}
 				}
 
 				ImGui::SliderInt("Draw distance", &gDrawDistance, 441, 1800);
@@ -2016,6 +2175,69 @@ void DrawDeveloperPanel()
 				ImGui::Text("Window: %d x %d", g_windowWidth, g_windowHeight);
 				ImGui::Text("PSX vertices: %d", renderStats.vertexCount);
 				ImGui::Text("Draw splits: %d", renderStats.drawSplitCount);
+				if (ImGui::CollapsingHeader("Rendering migration coverage"))
+				{
+					bool nativeRequested = DeveloperNativeScene_GetRequested() != 0;
+					ImGui::BeginDisabled(PsyX_GetRenderBackend() != PSYX_BACKEND_VULKAN);
+					if (CheckboxWithHelp("Native analytic world (R01)", &nativeRequested,
+						"Isolated unlit test scene using the final game camera and separate depth. Original HUD stays visible. Session only; -nativeworld enables it at launch."))
+						DeveloperNativeScene_SetRequested(nativeRequested);
+					ImGui::EndDisabled();
+					if (nativeRequested && ImGui::Button("Rebuild analytic scene at current camera"))
+						DeveloperNativeScene_Rebuild();
+					PsyXNativeStats nativeStats = {};
+					PsyX_Native_GetStats(&nativeStats);
+					const char* nativeState = nativeStats.frameState == PSYX_NATIVE_FRAME_READY ? "native" :
+						nativeStats.frameState == PSYX_NATIVE_FRAME_LOADING ? "native loading" :
+						nativeStats.frameState == PSYX_NATIVE_FRAME_FAILED ? "native FAILED" :
+						nativeStats.frameState == PSYX_NATIVE_FRAME_AUXILIARY ? "unmigrated auxiliary consumers" : "native off";
+					ImGui::Text("Last submitted frame: %s (%s)", nativeState,
+						PsyX_Native_ResultName(nativeStats.reason));
+					ImGui::Text("GPU draws: native %u | legacy world %u | overlay %u | suppressed %u",
+						nativeStats.nativeDraws, nativeStats.legacyWorldDraws, nativeStats.legacyOverlayDraws, nativeStats.suppressedWorldDraws);
+					ImGui::Text("Native meshes: ready %u | pending %u | retiring %u | rejected calls %u",
+						nativeStats.residentMeshes, nativeStats.pendingMeshes, nativeStats.retiringMeshes, nativeStats.rejectedCalls);
+					ImGui::Text("Native submissions: ready %llu | loading %llu | failed %llu | auxiliary %llu",
+						(unsigned long long)nativeStats.effectiveFrames, (unsigned long long)nativeStats.loadingFrames,
+						(unsigned long long)nativeStats.failedFrames, (unsigned long long)nativeStats.auxiliaryFrames);
+					ImGui::TextWrapped("Native world failure never draws the old world. Frontend/HUD/VRAM remain pending consumers until migrated. Analytic geometry does not count as original asset coverage. Native mode requires Vulkan; OpenGL remains separately selectable.");
+					NativeAsset::RegionCoverageCounts regionCoverage;
+					uint64_t regionTick = 0; bool regionPublished = false;
+					if (DeveloperNativeRegion_GetCoverage(regionCoverage, regionTick, regionPublished))
+					{
+						ImGui::Text("Region producer tick %llu (%s): sources %u | copied %u | published %u",
+							(unsigned long long)regionTick, regionPublished ? "published" : "unpublished",
+							regionCoverage.selected, regionCoverage.copied, regionCoverage.published);
+						ImGui::Text("World parts: published %u / copied %u | invalid accounting %u",
+							regionCoverage.publishedParts, regionCoverage.copiedParts, regionCoverage.invalid);
+						ImGui::Text("Original view candidates: inside %u | outside %u | uncopied inside %u | repeated %u",
+							regionCoverage.viewInside, regionCoverage.viewOutside, regionCoverage.viewUncopied, regionCoverage.duplicateView);
+						ImGui::TextWrapped("Outside means a source slot absent from the selected cells, after original PVS/frustum acceptance and before queue limits. Straddlers selected by any region cell count inside. These are source candidates, not GPU-visible objects. Outside sources remain omitted in this bounded R03 slice; full city belongs to R04.");
+					}
+					ImGui::Text("Producer mode: %s", DeveloperRenderCoverage_GetMode());
+					ImGui::TextWrapped("Counts describe producer batches, including culled attempts. They do not prove GPU visibility or complete native coverage. Secondary reflections also belong to their parent sky/event batch.");
+					if (ImGui::BeginTable("RenderCoverage", 5, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg))
+					{
+						ImGui::TableSetupColumn("Category");
+						ImGui::TableSetupColumn("Requested");
+						ImGui::TableSetupColumn("Legacy batches");
+						ImGui::TableSetupColumn("Experiment");
+						ImGui::TableSetupColumn("Native");
+						ImGui::TableHeadersRow();
+						for (int i = 0; i < RENDER_CATEGORY_COUNT; ++i)
+						{
+							const DeveloperRenderCategory category = (DeveloperRenderCategory)i;
+							const DeveloperRenderCoverageCount count = DeveloperRenderCoverage_GetCount(category);
+							ImGui::TableNextRow();
+							ImGui::TableNextColumn(); ImGui::TextUnformatted(DeveloperRenderCoverage_GetName(category));
+							ImGui::TableNextColumn(); ImGui::Text("%u", count.requested);
+							ImGui::TableNextColumn(); ImGui::Text("%u", count.legacy);
+							ImGui::TableNextColumn(); ImGui::Text("%u", count.experimental);
+							ImGui::TableNextColumn(); ImGui::Text("%u", count.native);
+						}
+						ImGui::EndTable();
+					}
+				}
 
 				ImGui::Separator();
 				ImGui::TextDisabled("Texture overrides and active mods are on the Mods tab.");

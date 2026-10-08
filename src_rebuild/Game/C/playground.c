@@ -404,10 +404,16 @@ void Playground_BuildScene(void)
 
 	modelpointers[kTileSlot] = &tileArena->model;
 	pLodModels[kTileSlot] = &tileArena->model;
+#ifndef PSX
+	Models_SetSourceSize(kTileSlot, sizeof(*tileArena));
+#endif
 	permanentModelSlotBitfield[kTileSlot >> 5] |= 1 << (kTileSlot & 31);
 
 	modelpointers[kBoxSlot] = &boxArena->model;
 	pLodModels[kBoxSlot] = &boxArena->model;
+#ifndef PSX
+	Models_SetSourceSize(kBoxSlot, sizeof(*boxArena));
+#endif
 	permanentModelSlotBitfield[kBoxSlot >> 5] |= 1 << (kBoxSlot & 31);
 
 	// Expose the generated fixture's assets in the catalog (source unknown:

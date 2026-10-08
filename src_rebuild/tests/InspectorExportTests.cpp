@@ -497,6 +497,50 @@ int main()
 	Check(!HdTextureOverrides_MakeSafeNameToken("  //  ", token, sizeof(token)) && token[0] == '\0',
 		"safe name token rejects a label with no alphanumeric characters");
 
+	// Native material consumers exercise the real manifests, enabled order,
+	// palette registration and WIC decoder. Renderer objects remain stubbed.
+	CreateDirectoryA("mods/native-first", NULL);
+	CreateDirectoryA("mods/native-last", NULL);
+	const unsigned char nativeRed[4] = {255,0,0,255}, nativeGreen[4] = {0,255,0,128}, nativeBlue[4] = {0,0,255,255};
+	Check(SavePngRgba("mods/native-first/base.png",nativeRed,1,1) &&
+		SavePngRgba("mods/native-last/base.png",nativeGreen,1,1) &&
+		SavePngRgba("mods/native-last/variant.png",nativeBlue,1,1), "owned native material PNGs created");
+	Check(InspectorExport_WriteText("mods/native-first/manifest.json",
+		"{\"id\":\"native-first\",\"textures\":[{\"texture\":\"NATIVE\",\"texturePage\":17,\"textureIndex\":3,\"file\":\"base.png\"}]}",status,sizeof(status)), "first native manifest created");
+	Check(InspectorExport_WriteText("mods/native-last/manifest.json",
+		"{\"id\":\"native-last\",\"textures\":[{\"texture\":\"NATIVE\",\"texturePage\":17,\"textureIndex\":3,\"file\":\"base.png\"},{\"texture\":\"NATIVE\",\"texturePage\":17,\"textureIndex\":3,\"clut\":128,\"file\":\"variant.png\"}]}",status,sizeof(status)), "later native manifest and palette created");
+	Check(InspectorExport_WriteText("mods/enabled.json",
+		"{\"mods\":[{\"id\":\"native-first\",\"enabled\":true},{\"id\":\"native-last\",\"enabled\":true}]}",status,sizeof(status)), "native enabled order created");
+	HdTextureOverrides_Reset(); HdTextureOverrides_Reload();
+	HdTextureOverrides_SetEnabled(1);
+	HdTextureOverrides_RegisterTexture(17,3,"NATIVE",0,64,0,0,1,1);
+	HdNativeImage nativeImage;
+	Check(HdTextureOverrides_CopyNativeImage(17,3,64,nativeImage)==HdNativeImageResult::Ready &&
+		nativeImage.width==1 && nativeImage.rgba[1]==255 && nativeImage.rgba[3]==128 && !strcmp(nativeImage.modId,"native-last"), "native copy preserves later mod precedence and exact PNG alpha");
+	const std::vector<unsigned char> retainedImage = nativeImage.rgba;
+	Check(HdTextureOverrides_CopyNativeImage(17,3,128,nativeImage)==HdNativeImageResult::Ready && nativeImage.rgba[2]==255, "native exact CLUT variant wins independently");
+	Check(HdTextureOverrides_CopyNativeImage(17,3,256,nativeImage)==HdNativeImageResult::Original && nativeImage.rgba.empty(), "unknown CLUT retains original instead of wrong palette override");
+	const uint64_t enabledRevision = HdTextureOverrides_GetNativeRevision();
+	HdTextureOverrides_SetEnabled(0);
+	Check(HdTextureOverrides_GetNativeRevision()!=enabledRevision &&
+		HdTextureOverrides_CopyNativeImage(17,3,64,nativeImage)==HdNativeImageResult::Original, "native toggle invalidates material revision and selects original");
+	HdTextureOverrides_SetEnabled(1);
+	Check(SavePngRgba("mods/native-last/base.png",nativeBlue,1,1), "active PNG edited independently of reload");
+	Check(HdTextureOverrides_CopyNativeImage(17,3,64,nativeImage)==HdNativeImageResult::SourceChanged && nativeImage.rgba.empty(), "edited PNG cannot silently differ from active legacy image");
+	Check(retainedImage[1]==255 && retainedImage[3]==128, "previous native CPU image remains owned after source edit");
+	HdTextureOverrides_Reload();
+	Check(HdTextureOverrides_CopyNativeImage(17,3,64,nativeImage)==HdNativeImageResult::Ready && nativeImage.rgba[2]==255, "explicit reload updates native PNG and active checksum");
+	Check(InspectorExport_WriteText("mods/enabled.json",
+		"{\"mods\":[{\"id\":\"native-last\",\"enabled\":true},{\"id\":\"native-first\",\"enabled\":true}]}",status,sizeof(status)), "native enabled order reversed");
+	HdTextureOverrides_Reload();
+	Check(HdTextureOverrides_CopyNativeImage(17,3,64,nativeImage)==HdNativeImageResult::Ready && nativeImage.rgba[0]==255 && !strcmp(nativeImage.modId,"native-first"), "native resolver follows reordered manifests");
+	decoded = NULL;
+	Check(!LoadPngRgba("mods/native-first/base.png",&decoded,&width,&height,3) && decoded==NULL, "native PNG byte limit checked before allocation");
+	const uint64_t registrationRevision = HdTextureOverrides_GetNativeRevision();
+	HdTextureOverrides_BeginPage(17);
+	Check(HdTextureOverrides_GetNativeRevision()!=registrationRevision &&
+		HdTextureOverrides_CopyNativeImage(17,3,64,nativeImage)==HdNativeImageResult::Original, "streamed texture-page reuse invalidates native associations");
+
 	printf("%d failures\n", failures);
 	return failures ? 1 : 0;
 }

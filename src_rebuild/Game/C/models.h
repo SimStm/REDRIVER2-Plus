@@ -35,6 +35,10 @@ extern int FindModelIdxWithName(char *name); // 0x0005D4C4
 extern const char* GetModelNameByIndex(int modelIndex);
 #ifndef PSX
 extern void Models_SetInspectorNameBuffer(char* buffer, int size);
+// Read-only native decoding must use the loader's actual byte span, never infer
+// its length from polygon counts/offsets. A replaced pointer invalidates it.
+extern void Models_SetSourceSize(int modelIndex, unsigned int bytes);
+extern unsigned int Models_GetSourceSize(int modelIndex);
 #endif
 
 #endif

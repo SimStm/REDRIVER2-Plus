@@ -10,8 +10,10 @@
  * The game itself is not started and no OpenGL context is created.
  */
 
-/* Returns 1 when the command line asked for the fixture and it ran (the caller
-   should then exit), 0 when the arguments are unrelated to it. */
-int DeveloperVkFixture_HandleCommandLine(int argc, char** argv);
+enum class DeveloperVkFixtureResult { NotRequested, Success, Failure };
+
+/* Requested fixtures own application startup. The caller must propagate Failure
+   as a nonzero process exit code; unrelated arguments continue normal startup. */
+DeveloperVkFixtureResult DeveloperVkFixture_HandleCommandLine(int argc, char** argv);
 
 #endif // DEVELOPER_VK_FIXTURE_H

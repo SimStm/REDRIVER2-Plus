@@ -7,7 +7,7 @@ tags: [tooling, developer-panel, settings, input, display]
 
 # Runtime settings GUI milestones 2-4
 
-Implementation of [`runtime-settings-gui.md`](../../roadmap/done/runtime-settings-gui.md)
+Implementation of [`runtime-settings-gui.md`](../../../roadmap/done/runtime-settings-gui.md)
 milestones 2-4. The primary record with the settings inventory, per-milestone
 evidence and remaining limits is that roadmap document; this record covers the
 changed files, the techniques and one environment incident.
@@ -61,7 +61,7 @@ property `PropertyGroup`, `ItemDefinitionGroup`) for both configurations and
 platforms, with `visual-studio-ide-mcp build_configuration_get` confirming all
 ten configuration/platform pairs are back. The convention and the repair steps
 are recorded in
-[`visual-studio-project-regeneration.md`](../../rules/visual-studio-project-regeneration.md).
+[`visual-studio-project-regeneration.md`](../../../rules/visual-studio-project-regeneration.md).
 
 ## Not done
 
@@ -89,6 +89,6 @@ PSX self-test passes, and a desktop capture of the restored Graphics tab shows
 the tab bar and every control. The committed version's `RenderOverlay` Vulkan
 branch was preserved.
 
-Lesson, now in [`mcp-agent-tooling.md`](../../rules/mcp-agent-tooling.md): remove
+Lesson, now in [`mcp-agent-tooling.md`](../../../rules/mcp-agent-tooling.md): remove
 a temporary probe by replacing its exact text and then checking the new line
 count, never by deleting a pattern-matched range.

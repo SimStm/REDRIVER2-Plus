@@ -1,4 +1,6 @@
 #include "DeveloperModernMesh.h"
+#include "DeveloperWorldShadow.h"
+#include "DeveloperStaticScene.h"
 
 #include "driver2.h"
 
@@ -6,6 +8,8 @@
 #include "C/cars.h"
 #include "C/draw.h"
 #include "C/dr2roads.h"
+#include "C/gamesnd.h"
+#include "C/mission.h"
 #include "C/players.h"
 
 #include "GltfLoader.h"
@@ -73,6 +77,13 @@ struct Fixture
 
 void AddFixture(int mesh, const float pos[3], float yaw, const FixtureTextures* textures);
 float GroundHeightAt(float x, float z);
+
+// Source scenery/cameras use Y down; glTF, the sun UI and vehicle physics
+// use Y up. Convert at the Vulkan game boundary, leaving OpenGL unchanged.
+float SceneUpSign()
+{
+	return PsyX_GetRenderBackend() == PSYX_BACKEND_VULKAN ? -1.0f : 1.0f;
+}
 void PlaceFromLayout(float lateral, float forward, const float anchor[3], float out[3]);
 
 int s_enabled = 0;
@@ -96,12 +107,38 @@ float s_ambient = 0.18f;
 float s_exposure = 1.0f;
 int s_aoEnabled = 0;
 int s_shadowsEnabled = 0;
+int s_legacyShadowCasters = 0;
+int s_worldShadowCasters = 0;
 float s_shadowExtent = 2500.0f;
+int s_farShadows = 0;
 // Legacy-geometry light receptivity (roadmap legacy-lighting-receptivity):
 // off by default so the shipped legacy shading is untouched. The scale is the
 // diffuse-sun multiplier applied to the already-lit legacy colour.
 int s_legacyLighting = 0;
 float s_legacyLightReceptivity = 0.35f;
+// Point-light sources (roadmap point-light-sources): published from live game
+// state next to the sun. Off by default, like the receptivity term they feed.
+// The cap counts published point lights only; the sun is always light 0 and is
+// never counted, and the composite shades at most
+// PSYX_MODERN_COMPOSITE_POINT_LIGHTS of them on both backends.
+int s_pointLights = 0;
+int s_pointLightLimit = 2;
+// Range and intensity defaults are sized from the player car's own geometry:
+// `Baseline: playerCar boxLength` logs the collision box (139x86x396 units for
+// the sedan used in the captures), so ~4000 units is about a car length of
+// useful range and the offsets below stay a fraction of the car without
+// depending on a units-per-metre assumption.
+float s_pointLightRange = 4000.0f;
+float s_pointLightIntensity = 1.5f;
+int s_headlights = 1;
+int s_sirenLights = 1;
+// Validation aid: one known light anchored on the player vehicle instead of the
+// game-derived sources, so a capture shows exactly one published point light.
+int s_pointLightProbe = 0;
+// Point lights in the last published set, logged once for a capture's baseline.
+int s_publishedPointLights = 0;
+
+const int kMaxPointLightCandidates = 8;
 
 // A distinct colour per corner keeps the cube's orientation readable.
 const unsigned char kColors[8][4] =
@@ -140,6 +177,8 @@ void ReadEnabledState()
 	while (fgets(line, sizeof(line), file))
 	{
 		int value = 0;
+		float staticStrength = 0.0f;
+		float staticRange = 0.0f;
 		if (sscanf(line, " enabled=%d", &value) == 1 || sscanf(line, "enabled=%d", &value) == 1)
 			s_enabled = value != 0;
 		else if (sscanf(line, " asset=%511s", s_assetPath) == 1)
@@ -158,6 +197,22 @@ void ReadEnabledState()
 			s_aoEnabled = value != 0;
 		else if (sscanf(line, " shadows=%d", &value) == 1 || sscanf(line, "shadows=%d", &value) == 1)
 			s_shadowsEnabled = value != 0;
+		else if (sscanf(line, " staticunlit=%d", &value) == 1)
+			DeveloperStaticScene_SetEnabled(value);
+		else if (sscanf(line, " staticlighting=%d", &value) == 1)
+			DeveloperStaticScene_SetLighting(value);
+		else if (sscanf(line, " staticlightingstrength=%f", &staticStrength) == 1)
+			DeveloperStaticScene_SetLightingStrength(staticStrength);
+		else if (sscanf(line, " staticscenelimit=%d", &value) == 1)
+			DeveloperStaticScene_SetObjectLimit(value);
+		else if (sscanf(line, " staticrange=%f", &staticRange) == 1)
+			DeveloperStaticScene_SetRange(staticRange);
+		else if (sscanf(line, " worldshadowcasters=%d", &value) == 1)
+			s_worldShadowCasters = value != 0;
+		else if (sscanf(line, " legacyshadowcasters=%d", &value) == 1)
+			s_legacyShadowCasters = value != 0;
+		else if (sscanf(line, " farshadows=%d", &value) == 1)
+			s_farShadows = value != 0;
 		else if (sscanf(line, " shadowextent=%f", &s_shadowExtent) == 1)
 			;
 		else if (sscanf(line, " shadowdebug=%d", &value) == 1 || sscanf(line, "shadowdebug=%d", &value) == 1)
@@ -169,6 +224,30 @@ void ReadEnabledState()
 			if (s_legacyLightReceptivity < 0.0f) s_legacyLightReceptivity = 0.0f;
 			if (s_legacyLightReceptivity > 2.0f) s_legacyLightReceptivity = 2.0f;
 		}
+		else if (sscanf(line, " pointlights=%d", &value) == 1 || sscanf(line, "pointlights=%d", &value) == 1)
+			s_pointLights = value != 0;
+		else if (sscanf(line, " pointlightlimit=%d", &value) == 1)
+		{
+			if (value < 1) value = 1;
+			if (value > PSYX_MODERN_COMPOSITE_POINT_LIGHTS) value = PSYX_MODERN_COMPOSITE_POINT_LIGHTS;
+			s_pointLightLimit = value;
+		}
+		else if (sscanf(line, " pointlightrange=%f", &s_pointLightRange) == 1)
+		{
+			if (s_pointLightRange < 100.0f) s_pointLightRange = 100.0f;
+			if (s_pointLightRange > 8000.0f) s_pointLightRange = 8000.0f;
+		}
+		else if (sscanf(line, " pointlightintensity=%f", &s_pointLightIntensity) == 1)
+		{
+			if (s_pointLightIntensity < 0.0f) s_pointLightIntensity = 0.0f;
+			if (s_pointLightIntensity > 4.0f) s_pointLightIntensity = 4.0f;
+		}
+		else if (sscanf(line, " headlights=%d", &value) == 1)
+			s_headlights = value != 0;
+		else if (sscanf(line, " sirenlights=%d", &value) == 1 || sscanf(line, "sirenlights=%d", &value) == 1)
+			s_sirenLights = value != 0;
+		else if (sscanf(line, " pointlightprobe=%d", &value) == 1)
+			s_pointLightProbe = value != 0;
 	}
 
 	fclose(file);
@@ -183,6 +262,8 @@ void WriteEnabledState()
 	fprintf(file, "# REDRIVER2-Plus experimental modern mesh (renderer roadmap R2/R3/R5).\n");
 	fprintf(file, "# Toggle in game with F10; light keys: [ ] azimuth, ; ' tilt, - = exposure, \\ AO.\n");
 	fprintf(file, "# F9 toggles legacy light receptivity; legacyLightReceptivity scales it.\n");
+	fprintf(file, "# pointlights publishes headlight/siren point lights next to the sun;\n");
+	fprintf(file, "# pointlightprobe replaces them with one known light on the player car.\n");
 	fprintf(file, "[modern_mesh]\n");
 	fprintf(file, "enabled=%d\n", s_enabled ? 1 : 0);
 	fprintf(file, "asset=%s\n", s_assetPath);
@@ -193,10 +274,25 @@ void WriteEnabledState()
 	fprintf(file, "exposure=%.3f\n", s_exposure);
 	fprintf(file, "ao=%d\n", s_aoEnabled);
 	fprintf(file, "shadows=%d\n", s_shadowsEnabled);
+	fprintf(file, "legacyshadowcasters=%d\n", s_legacyShadowCasters);
+	fprintf(file, "worldshadowcasters=%d\n", s_worldShadowCasters);
+	fprintf(file, "staticunlit=%d\n", DeveloperStaticScene_GetEnabled());
+	fprintf(file, "staticlighting=%d\n", DeveloperStaticScene_GetLighting());
+	fprintf(file, "staticlightingstrength=%.3f\n", DeveloperStaticScene_GetLightingStrength());
+	fprintf(file, "staticscenelimit=%d\n", DeveloperStaticScene_GetObjectLimit());
+	fprintf(file, "staticrange=%.1f\n", DeveloperStaticScene_GetRange());
 	fprintf(file, "shadowextent=%.1f\n", s_shadowExtent);
+	fprintf(file, "farshadows=%d\n", s_farShadows);
 	fprintf(file, "shadowdebug=%d\n", s_shadowDebug);
 	fprintf(file, "legacyLighting=%d\n", s_legacyLighting ? 1 : 0);
 	fprintf(file, "legacyLightReceptivity=%.3f\n", s_legacyLightReceptivity);
+	fprintf(file, "pointlights=%d\n", s_pointLights ? 1 : 0);
+	fprintf(file, "pointlightlimit=%d\n", s_pointLightLimit);
+	fprintf(file, "pointlightrange=%.1f\n", s_pointLightRange);
+	fprintf(file, "pointlightintensity=%.3f\n", s_pointLightIntensity);
+	fprintf(file, "headlights=%d\n", s_headlights ? 1 : 0);
+	fprintf(file, "sirenlights=%d\n", s_sirenLights ? 1 : 0);
+	fprintf(file, "pointlightprobe=%d\n", s_pointLightProbe ? 1 : 0);
 	fclose(file);
 }
 
@@ -275,7 +371,7 @@ void CreateAnalyticSpheres()
 
 		float pos[3];
 		PlaceFromLayout((i - 1.5f) * kHalfSize * 3.0f, 3400.0f, s_anchor, pos);
-		pos[1] = GroundHeightAt(pos[0], pos[2]) + kHalfSize;	// sphere rests on the ground
+		pos[1] = GroundHeightAt(pos[0], pos[2]) + SceneUpSign() * kHalfSize;	// sphere rests on the ground
 		AddFixture(mesh, pos, s_baseYaw, NULL);
 	}
 }
@@ -308,7 +404,8 @@ float GroundHeightAt(float x, float z)
 
 	// The playground map query can miss; the camera height is a usable fallback
 	// there, while a genuine surface height of zero is kept as-is.
-	if (height == 0 && (camera_position.vy > 200 || camera_position.vy < -200))
+	if (height == 0 && (camera_position.vy > 200 || camera_position.vy < -200) &&
+		(PsyX_GetRenderBackend() != PSYX_BACKEND_VULKAN || !sdGetCell(&probe)))
 		return (float)camera_position.vy;
 
 	return (float)height;
@@ -405,7 +502,7 @@ int AddGltfFixture(const char* path, float lateral, float forward, float yawDegr
 
 	float pos[3];
 	PlaceFromLayout(lateral, forward, s_anchor, pos);
-	pos[1] = GroundHeightAt(pos[0], pos[2]) - minY;	// base rests on the surface
+	pos[1] = GroundHeightAt(pos[0], pos[2]) - SceneUpSign() * minY;	// base rests on the surface
 	AddFixture(mesh, pos, s_baseYaw + yawDegrees * 3.14159265f / 180.0f, &textures);
 
 	char materialId[192];
@@ -439,7 +536,7 @@ void CreateCubeFallback()
 
 	float pos[3];
 	PlaceFromLayout(0.0f, 1600.0f, s_anchor, pos);
-	pos[1] = GroundHeightAt(pos[0], pos[2]) + kHalfSize;
+	pos[1] = GroundHeightAt(pos[0], pos[2]) + SceneUpSign() * kHalfSize;
 	AddFixture(s_cubeMesh, pos, s_baseYaw, NULL);
 }
 
@@ -486,7 +583,7 @@ void BuildInstanceWorld(const float pos[3], float yaw, float world[16])
 	const float cy = cosf(yaw);
 	const float sy = sinf(yaw);
 	world[0] = cy;  world[4] = 0.0f; world[8] = sy;   world[12] = pos[0];
-	world[1] = 0.0f; world[5] = 1.0f; world[9] = 0.0f; world[13] = pos[1];
+	world[1] = 0.0f; world[5] = SceneUpSign(); world[9] = 0.0f; world[13] = pos[1];
 	world[2] = -sy; world[6] = 0.0f; world[10] = cy;  world[14] = pos[2];
 	world[3] = 0.0f; world[7] = 0.0f; world[11] = 0.0f; world[15] = 1.0f;
 }
@@ -597,7 +694,163 @@ void TiltSun(float delta)
 	if (s_lightDir[1] > 0.99f) s_lightDir[1] = 0.99f;
 }
 
-void ApplyLightSet()
+/* A published point-light candidate. The list is kept in ascending distance
+   from the shadow centre, so a small cap always keeps the nearest lights. */
+struct PointLightCandidate
+{
+	float position[3];
+	float color[3];
+	float range;
+	float distanceSq;
+};
+
+int PointLightLimit()
+{
+	if (s_pointLightLimit < 1)
+		return 1;
+	if (s_pointLightLimit > PSYX_MODERN_COMPOSITE_POINT_LIGHTS)
+		return PSYX_MODERN_COMPOSITE_POINT_LIGHTS;
+	return s_pointLightLimit;
+}
+
+void InsertPointLight(PointLightCandidate* candidates, int& count, const float position[3],
+	const float color[3], float range, const float centre[3])
+{
+	const float dx = position[0] - centre[0];
+	const float sceneY = SceneUpSign() * position[1];
+	const float dy = sceneY - centre[1];
+	const float dz = position[2] - centre[2];
+	const float distanceSq = dx * dx + dy * dy + dz * dz;
+
+	int at;
+	if (count < kMaxPointLightCandidates)
+	{
+		at = count++;
+	}
+	else
+	{
+		at = kMaxPointLightCandidates - 1;
+		if (distanceSq >= candidates[at].distanceSq)
+			return;
+	}
+
+	while (at > 0 && candidates[at - 1].distanceSq > distanceSq)
+	{
+		candidates[at] = candidates[at - 1];
+		at--;
+	}
+
+	candidates[at].position[0] = position[0];
+	candidates[at].position[1] = sceneY;
+	candidates[at].position[2] = position[2];
+	candidates[at].color[0] = color[0];
+	candidates[at].color[1] = color[1];
+	candidates[at].color[2] = color[2];
+	candidates[at].range = range;
+	candidates[at].distanceSq = distanceSq;
+}
+
+/* The car's collision box, which is the only in-game length reference the
+   modern path has. Its `length` fields are full extents in world units, so the
+   light offsets below are expressed as fractions of the car instead of
+   hard-coded distances that would sit inside or behind it. */
+void CarBoxExtents(const CAR_DATA* cp, float out[3])
+{
+	const float fallback[3] = { 150.0f, 90.0f, 400.0f };
+	for (int i = 0; i < 3; i++)
+	{
+		const float extent = (float)cp->hd.oBox.length[i];
+		out[i] = extent > 1.0f ? extent : fallback[i];
+	}
+}
+
+/* The two headlights of the player car, level with the road just outside the
+   front corners, so the road and whatever the car faces catch the light. The
+   car's forward/right basis comes from its heading exactly like
+   PositionGallery. */
+void AppendHeadlightCandidates(PointLightCandidate* candidates, int& count, const CAR_DATA* cp, const float centre[3])
+{
+	if (cp->hd.where.t == NULL)
+		return;
+
+	const VECTOR* p = (const VECTOR*)cp->hd.where.t;
+	const float pos[3] = { (float)p->vx, (float)p->vy, (float)p->vz };
+	const int dir = cp->hd.direction & 0xFFF;
+	const float forwardX = (float)RSIN(dir) / 4096.0f;
+	const float forwardZ = (float)RCOS(dir) / 4096.0f;
+	const float rightX = forwardZ;
+	const float rightZ = -forwardX;
+	const float color[3] = { 1.0f, 0.92f, 0.72f };
+
+	float box[3];
+	CarBoxExtents(cp, box);
+	const float forwardOffset = box[2];
+	const float lateralOffset = box[0] * 0.8f;
+	const float height = box[1] * 0.9f;
+
+	for (int side = -1; side <= 1; side += 2)
+	{
+		const float light[3] =
+		{
+			pos[0] + forwardX * forwardOffset + rightX * lateralOffset * (float)side,
+			pos[1] + height,
+			pos[2] + forwardZ * forwardOffset + rightZ * lateralOffset * (float)side,
+		};
+		InsertPointLight(candidates, count, light, color, s_pointLightRange, centre);
+	}
+}
+
+/* The light bar of every active police car with a siren, nearest first. The
+   colour follows the phase the game already uses for the drawn flash, so the
+   two agree instead of flashing out of step. */
+void AppendSirenCandidates(PointLightCandidate* candidates, int& count, const float centre[3])
+{
+	for (int i = 0; i < MAX_CARS; i++)
+	{
+		const CAR_DATA* cp = &car_data[i];
+		if (cp->controlType == CONTROL_TYPE_NONE || cp->hd.where.t == NULL)
+			continue;
+		if (cp->controlType != CONTROL_TYPE_PURSUER_AI && (cp->controlFlags & CONTROL_FLAG_COP) == 0)
+			continue;
+		if (CarHasSiren(cp->ap.model) == 0)
+			continue;
+
+		const VECTOR* p = (const VECTOR*)cp->hd.where.t;
+		float box[3];
+		CarBoxExtents(cp, box);
+		const float position[3] = { (float)p->vx, (float)p->vy + box[1] * 1.3f, (float)p->vz };
+		const int red = ((unsigned char)cp->ap.coplife >> 6) & 1;
+		const float color[3] = { red ? 1.0f : 0.15f, red ? 0.16f : 0.25f, red ? 0.10f : 1.0f };
+		InsertPointLight(candidates, count, position, color, s_pointLightRange * 0.75f, centre);
+	}
+}
+
+/* The validation probe: one known light on the player vehicle, in front of and
+   above it, so an acceptance capture has exactly one published point light and
+   no dependence on where the traffic happens to be. */
+void AppendProbeCandidate(PointLightCandidate* candidates, int& count, const float centre[3])
+{
+	const CAR_DATA* cp = (MainPlayer.playerCarId >= 0) ? &car_data[MainPlayer.playerCarId] : NULL;
+	const float color[3] = { 1.0f, 0.85f, 0.55f };
+
+	float position[3] = { centre[0], SceneUpSign() * centre[1] + 300.0f, centre[2] };
+	if (cp && cp->hd.where.t != NULL)
+	{
+		const VECTOR* p = (const VECTOR*)cp->hd.where.t;
+		const int dir = cp->hd.direction & 0xFFF;
+		const float forwardX = (float)RSIN(dir) / 4096.0f;
+		const float forwardZ = (float)RCOS(dir) / 4096.0f;
+		float box[3];
+		CarBoxExtents(cp, box);
+		position[0] = (float)p->vx + forwardX * box[2] * 1.6f;
+		position[1] = (float)p->vy + box[1] * 1.6f;
+		position[2] = (float)p->vz + forwardZ * box[2] * 1.6f;
+	}
+
+	InsertPointLight(candidates, count, position, color, s_pointLightRange, centre);
+}
+
+void ApplyLightSet(float* shadowCentre = NULL, float farExtent = 0.0f)
 {
 	PsyXModernLightSet set;
 	memset(&set, 0, sizeof(set));
@@ -605,7 +858,10 @@ void ApplyLightSet()
 	set.exposure = s_exposure;
 	set.aoEnabled = s_aoEnabled;
 	set.shadowsEnabled = s_shadowsEnabled;
+	set.legacyShadowCastersEnabled = s_legacyShadowCasters && !(s_worldShadowCasters && NumPlayers == 1 &&
+		PsyX_GetRenderBackend() == PSYX_BACKEND_VULKAN);
 	set.shadowExtent = s_shadowExtent;
+	set.shadowFarExtent = farExtent;
 	set.legacyLightingScale = s_legacyLighting ? s_legacyLightReceptivity : 0.0f;
 	if (s_positioned)
 	{
@@ -623,7 +879,7 @@ void ApplyLightSet()
 		if (playerPosition)
 		{
 			set.shadowCenter[0] = (float)playerPosition->vx;
-			set.shadowCenter[1] = (float)playerPosition->vy;
+			set.shadowCenter[1] = SceneUpSign() * (float)playerPosition->vy;
 			set.shadowCenter[2] = (float)playerPosition->vz;
 		}
 		else
@@ -634,18 +890,63 @@ void ApplyLightSet()
 		}
 	}
 
-	// One directional sun; additional point lights could be appended here.
+	// Light 0 is always the directional sun; the point lights below are appended
+	// after it, so the composite's light 0 handling stays the sun.
 	const float len = sqrtf(s_lightDir[0] * s_lightDir[0] + s_lightDir[1] * s_lightDir[1] + s_lightDir[2] * s_lightDir[2]);
 	const float inv = len > 1e-5f ? 1.0f / len : 1.0f;
 	set.count = 1;
 	set.lights[0].type = 0;
 	set.lights[0].direction[0] = s_lightDir[0] * inv;
-	set.lights[0].direction[1] = s_lightDir[1] * inv;
+	set.lights[0].direction[1] = SceneUpSign() * s_lightDir[1] * inv;
 	set.lights[0].direction[2] = s_lightDir[2] * inv;
 	set.lights[0].color[0] = set.lights[0].color[1] = set.lights[0].color[2] = 1.0f;
 	set.lights[0].intensity = s_lightIntensity;
 
+	if (s_pointLights)
+	{
+		PointLightCandidate candidates[kMaxPointLightCandidates];
+		memset(candidates, 0, sizeof(candidates));
+		int candidateCount = 0;
+
+		if (s_pointLightProbe)
+		{
+			AppendProbeCandidate(candidates, candidateCount, set.shadowCenter);
+		}
+		else
+		{
+			if (s_headlights && MainPlayer.playerCarId >= 0)
+				AppendHeadlightCandidates(candidates, candidateCount, &car_data[MainPlayer.playerCarId], set.shadowCenter);
+			if (s_sirenLights)
+				AppendSirenCandidates(candidates, candidateCount, set.shadowCenter);
+		}
+
+		const int limit = PointLightLimit();
+		for (int i = 0; i < candidateCount && i < limit; i++)
+		{
+			const PointLightCandidate& candidate = candidates[i];
+			PsyXModernLight* light = &set.lights[1 + i];
+			light->type = 1;
+			light->position[0] = candidate.position[0];
+			light->position[1] = candidate.position[1];
+			light->position[2] = candidate.position[2];
+			light->color[0] = candidate.color[0];
+			light->color[1] = candidate.color[1];
+			light->color[2] = candidate.color[2];
+			light->intensity = s_pointLightIntensity;
+			light->range = candidate.range;
+			set.count++;
+		}
+
+		s_publishedPointLights = set.count - 1;
+	}
+	else
+	{
+		s_publishedPointLights = 0;
+	}
+
 	PsyX_ModernMesh_SetLights(&set);
+	if (shadowCentre)
+		memcpy(shadowCentre, set.shadowCenter, 3 * sizeof(float));
 }
 
 void DeveloperModernMesh_Initialise(void)
@@ -658,6 +959,8 @@ void DeveloperModernMesh_Initialise(void)
 
 void DeveloperModernMesh_Shutdown(void)
 {
+	DeveloperStaticScene_Shutdown();
+	DeveloperWorldShadow_Clear();
 	for (int i = 0; i < s_fixtureCount; i++)
 	{
 		Fixture* f = &s_fixtures[i];
@@ -703,6 +1006,61 @@ int DeveloperModernMesh_GetShadows(void)
 	return s_shadowsEnabled;
 }
 
+void DeveloperModernMesh_SetStaticUnlit(int enabled)
+{
+	DeveloperStaticScene_SetEnabled(enabled);
+	WriteEnabledState();
+}
+
+void DeveloperModernMesh_SetStaticLighting(int enabled)
+{
+	DeveloperStaticScene_SetLighting(enabled);
+	WriteEnabledState();
+}
+
+void DeveloperModernMesh_SetStaticLightingStrength(float strength)
+{
+	DeveloperStaticScene_SetLightingStrength(strength);
+	WriteEnabledState();
+}
+
+void DeveloperModernMesh_SetStaticSceneLimit(int count)
+{
+	DeveloperStaticScene_SetObjectLimit(count);
+	WriteEnabledState();
+}
+
+void DeveloperModernMesh_SetStaticRange(float range)
+{
+	DeveloperStaticScene_SetRange(range);
+	WriteEnabledState();
+}
+
+void DeveloperModernMesh_SetWorldShadowCasters(int enabled)
+{
+	s_worldShadowCasters = enabled != 0;
+	DeveloperWorldShadow_Clear();
+	ApplyLightSet();
+	WriteEnabledState();
+}
+
+int DeveloperModernMesh_GetWorldShadowCasters(void)
+{
+	return s_worldShadowCasters;
+}
+
+void DeveloperModernMesh_SetLegacyShadowCasters(int enabled)
+{
+	s_legacyShadowCasters = enabled != 0;
+	WriteEnabledState();
+	ApplyLightSet();
+}
+
+int DeveloperModernMesh_GetLegacyShadowCasters(void)
+{
+	return s_legacyShadowCasters;
+}
+
 void DeveloperModernMesh_SetAmbientOcclusion(int enabled)
 {
 	s_aoEnabled = enabled != 0;
@@ -738,6 +1096,96 @@ void DeveloperModernMesh_SetLegacyLightReceptivity(float scale)
 float DeveloperModernMesh_GetLegacyLightReceptivity(void)
 {
 	return s_legacyLightReceptivity;
+}
+
+void DeveloperModernMesh_SetPointLights(int enabled)
+{
+	s_pointLights = enabled != 0;
+	WriteEnabledState();
+	ApplyLightSet();
+}
+
+int DeveloperModernMesh_GetPointLights(void)
+{
+	return s_pointLights;
+}
+
+void DeveloperModernMesh_SetPointLightLimit(int limit)
+{
+	if (limit < 1) limit = 1;
+	if (limit > PSYX_MODERN_COMPOSITE_POINT_LIGHTS) limit = PSYX_MODERN_COMPOSITE_POINT_LIGHTS;
+	s_pointLightLimit = limit;
+	WriteEnabledState();
+	ApplyLightSet();
+}
+
+int DeveloperModernMesh_GetPointLightLimit(void)
+{
+	return PointLightLimit();
+}
+
+void DeveloperModernMesh_SetPointLightRange(float range)
+{
+	if (range < 100.0f) range = 100.0f;
+	if (range > 8000.0f) range = 8000.0f;
+	s_pointLightRange = range;
+	WriteEnabledState();
+	ApplyLightSet();
+}
+
+float DeveloperModernMesh_GetPointLightRange(void)
+{
+	return s_pointLightRange;
+}
+
+void DeveloperModernMesh_SetPointLightIntensity(float intensity)
+{
+	if (intensity < 0.0f) intensity = 0.0f;
+	if (intensity > 4.0f) intensity = 4.0f;
+	s_pointLightIntensity = intensity;
+	WriteEnabledState();
+	ApplyLightSet();
+}
+
+float DeveloperModernMesh_GetPointLightIntensity(void)
+{
+	return s_pointLightIntensity;
+}
+
+void DeveloperModernMesh_SetHeadlights(int enabled)
+{
+	s_headlights = enabled != 0;
+	WriteEnabledState();
+	ApplyLightSet();
+}
+
+int DeveloperModernMesh_GetHeadlights(void)
+{
+	return s_headlights;
+}
+
+void DeveloperModernMesh_SetSirenLights(int enabled)
+{
+	s_sirenLights = enabled != 0;
+	WriteEnabledState();
+	ApplyLightSet();
+}
+
+int DeveloperModernMesh_GetSirenLights(void)
+{
+	return s_sirenLights;
+}
+
+void DeveloperModernMesh_SetPointLightProbe(int enabled)
+{
+	s_pointLightProbe = enabled != 0;
+	WriteEnabledState();
+	ApplyLightSet();
+}
+
+int DeveloperModernMesh_GetPointLightProbe(void)
+{
+	return s_pointLightProbe;
 }
 
 void DeveloperModernMesh_GetSunAngles(float* azimuthDegrees, float* elevationDegrees)
@@ -821,6 +1269,13 @@ void DeveloperModernMesh_SetExposure(float exposure)
 	ApplyLightSet();
 }
 
+int DeveloperModernMesh_GetFarShadows(void) { return s_farShadows; }
+void DeveloperModernMesh_SetFarShadows(int enabled)
+{
+	s_farShadows = enabled != 0;
+	WriteEnabledState();
+}
+
 float DeveloperModernMesh_GetShadowExtent(void)
 {
 	return s_shadowExtent;
@@ -849,7 +1304,7 @@ void DeveloperModernMesh_SetShadowDebugMode(int mode)
 	WriteEnabledState();
 }
 
-void DeveloperModernMesh_Update(void)
+void DeveloperModernMesh_ProcessInput(void)
 {
 	// Edge-detected F10 toggle; avoids synthetic click injection entirely.
 	const Uint8* keys = SDL_GetKeyboardState(NULL);
@@ -924,6 +1379,10 @@ void DeveloperModernMesh_Update(void)
 			ApplyLightSet();
 	}
 
+}
+
+void DeveloperModernMesh_Update(void)
+{
 	// One-shot baseline measurement for the R1 record: the legacy frame's
 	// primitive/draw-split counts and the modern path's submission cost.
 	{
@@ -936,16 +1395,29 @@ void DeveloperModernMesh_Update(void)
 			PsyX_GetRenderStats(&renderStats);
 			PsyXModernMeshStats meshStats;
 			PsyX_ModernMesh_GetStats(&meshStats);
-			printInfo("Baseline: legacyVertices=%d legacyDrawSplits=%d modernMeshes=%d modernVerts=%d modernCalls=%d modernMicros=%d legacyShadowPass=%d legacyLightPass=%d\n",
+			printInfo("Baseline: legacyVertices=%d legacyDrawSplits=%d modernMeshes=%d modernVerts=%d modernCalls=%d modernMicros=%d legacyShadowPass=%d legacyLightPass=%d pointLights=%d legacyCasterCalls=%d legacyCasterTriangles=%d worldCasterTriangles=%d\n",
 				renderStats.vertexCount, renderStats.drawSplitCount,
 				meshStats.meshCount, meshStats.vertexCount, meshStats.drawCalls, meshStats.lastFrameMicros,
-				meshStats.legacyShadowPass, meshStats.legacyLightPass);
+				meshStats.legacyShadowPass, meshStats.legacyLightPass, s_publishedPointLights,
+				meshStats.legacyCasterDrawCalls, meshStats.legacyCasterTriangles, meshStats.worldCasterTriangles);
+
+			// The point-light offsets and ranges are in world units, so the
+			// player car's real half-extents are logged next to them: they are
+			// what the offsets are scaled by and the only in-game length
+			// reference the modern path has.
+			if (MainPlayer.playerCarId >= 0)
+			{
+				const CAR_DATA* cp = &car_data[MainPlayer.playerCarId];
+				printInfo("Baseline: playerCar boxLength=%d,%d,%d\n",
+					cp->hd.oBox.length[0], cp->hd.oBox.length[1], cp->hd.oBox.length[2]);
+			}
 		}
 	}
 
 	if (!s_enabled)
 	{
 		PsyX_ModernMesh_SetEnabled(0);
+		DeveloperWorldShadow_Clear();
 		return;
 	}
 
@@ -975,9 +1447,21 @@ void DeveloperModernMesh_Update(void)
 
 	// Pushed every frame because the shadow centre follows the player vehicle;
 	// the light set itself only changes when the panel or an F-key changes it.
-	ApplyLightSet();
+	float shadowCentre[3];
+	const bool worldShadows = s_worldShadowCasters && s_shadowsEnabled && NumPlayers == 1 &&
+		PsyX_GetRenderBackend() == PSYX_BACKEND_VULKAN;
+	const float farExtent = worldShadows && s_farShadows ?
+		MAX(s_shadowExtent, DeveloperStaticScene_GetRange()) : 0.0f;
+	ApplyLightSet(shadowCentre, farExtent);
 
 	PsyX_ModernMesh_SetEnabled(1);
+	if (worldShadows)
+	{
+		const float effectiveFar = DeveloperWorldShadow_Submit(s_shadowExtent, farExtent);
+		if (effectiveFar != farExtent) ApplyLightSet(shadowCentre, effectiveFar);
+	}
+	else
+		DeveloperWorldShadow_Clear();
 
 	for (int i = 0; i < s_fixtureCount; i++)
 	{
@@ -1001,18 +1485,38 @@ int DeveloperModernMesh_IsVisible(void)
 
 #else // unsupported platform
 
+void DeveloperModernMesh_ProcessInput(void) {}
 void DeveloperModernMesh_Initialise(void) {}
 void DeveloperModernMesh_Shutdown(void) {}
 void DeveloperModernMesh_SetEnabled(int) {}
 int  DeveloperModernMesh_GetEnabled(void) { return 0; }
 void DeveloperModernMesh_SetShadows(int) {}
+void DeveloperModernMesh_SetStaticUnlit(int) {}
+void DeveloperModernMesh_SetWorldShadowCasters(int) {}
+int  DeveloperModernMesh_GetWorldShadowCasters(void) { return 0; }
+void DeveloperModernMesh_SetLegacyShadowCasters(int) {}
+int  DeveloperModernMesh_GetLegacyShadowCasters(void) { return 0; }
 int  DeveloperModernMesh_GetShadows(void) { return 0; }
 void DeveloperModernMesh_SetAmbientOcclusion(int) {}
 int  DeveloperModernMesh_GetAmbientOcclusion(void) { return 0; }
 void DeveloperModernMesh_SetLegacyLighting(int) {}
 int  DeveloperModernMesh_GetLegacyLighting(void) { return 0; }
-void DeveloperModernMesh_SetLegacyLightReceptivity(float) {}
+void  DeveloperModernMesh_SetLegacyLightReceptivity(float) {}
 float DeveloperModernMesh_GetLegacyLightReceptivity(void) { return 0.0f; }
+void  DeveloperModernMesh_SetPointLights(int) {}
+int   DeveloperModernMesh_GetPointLights(void) { return 0; }
+void  DeveloperModernMesh_SetPointLightLimit(int) {}
+int   DeveloperModernMesh_GetPointLightLimit(void) { return 0; }
+void  DeveloperModernMesh_SetPointLightRange(float) {}
+float DeveloperModernMesh_GetPointLightRange(void) { return 0.0f; }
+void  DeveloperModernMesh_SetPointLightIntensity(float) {}
+float DeveloperModernMesh_GetPointLightIntensity(void) { return 0.0f; }
+void  DeveloperModernMesh_SetHeadlights(int) {}
+int   DeveloperModernMesh_GetHeadlights(void) { return 0; }
+void  DeveloperModernMesh_SetSirenLights(int) {}
+int   DeveloperModernMesh_GetSirenLights(void) { return 0; }
+void  DeveloperModernMesh_SetPointLightProbe(int) {}
+int   DeveloperModernMesh_GetPointLightProbe(void) { return 0; }
 void DeveloperModernMesh_GetSunAngles(float* azimuthDegrees, float* elevationDegrees)
 {
 	if (azimuthDegrees) *azimuthDegrees = 0.0f;
@@ -1025,6 +1529,8 @@ float DeveloperModernMesh_GetAmbient(void) { return 0.0f; }
 void DeveloperModernMesh_SetAmbient(float) {}
 float DeveloperModernMesh_GetExposure(void) { return 1.0f; }
 void DeveloperModernMesh_SetExposure(float) {}
+int DeveloperModernMesh_GetFarShadows(void) { return 0; }
+void DeveloperModernMesh_SetFarShadows(int) {}
 float DeveloperModernMesh_GetShadowExtent(void) { return 0.0f; }
 void DeveloperModernMesh_SetShadowExtent(float) {}
 int  DeveloperModernMesh_GetShadowDebug(void) { return 0; }

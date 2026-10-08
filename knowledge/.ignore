@@ -1,0 +1,3 @@
+# Exclude historical ideas from normal ripgrep discovery and searches.
+# This is not a Git ignore; archived documents remain versioned.
+outdated-ideas/

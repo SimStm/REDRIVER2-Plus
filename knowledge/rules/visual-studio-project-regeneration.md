@@ -25,6 +25,13 @@ Therefore:
 - Before regenerating, back up `src_rebuild/build` and
   `src_rebuild/dependencies/jpeg-9d/jpeg.vcxproj`; after regenerating, restore
   the hand-added configurations or re-add them.
+- Resolve backup paths against the repository root **before** switching to
+  `src_rebuild`, verify every expected backup exists and abort generation if one
+  is missing. Relative `src_rebuild/build` paths from that working directory
+  silently target the wrong nested directory.
+- If restoring XML blocks programmatically, preserve the existing MSBuild
+  namespace. Redundant `xmlns` attributes on cloned child nodes caused MSB4066
+  during R00 recovery; remove redundant declarations before loading/building.
 - Re-adding means cloning every `Release_dev` block for both platforms -
   `ProjectConfiguration Include`, the `Configuration` `PropertyGroup`, the
   `ImportGroup` (its `Condition` comes **after** `Label`, so a
@@ -41,3 +48,9 @@ Therefore:
 
 The OpenGL renderer does not need the `Release_dev_gl` configuration: it is
 selected at runtime with the `-opengl` flag on `REDRIVER2_dev.exe`.
+
+**When** an asynchronous IDE build is active, **then** wait for `build_status`
+to report `Done` before closing/reloading the solution or changing its `.user`
+file. Closing during a build opens a modal warning and can leave the MCP close
+call waiting even after compilation finishes. Confirm the build result first;
+dismiss an observed warning through desktop MCP if recovery is needed.

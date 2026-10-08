@@ -7,6 +7,11 @@ tags: [okf, discussions, agents, documentation]
 
 # Maintain evolving discussion records
 
+Rendering is the user-requested location exception: its active synthesis and
+stage decisions live in `knowledge/rendering/`. Apply the same evidence/history
+discipline there. Exclude archived former discussions under
+`knowledge/outdated-ideas/**` unless explicitly requested.
+
 **When** a project conversation materially develops an architectural direction,
 tradeoff, or multi-stage technical investigation, **then** read the discussion
 catalog and create or update `knowledge/discussions/<subject>/index.md` in the

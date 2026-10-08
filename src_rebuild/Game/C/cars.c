@@ -22,6 +22,7 @@
 
 #ifndef PSX
 #include "assetcatalog.h"
+#include "../utils/DeveloperRenderCoverage.h"
 #include "PsyX/PsyX_public.h"
 #include <string>
 #include "../../utils/InspectorExport.h"
@@ -569,6 +570,9 @@ void ComputeCarLightingLevels(CAR_DATA* cp, char detail)
 // [D] [T]
 void DrawWheelObject(MODEL* model, SVECTOR* verts, int transparent, int wheelnum)
 {
+#ifndef PSX
+	const void* coverageBegin = current->primptr;
+#endif
 	ushort clut;
 	ushort tpage;
 	int i;
@@ -650,6 +654,9 @@ void DrawWheelObject(MODEL* model, SVECTOR* verts, int transparent, int wheelnum
 		src++;
 	}
 	current->primptr = (char*)poly;
+#ifndef PSX
+	DeveloperRenderCoverage_RecordLegacy(RENDER_CATEGORY_WHEELS, coverageBegin, current->primptr);
+#endif
 }
 
 // [D] [T]
@@ -1468,6 +1475,7 @@ void DrawCarObject(CAR_MODEL* car, MATRIX* matrix, VECTOR* pos, int palette, CAR
 	inspectorObject.polygonCount = car->numFT3 + car->numGT3 + car->numB3;
 	for (int i = 0; i < 3; ++i) inspectorObject.position[i] = cp->hd.where.t[i];
 	PsyX_Inspector_RegisterObjectRange(primitiveBegin, current->primptr, inspectorLabel, &inspectorObject);
+	DeveloperRenderCoverage_RecordLegacy(RENDER_CATEGORY_CAR_BODY_DAMAGE, primitiveBegin, current->primptr);
 #endif
 }
 

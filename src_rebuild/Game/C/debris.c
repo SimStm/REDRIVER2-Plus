@@ -1,5 +1,6 @@
 #include "driver2.h"
 #include "debris.h"
+#include "../utils/DeveloperRenderCoverage.h"
 #include "motion_c.h"
 #include "texture.h"
 #include "pres.h"
@@ -1327,6 +1328,9 @@ int MoveSmashable_object(void)
 // [D] [T]
 void DisplayLightReflections(VECTOR* v1, CVECTOR* col, short size, TEXTURE_DETAILS* texture)
 {
+#ifndef PSX
+	const void* coverageBegin = current->primptr;
+#endif
 	POLY_FT4* poly;
 	SVECTOR vert[4];
 	CVECTOR thiscol;
@@ -1402,6 +1406,9 @@ void DisplayLightReflections(VECTOR* v1, CVECTOR* col, short size, TEXTURE_DETAI
 			current->primptr += sizeof(POLY_FT4);
 		}
 	}
+#ifndef PSX
+	DeveloperRenderCoverage_RecordLegacy(RENDER_CATEGORY_SECONDARY, coverageBegin, current->primptr);
+#endif
 }
 
 // [D] [T]
@@ -2421,6 +2428,9 @@ void ShowGroundLight(VECTOR *v1, CVECTOR *col, short size)
 // [D] [T]
 void RoundShadow(VECTOR *v1, CVECTOR *col, short size)
 {
+#ifndef PSX
+	const void* coverageBegin = current->primptr;
+#endif
 	POLY_FT4* poly;
 	SVECTOR vert[4];
 	int z;
@@ -2489,6 +2499,9 @@ void RoundShadow(VECTOR *v1, CVECTOR *col, short size)
 		addPrim(current->ot + (z >> 3), poly);
 		current->primptr += sizeof(POLY_FT4);
 	}
+#ifndef PSX
+	DeveloperRenderCoverage_RecordLegacy(RENDER_CATEGORY_DECALS, coverageBegin, current->primptr);
+#endif
 }
 
 // [D] [T weird and unused]

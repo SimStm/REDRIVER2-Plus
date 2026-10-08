@@ -75,7 +75,7 @@ An imported texture's own transparency level must be interpreted and applied:
 ## Non-goals
 
 - PBR, normal maps or a modern material system; that belongs to
-  [renderer modernization](../planned/renderer-modernization.md).
+  [renderer modernization](../planned/native-vulkan-renderer.md).
 - Fading additive/subtractive effects through alpha (use colour).
 - Changing original, non-overridden PSX draws or their sampling.
 - Authoring UI beyond a flag that selects the cutout policy.

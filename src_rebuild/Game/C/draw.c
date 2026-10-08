@@ -18,6 +18,9 @@
 #include "playground.h"
 #ifndef PSX
 #include "assetcatalog.h"
+#include "../utils/DeveloperStaticScene.h"
+#include "../utils/DeveloperNativeAssets.h"
+#include "../utils/DeveloperRenderCoverage.h"
 #include "PsyX/PsyX_public.h"
 #endif
 
@@ -308,6 +311,7 @@ void DrawSprites(PACKED_CELL_OBJECT** sprites, int numFound)
 		// billboard as a resource-backed object like the other producers do, so
 		// the whole sprite selects as one object. The ground shadow that follows
 		// is deliberately left outside the range.
+		DeveloperRenderCoverage_RecordLegacy(RENDER_CATEGORY_FOLIAGE, spriteBegin, plotContext.primptr);
 		if (plotContext.primptr != spriteBegin)
 		{
 			PsyXInspectorObject inspectorObject = {};
@@ -353,11 +357,17 @@ void DrawSprites(PACKED_CELL_OBJECT** sprites, int numFound)
 		{
 			gte_SetRotMatrix(&shadowMatrix);
 
+#ifndef PSX
+			const void* shadowBegin = plotContext.primptr;
+#endif
 			addSubdivSpriteShadow(GET_MODEL_DATA(POLYFT4, model, poly_block), GET_MODEL_DATA(SVECTOR, model, vertices), z);
 
 			if (model->num_polys == 2)
 				addSubdivSpriteShadow(GET_MODEL_DATA(POLYFT4, model, poly_block) + 1, GET_MODEL_DATA(SVECTOR, model, vertices), z);
 
+#ifndef PSX
+			DeveloperRenderCoverage_RecordLegacy(RENDER_CATEGORY_DECALS, shadowBegin, plotContext.primptr);
+#endif
 			gte_SetRotMatrix(&face_camera);
 
 			numShadows++;
@@ -1040,6 +1050,10 @@ int DrawAllBuildings(CELL_OBJECT** objects, int num_buildings)
 
 		model = Z > DRAW_LOD_DIST_LOW ? pLodModels[cop->type] : modelpointers[cop->type];
 
+#ifndef PSX
+		DeveloperNativeAssets_ObserveBuilding(cop, model);
+#endif
+
 		zbias = model->zBias - 64;
 
 		if (zbias < 0)
@@ -1051,12 +1065,18 @@ int DrawAllBuildings(CELL_OBJECT** objects, int num_buildings)
 		const void* inspectorBegin = plotContext.primptr;
 #endif
 
-		if(Z <= DRAW_LOD_DIST_HIGH)
+		bool sourceDrawn = false;
+#ifndef PSX
+		sourceDrawn = DeveloperStaticScene_TryDraw(cop, model, &plotContext) != 0;
+		if (sourceDrawn) DeveloperRenderCoverage_RecordExperimental(RENDER_CATEGORY_SCENERY);
+#endif
+		if (!sourceDrawn && Z <= DRAW_LOD_DIST_HIGH)
 			PlotBuildingModelSubdivNxN(model, cop->yang, &plotContext, 1);
-		else
+		else if (!sourceDrawn)
 			PlotBuildingModel(model, cop->yang, &plotContext);
 
 #ifndef PSX
+		if (!sourceDrawn) DeveloperRenderCoverage_RecordLegacy(RENDER_CATEGORY_SCENERY, inspectorBegin, plotContext.primptr);
 		PsyXInspectorObject inspectorObject = {};
 		char catalogModelId[ASSET_CATALOG_ID_CAPACITY];
 		if (AssetCatalog_MakeModelId(cop->type, catalogModelId, sizeof(catalogModelId)))
@@ -1470,6 +1490,10 @@ void DrawMapPSX(int* comp_val)
 
 					if (FrustrumCheck16(ppco, model->bounding_sphere) != -1)
 					{
+#ifndef PSX
+						// Read-only candidate accounting before queue limits/conversion.
+						DeveloperNativeAssets_ObserveRegionView(ppco);
+#endif
 						// sprity type
 						if (model->shape_flags & SHAPE_FLAG_SPRITE)
 						{
@@ -1612,7 +1636,7 @@ void DrawMapPSX(int* comp_val)
 	SetupPlaneColours(combointensity);
 
 	if (drawData.anim_objs_found)
-		DrawAllAnimatingObjects((CELL_OBJECT**)anim_obj_buffer, drawData.anim_objs_found);
+		DEVELOPER_COVERAGE_DRAW(RENDER_CATEGORY_ANIMATED_PROPS, DrawAllAnimatingObjects((CELL_OBJECT**)anim_obj_buffer, drawData.anim_objs_found));
 
 	if (drawData.sprites_found)
 		DrawSprites((PACKED_CELL_OBJECT**)spriteList, drawData.sprites_found);
@@ -1622,6 +1646,10 @@ void DrawMapPSX(int* comp_val)
 
 	if (drawData.other_models_found)
 		DrawAllBuildings((CELL_OBJECT**)model_object_ptrs, drawData.other_models_found);
+
+#ifndef PSX
+	DeveloperStaticScene_SubmitExtended();
+#endif
 
 	setupYet = 0;
 }

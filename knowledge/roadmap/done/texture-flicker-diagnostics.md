@@ -55,7 +55,7 @@ Do not assume alpha or mipmaps alone explain every flicker. Do not apply global 
 
 ## Dependencies and risks
 
-Order 02. Diagnostic capture may precede [01](../done/texture-alpha-semantics.md), but assess the final result after its correctness fix. Feed measured budgets into [11](../planned/draw-distance-streaming.md) and [12](../planned/graphics-quality-profiles.md).
+Order 02. Diagnostic capture may precede [01](../done/texture-alpha-semantics.md), but assess the final result after its correctness fix. Feed measured budgets into [11](../../rendering/stages/04-city-residency-and-distance.md) and [12](../../rendering/stages/08-anti-aliasing-and-image-quality.md).
 
 ## Suggested execution order
 

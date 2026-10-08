@@ -665,6 +665,11 @@ void init_spooled_models(void)
 
 		modelpointers[model_number] = model;
 		pLodModels[model_number] = model;
+#ifndef PSX
+		// The last loaded sector contains the model-number list, not model bytes.
+		const size_t remainingModelBytes = (char*)newmodels > (char*)model ? (size_t)((char*)newmodels - (char*)model) : 0;
+		Models_SetSourceSize(model_number, size >= (int)sizeof(MODEL) && (size_t)size <= remainingModelBytes ? (unsigned int)size : 0);
+#endif
 
 		lod = Low2LowerDetailTable[model_number];
 

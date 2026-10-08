@@ -1,5 +1,7 @@
 #include "driver2.h"
 #include "sky.h"
+#include "../utils/DeveloperRenderCoverage.h"
+#include "../utils/DeveloperNativeBackdrop.h"
 #include "system.h"
 #include "mission.h"
 #include "models.h"
@@ -875,6 +877,22 @@ void PlotSkyPoly(POLYFT4* polys, int skytexnum, unsigned char r, unsigned char g
 // [D] [T]
 void PlotHorizonMDL(MODEL* model, int horizontaboffset, RGB16* skycolor)
 {
+#ifndef PSX
+	if (horizontaboffset >= 0 && horizontaboffset < 40)
+	{
+		DeveloperNativeBackdropSource source = {};
+		source.model = model;
+		source.textures = HorizonTextures + horizontaboffset;
+		source.textureCount = 40 - horizontaboffset;
+		source.uv = (const unsigned char*)skytexuv;
+		source.uvCount = 28;
+		source.pages = (const unsigned short*)skytpage;
+		source.cluts = (const unsigned short*)skyclut;
+		source.color[0] = skycolor->r; source.color[1] = skycolor->g; source.color[2] = skycolor->b;
+		source.verticalOffset = sky_y_offset[GameLevel];
+		DeveloperNativeBackdrop_Observe(&source);
+	}
+#endif
 	SVECTOR* verts;
 
 #if USE_PGXP
@@ -946,7 +964,7 @@ void PlotHorizonMDL(MODEL* model, int horizontaboffset, RGB16* skycolor)
 		// draw it's reflection
 		do
 		{
-			PlotSkyPoly((POLYFT4*)polys, *horizonTex++, red, green, blue);
+			DEVELOPER_COVERAGE_DRAW(RENDER_CATEGORY_SECONDARY, PlotSkyPoly((POLYFT4*)polys, *horizonTex++, red, green, blue));
 			polys += polySize;
 		} while (--count);
 	}

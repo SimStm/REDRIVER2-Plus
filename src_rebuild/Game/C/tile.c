@@ -10,6 +10,8 @@
 
 #ifndef PSX
 #include "assetcatalog.h"
+#include "../utils/DeveloperRenderCoverage.h"
+#include "../utils/DeveloperNativeAssets.h"
 #include "PsyX/PsyX_public.h"
 #endif
 
@@ -294,6 +296,10 @@ void DrawTILES(PACKED_CELL_OBJECT** tiles, int tile_amount)
 
 			pModel = modelpointers[model_number];
 
+#ifndef PSX
+			DeveloperNativeAssets_ObserveTile(ppco, pModel);
+#endif
+
 			if (Z < 2000)
 				TileNxN(pModel, 4, 75);
 			else
@@ -302,6 +308,10 @@ void DrawTILES(PACKED_CELL_OBJECT** tiles, int tile_amount)
 		else
 		{
 			pModel = Z > DRAW_LOD_DIST_LOW ? pLodModels[model_number] : modelpointers[model_number];
+
+#ifndef PSX
+			DeveloperNativeAssets_ObserveTile(ppco, pModel);
+#endif
 			
 #ifdef DYNAMIC_LIGHTING
 			(gEnableDlights ? Tile1x1Lit : Tile1x1)(pModel);
@@ -312,6 +322,8 @@ void DrawTILES(PACKED_CELL_OBJECT** tiles, int tile_amount)
 
 #ifndef PSX
 		char inspectorLabel[PSYX_INSPECTOR_LABEL_LENGTH];
+		DeveloperRenderCoverage_RecordLegacy((pModel->shape_flags & SHAPE_FLAG_WATER) ? RENDER_CATEGORY_WATER : RENDER_CATEGORY_ROAD,
+			primitiveBegin, plotContext.primptr);
 		PsyXInspectorObject inspectorObject = {};
 		char catalogModelId[ASSET_CATALOG_ID_CAPACITY];
 		if (AssetCatalog_MakeModelId(sourceModelNumber, catalogModelId, sizeof(catalogModelId)))

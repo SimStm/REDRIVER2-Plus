@@ -1,5 +1,6 @@
 #include "driver2.h"
 #include "overmap.h"
+#include "../utils/DeveloperRenderCoverage.h"
 #include "texture.h"
 #include "cars.h"
 #include "system.h"
@@ -1803,6 +1804,10 @@ void DrawFullscreenMap(void)
 	// print string with special characters representing some images inserted into it
 	sprintf(str, "\x80 %s \x81 %s \x8a %s", G_LTXT(GTXT_Back), G_LTXT(GTXT_Rotation), G_LTXT(GTXT_Move));
 	PrintStringCentred(str, SCREEN_H - 30); // 226
+#ifndef PSX
+	// This phase submits immediate map packets as well as buffered labels.
+	DeveloperRenderCoverage_RecordDirect(RENDER_CATEGORY_HUD, 1);
+#endif
 }
 
 // [D] [T]

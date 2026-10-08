@@ -1,5 +1,6 @@
 #include "driver2.h"
 #include "event.h"
+#include "../utils/DeveloperRenderCoverage.h"
 #include "cars.h"
 #include "players.h"
 #include "mc_snd.h"
@@ -3108,7 +3109,7 @@ void DrawEvents(int camera)
 
 									SetupPlaneColours(0x00464a40);
 
-									RenderModel(modelpointers[ev->model], &matrix, &pos, 400, PLOT_INV_CULL, 1, ev->rotation >> 6);
+									DEVELOPER_COVERAGE_DRAW(RENDER_CATEGORY_SECONDARY, RenderModel(modelpointers[ev->model], &matrix, &pos, 400, PLOT_INV_CULL, 1, ev->rotation >> 6));
 								}
 								else
 								{

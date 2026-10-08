@@ -39,9 +39,10 @@ playground first as the test environment for renderer modernization. This
 request creates roadmap records; it does not start implementation.
 
 - [Playground discussion and source investigation](../../discussions/playable-testing-playground/index.md)
-- [Renderer modernization roadmap](../planned/renderer-modernization.md): depends on the
-  minimum playground handoff below before its first in-game modern mesh slice.
-- [Renderer discussion](../../discussions/renderer-modernization/index.md)
+- [Native rendering replacement roadmap](../planned/native-vulkan-renderer.md):
+  uses this implemented fixture alongside original-city tests. The former
+  playground-first graphics dependency was superseded on 2026-10-06.
+- [Active rendering architecture and stages](../../rendering/index.md)
 
 ## Scope
 

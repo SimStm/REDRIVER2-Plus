@@ -31,6 +31,23 @@ history entry. Follow [`discussion-records.md`](knowledge/rules/discussion-recor
 Exploration belongs there until the user adopts a concrete roadmap scope;
 a discussion does not authorize implementation or establish shipped behaviour.
 
+## Active rendering plan and excluded history
+
+The user-requested rendering architecture and implementation plan live in
+[`knowledge/rendering/`](knowledge/rendering/index.md), with the lifecycle owner
+[`native-vulkan-renderer.md`](knowledge/roadmap/planned/native-vulkan-renderer.md).
+Read its current-state note and chosen stage before graphics work; R00-R12 are
+planned, not implemented. This dedicated directory is the rendering exception
+to the normal discussion location; update it after material rendering discussions.
+
+Exclude `knowledge/outdated-ideas/**` from routine discovery, recursive searches,
+analysis and agent context. Read archived contents only if the user explicitly
+requests historical review; following a link is not authorization. Archived
+rules and priorities do not govern the native renderer. Archive path/hash/link checks
+are allowed for maintenance. See
+[`rendering-knowledge-and-archive.md`](knowledge/rules/rendering-knowledge-and-archive.md).
+Keep the mandatory Vulkan-to-OpenGL backlog active at its existing path.
+
 ## Persistent Engineering Context
 
 - Read [`knowledge/CURRENT_STATUS.md`](knowledge/CURRENT_STATUS.md) and
@@ -100,7 +117,8 @@ point math, timing, or rendering can affect compatibility.
 - Premake 5 generates project files. Generated output lives below
   `src_rebuild/build/`, `src_rebuild/project_*`, and `src_rebuild/bin/`; edit
   Premake scripts or source, not generated IDE files.
-- Desktop rendering uses OpenGL through PsyCross. SDL2 provides the window and
+- Desktop rendering defaults to Vulkan through PsyCross, with an OpenGL fallback.
+  SDL2 provides the window and
   input layer; OpenAL Soft provides audio; libjpeg is used by the game.
 - Supported build targets include Windows, Linux, Emscripten/web, and Android
   NDK. A change that is desktop-only must be guarded in Premake and source so
@@ -176,6 +194,19 @@ screenshots to learn the state instead of waiting on the process handle.
 - Keep generic hooks in PsyCross and game-specific UI or behaviour in
   `src_rebuild`. Public PsyCross changes must retain C-compatible declarations
   where they are consumed by C or mixed C/C++ game code.
+
+## Vulkan-first development and deferred OpenGL compatibility
+
+- Focus current renderer work on Vulkan; defer OpenGL implementation until the
+  user requests it. Preserve the existing OpenGL path and shared platform guards.
+- Every Vulkan modification must be documented in
+  `knowledge/roadmap/planned/port-vulkan-to-opengl-compatibility.md` in the same
+  change, including fixes, shaders, shared interfaces, build and tooling changes.
+  Record the affected files, behaviour, actual validation, and the OpenGL work
+  needed; if no port is applicable, explain why explicitly.
+- This compatibility backlog has no roadmap priority, execution order, deadline,
+  or dependency that blocks Vulkan work. See
+  `knowledge/rules/vulkan-opengl-port-tracking.md` for the recording format.
 
 ## Developer graphics panel
 

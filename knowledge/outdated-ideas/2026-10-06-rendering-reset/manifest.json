@@ -1,0 +1,357 @@
+{
+  "date": "2026-10-06",
+  "purpose": "User-authorized rendering documentation reset; historical documents excluded from routine analysis",
+  "files": [
+    {
+      "original": "knowledge/discussions/renderer-modernization/exploration-sequence.md",
+      "archived": "knowledge/outdated-ideas/2026-10-06-rendering-reset/discussions/renderer-modernization/exploration-sequence.md",
+      "originalSha256": "717612d0ec79de1985fa1c8d4caae00c499480286de84a7ba86157ba31f80679",
+      "bytes": 14307,
+      "finalSha256": "8515287ca9131bad24ea6d6cc2e5a8ada89130c6b7421303501165260994f7a2"
+    },
+    {
+      "original": "knowledge/discussions/renderer-modernization/geometry-shadows-and-distance.md",
+      "archived": "knowledge/outdated-ideas/2026-10-06-rendering-reset/discussions/renderer-modernization/geometry-shadows-and-distance.md",
+      "originalSha256": "4b2da7dbed2273facc6e8ccdeb7eaa4299c69216c944ea169198969112d56ae3",
+      "bytes": 27504,
+      "finalSha256": "56dc6d8f962295f1dd323c93d86d99ee12a130da379182744f881082c8c11ea3"
+    },
+    {
+      "original": "knowledge/discussions/renderer-modernization/index.md",
+      "archived": "knowledge/outdated-ideas/2026-10-06-rendering-reset/discussions/renderer-modernization/index.md",
+      "originalSha256": "2c2881bff8761b51ed037451ebc3e385f4d462c824a2603139f340cf74c802d4",
+      "bytes": 62500,
+      "finalSha256": "2ec1a452ff705f14f9e521cbe60e5ec2b09c7458d99adfecbf95737cab47ab67"
+    },
+    {
+      "original": "knowledge/discussions/renderer-modernization/shadow-lighting-foundation.md",
+      "archived": "knowledge/outdated-ideas/2026-10-06-rendering-reset/discussions/renderer-modernization/shadow-lighting-foundation.md",
+      "originalSha256": "e606a232205159bf9514c263a74d7b9a1ddb4ca5e4c7467c0158553c18d47e17",
+      "bytes": 13737,
+      "finalSha256": "e34c1e53bd90f2f490dfbadcad576c690be927770aaea8a03fe72d036f85f4bb"
+    },
+    {
+      "original": "knowledge/discussions/renderer-modernization/diagrams/exploration-sequence.png",
+      "archived": "knowledge/outdated-ideas/2026-10-06-rendering-reset/discussions/renderer-modernization/diagrams/exploration-sequence.png",
+      "originalSha256": "56bb38062e0c75316847ad1ec53817901bf4459663442a1775332771f2edd3d9",
+      "bytes": 179355,
+      "finalSha256": "56bb38062e0c75316847ad1ec53817901bf4459663442a1775332771f2edd3d9"
+    },
+    {
+      "original": "knowledge/discussions/renderer-modernization/diagrams/proposed-architecture.png",
+      "archived": "knowledge/outdated-ideas/2026-10-06-rendering-reset/discussions/renderer-modernization/diagrams/proposed-architecture.png",
+      "originalSha256": "7c1ef0483905fc02bfa4a081a84e914215acee1b8054a13c7a1097519e45044b",
+      "bytes": 129863,
+      "finalSha256": "7c1ef0483905fc02bfa4a081a84e914215acee1b8054a13c7a1097519e45044b"
+    },
+    {
+      "original": "knowledge/discussions/renderer-modernization/diagrams/render_diagrams.py",
+      "archived": "knowledge/outdated-ideas/2026-10-06-rendering-reset/discussions/renderer-modernization/diagrams/render_diagrams.py",
+      "originalSha256": "406f02523a4e3b1f86c25ae453b4101098745dc2c3cf60ddd1fc365d007d3b23",
+      "bytes": 6882,
+      "finalSha256": "406f02523a4e3b1f86c25ae453b4101098745dc2c3cf60ddd1fc365d007d3b23"
+    },
+    {
+      "original": "knowledge/discussions/high-fps-timestep/index.md",
+      "archived": "knowledge/outdated-ideas/2026-10-06-rendering-reset/discussions/high-fps-timestep/index.md",
+      "originalSha256": "5f1bd9c8b04b1acf61e29c11cb6db97859a8af486c24ebbd6948a46a17062c6d",
+      "bytes": 11710,
+      "finalSha256": "5f1bd9c8b04b1acf61e29c11cb6db97859a8af486c24ebbd6948a46a17062c6d"
+    },
+    {
+      "original": "knowledge/changes/2026-09-15/playground-renderer-roadmaps/index.md",
+      "archived": "knowledge/outdated-ideas/2026-10-06-rendering-reset/changes/2026-09-15/playground-renderer-roadmaps/index.md",
+      "originalSha256": "ba1b34a29ef8cda2e9744637929a5c3987975cf311053c43d7a75fec8293aa1e",
+      "bytes": 2175,
+      "finalSha256": "ba1b34a29ef8cda2e9744637929a5c3987975cf311053c43d7a75fec8293aa1e"
+    },
+    {
+      "original": "knowledge/changes/2026-09-18/vulkan-game-path-and-frame-mirror/index.md",
+      "archived": "knowledge/outdated-ideas/2026-10-06-rendering-reset/changes/2026-09-18/vulkan-game-path-and-frame-mirror/index.md",
+      "originalSha256": "dcf746849484e954e38d5e219ebdef1e51f66ac157ece297f6aa2cfc538511c3",
+      "bytes": 3751,
+      "finalSha256": "dcf746849484e954e38d5e219ebdef1e51f66ac157ece297f6aa2cfc538511c3"
+    },
+    {
+      "original": "knowledge/changes/2026-09-18/vulkan-render-fix-and-psx-path/index.md",
+      "archived": "knowledge/outdated-ideas/2026-10-06-rendering-reset/changes/2026-09-18/vulkan-render-fix-and-psx-path/index.md",
+      "originalSha256": "8a11906686ec205d8880a7496fe49f970fe68d2987c1a8e138ea7bcc1b407e2d",
+      "bytes": 4638,
+      "finalSha256": "8a11906686ec205d8880a7496fe49f970fe68d2987c1a8e138ea7bcc1b407e2d"
+    },
+    {
+      "original": "knowledge/changes/2026-09-20/legacy-lighting-receptivity/index.md",
+      "archived": "knowledge/outdated-ideas/2026-10-06-rendering-reset/changes/2026-09-20/legacy-lighting-receptivity/index.md",
+      "originalSha256": "b85f2ffe2623e218a4ba6d74b3b1ca0413a6c171af9a066a4b5d2eb91191b483",
+      "bytes": 5297,
+      "finalSha256": "e4868a01da40ca055913516a3e09a3371fc8e401f7dd38c0032f58ef6865214c"
+    },
+    {
+      "original": "knowledge/changes/2026-09-20/vulkan-renderer-debt/index.md",
+      "archived": "knowledge/outdated-ideas/2026-10-06-rendering-reset/changes/2026-09-20/vulkan-renderer-debt/index.md",
+      "originalSha256": "3d26f6a12c58fd65e777dc698b8d43be9c4a2a0b9db5f07332ab2a9acf277f21",
+      "bytes": 4963,
+      "finalSha256": "a5f0703cd2a87c2f7477c5338cd9ffdf1c9d69af0d696dd99abba920ea65cc89"
+    },
+    {
+      "original": "knowledge/changes/2026-09-20/vulkan-ui-state-parity/index.md",
+      "archived": "knowledge/outdated-ideas/2026-10-06-rendering-reset/changes/2026-09-20/vulkan-ui-state-parity/index.md",
+      "originalSha256": "4d75b05ca865b02ed88e8212db85415702c26b834180316892431dbd4ad67c36",
+      "bytes": 1836,
+      "finalSha256": "3077547167768a91717628f85709c78996199463b04477ea84ac34bdfcd10ac2"
+    },
+    {
+      "original": "knowledge/changes/2026-09-21/frame-submission-profiling/index.md",
+      "archived": "knowledge/outdated-ideas/2026-10-06-rendering-reset/changes/2026-09-21/frame-submission-profiling/index.md",
+      "originalSha256": "fada8d8b650d380355e900f3df71b880fe47ece6816b0ac413352b34f4b54813",
+      "bytes": 3093,
+      "finalSha256": "fada8d8b650d380355e900f3df71b880fe47ece6816b0ac413352b34f4b54813"
+    },
+    {
+      "original": "knowledge/changes/2026-09-21/lighting-and-panel-followup/index.md",
+      "archived": "knowledge/outdated-ideas/2026-10-06-rendering-reset/changes/2026-09-21/lighting-and-panel-followup/index.md",
+      "originalSha256": "a8953fa37986875f37321da40f1c70abb4e55f8bf9cfc9fd4a767d8651ceadc0",
+      "bytes": 5289,
+      "finalSha256": "7ec0176c2721948610a58b84677505c455e7a068bab1e0db7ab806dc02075b81"
+    },
+    {
+      "original": "knowledge/changes/2026-09-21/modern-overlay-composition/index.md",
+      "archived": "knowledge/outdated-ideas/2026-10-06-rendering-reset/changes/2026-09-21/modern-overlay-composition/index.md",
+      "originalSha256": "3fceba91dfb8181eea59253897461169867e6ce88f6f77f2221c9293b28af80f",
+      "bytes": 4776,
+      "finalSha256": "3fceba91dfb8181eea59253897461169867e6ce88f6f77f2221c9293b28af80f"
+    },
+    {
+      "original": "knowledge/changes/2026-09-21/point-light-sources/index.md",
+      "archived": "knowledge/outdated-ideas/2026-10-06-rendering-reset/changes/2026-09-21/point-light-sources/index.md",
+      "originalSha256": "0c60c9ccb9ff301e004f4e5333745c919e7cc072dfc4093a1332486ec3483f4d",
+      "bytes": 6951,
+      "finalSha256": "1b09be085440475f4d0fa3543261e3a0dd83b0233b57b4a3cf9b3afffde19476"
+    },
+    {
+      "original": "knowledge/changes/2026-09-21/shadow-receive-parity/index.md",
+      "archived": "knowledge/outdated-ideas/2026-10-06-rendering-reset/changes/2026-09-21/shadow-receive-parity/index.md",
+      "originalSha256": "67757a4a853b95eb8e796da2a1bf9f66d9453be6b94ee2352b947b914b21838a",
+      "bytes": 3239,
+      "finalSha256": "67757a4a853b95eb8e796da2a1bf9f66d9453be6b94ee2352b947b914b21838a"
+    },
+    {
+      "original": "knowledge/changes/2026-09-21/shadow-volume-texel-snap/index.md",
+      "archived": "knowledge/outdated-ideas/2026-10-06-rendering-reset/changes/2026-09-21/shadow-volume-texel-snap/index.md",
+      "originalSha256": "dc6c13ef1fd47e418c2f29a38d60d23011e13166078fa8f3f7551f46bdc90869",
+      "bytes": 2868,
+      "finalSha256": "45ba35720eb665d3bf571ca3664b057d0d884b140d8422ac10721cb8aa475bc1"
+    },
+    {
+      "original": "knowledge/changes/2026-09-21/ui-depth-occlusion/index.md",
+      "archived": "knowledge/outdated-ideas/2026-10-06-rendering-reset/changes/2026-09-21/ui-depth-occlusion/index.md",
+      "originalSha256": "6d2d6d7363c2a77dbff72b38150ea4e16463d60c78508d6e9f9e3f0434f70124",
+      "bytes": 5956,
+      "finalSha256": "6d2d6d7363c2a77dbff72b38150ea4e16463d60c78508d6e9f9e3f0434f70124"
+    },
+    {
+      "original": "knowledge/changes/2026-09-21/vulkan-frame-fence-deadlock/index.md",
+      "archived": "knowledge/outdated-ideas/2026-10-06-rendering-reset/changes/2026-09-21/vulkan-frame-fence-deadlock/index.md",
+      "originalSha256": "a7824105a45696f2126ee139417cb166b982450f8337ff1757f0dc47ac0250be",
+      "bytes": 2813,
+      "finalSha256": "a7824105a45696f2126ee139417cb166b982450f8337ff1757f0dc47ac0250be"
+    },
+    {
+      "original": "knowledge/changes/2026-09-21/vulkan-minimize-swapchain-crash/index.md",
+      "archived": "knowledge/outdated-ideas/2026-10-06-rendering-reset/changes/2026-09-21/vulkan-minimize-swapchain-crash/index.md",
+      "originalSha256": "2d01bb899fb7982b8a077a69882380ae43da48552c0de2d7248ddca18059aff8",
+      "bytes": 3555,
+      "finalSha256": "2d01bb899fb7982b8a077a69882380ae43da48552c0de2d7248ddca18059aff8"
+    },
+    {
+      "original": "knowledge/changes/2026-10-06/legacy-shadow-casters/index.md",
+      "archived": "knowledge/outdated-ideas/2026-10-06-rendering-reset/changes/2026-10-06/legacy-shadow-casters/index.md",
+      "originalSha256": "c8423fbaa080ef4c0c0522ca480a24f9299bec8ab65f7d13b5f4cb6e3df229eb",
+      "bytes": 4620,
+      "finalSha256": "5b5cb8fa4ae89de9e6eb378f30b69b8a47c234029f3d25580682c7a92d1e65f5"
+    },
+    {
+      "original": "knowledge/changes/2026-10-06/light-demand-shadow-budgets/index.md",
+      "archived": "knowledge/outdated-ideas/2026-10-06-rendering-reset/changes/2026-10-06/light-demand-shadow-budgets/index.md",
+      "originalSha256": "9d6e004937d3c22fd93b55857f256125b18ef59fb285d70ddbbe49d885d06c69",
+      "bytes": 7348,
+      "finalSha256": "0dd300db52ed3d52e9b7c33632a94174573a097a306cfe9e96dd66be84ae86dd"
+    },
+    {
+      "original": "knowledge/changes/2026-10-06/light-demand-shadow-budgets/validation-summary.json",
+      "archived": "knowledge/outdated-ideas/2026-10-06-rendering-reset/changes/2026-10-06/light-demand-shadow-budgets/validation-summary.json",
+      "originalSha256": "627a929abb9224ea1920e332c873a5e1335ac4073131034be4d2e9aec10ca69e",
+      "bytes": 1208,
+      "finalSha256": "627a929abb9224ea1920e332c873a5e1335ac4073131034be4d2e9aec10ca69e"
+    },
+    {
+      "original": "knowledge/changes/2026-10-06/static-world-lighting-and-range/index.md",
+      "archived": "knowledge/outdated-ideas/2026-10-06-rendering-reset/changes/2026-10-06/static-world-lighting-and-range/index.md",
+      "originalSha256": "87c74d6032dd825112a829d6f869bf792a452c79dbf77d7f3a248efac71a9576",
+      "bytes": 7957,
+      "finalSha256": "87c74d6032dd825112a829d6f869bf792a452c79dbf77d7f3a248efac71a9576"
+    },
+    {
+      "original": "knowledge/changes/2026-10-06/static-world-lighting-and-range/validation-summary.json",
+      "archived": "knowledge/outdated-ideas/2026-10-06-rendering-reset/changes/2026-10-06/static-world-lighting-and-range/validation-summary.json",
+      "originalSha256": "bb75340a1786bde07fff97cdc643a63881b5f0f32b7e239843fde8629fd030ff",
+      "bytes": 5324,
+      "finalSha256": "bb75340a1786bde07fff97cdc643a63881b5f0f32b7e239843fde8629fd030ff"
+    },
+    {
+      "original": "knowledge/changes/2026-10-06/static-world-unlit-baseline/index.md",
+      "archived": "knowledge/outdated-ideas/2026-10-06-rendering-reset/changes/2026-10-06/static-world-unlit-baseline/index.md",
+      "originalSha256": "bf1df682db8140d7d1cf326ef68f5a23df529d9a52c6264bfbfc755b74e0c39b",
+      "bytes": 6584,
+      "finalSha256": "bf1df682db8140d7d1cf326ef68f5a23df529d9a52c6264bfbfc755b74e0c39b"
+    },
+    {
+      "original": "knowledge/changes/2026-10-06/world-shadow-budget-diagnostics/index.md",
+      "archived": "knowledge/outdated-ideas/2026-10-06-rendering-reset/changes/2026-10-06/world-shadow-budget-diagnostics/index.md",
+      "originalSha256": "14c4801246140ef8f554b460f57a3f7d3421965791398340d198e8cb49ca6e04",
+      "bytes": 5920,
+      "finalSha256": "14c4801246140ef8f554b460f57a3f7d3421965791398340d198e8cb49ca6e04"
+    },
+    {
+      "original": "knowledge/changes/2026-10-06/world-space-shadow-foundation/index.md",
+      "archived": "knowledge/outdated-ideas/2026-10-06-rendering-reset/changes/2026-10-06/world-space-shadow-foundation/index.md",
+      "originalSha256": "e629fc1a25dd3f7a02600fe1a93e72cfd9d655cb58294e48defb3499d93a1c73",
+      "bytes": 4868,
+      "finalSha256": "e629fc1a25dd3f7a02600fe1a93e72cfd9d655cb58294e48defb3499d93a1c73"
+    },
+    {
+      "original": "knowledge/roadmap/planned/renderer-modernization.md",
+      "archived": "knowledge/outdated-ideas/2026-10-06-rendering-reset/roadmap/planned/renderer-modernization.md",
+      "originalSha256": "d2eaf0ccf1bf747b92c7cf39194438362e9f3db4ee36e2f33be1f848cb3e79e2",
+      "bytes": 21263,
+      "finalSha256": "d0ed44c11d761cc6363b3c96019a2416f6ed51391761ac330a642c1694dd99f3"
+    },
+    {
+      "original": "knowledge/roadmap/planned/world-space-lighting.md",
+      "archived": "knowledge/outdated-ideas/2026-10-06-rendering-reset/roadmap/planned/world-space-lighting.md",
+      "originalSha256": "3a4c514ca1ec5cc2f7174535cb9d9e3dfa6c46431d5dc0de69fd6ad471e475f0",
+      "bytes": 8014,
+      "finalSha256": "3a4c514ca1ec5cc2f7174535cb9d9e3dfa6c46431d5dc0de69fd6ad471e475f0"
+    },
+    {
+      "original": "knowledge/roadmap/planned/draw-distance-streaming.md",
+      "archived": "knowledge/outdated-ideas/2026-10-06-rendering-reset/roadmap/planned/draw-distance-streaming.md",
+      "originalSha256": "be34ffb85f6503f62c443f449a8d764b38055c6167089d7e6ad250b2b09722cb",
+      "bytes": 5954,
+      "finalSha256": "9e95e6f667c176cbc55088c0200b66d6de44899cd84d24ab40b413f0fcfeb169"
+    },
+    {
+      "original": "knowledge/roadmap/planned/graphics-quality-profiles.md",
+      "archived": "knowledge/outdated-ideas/2026-10-06-rendering-reset/roadmap/planned/graphics-quality-profiles.md",
+      "originalSha256": "5fc9fd0a887facd473807f5cea9c54ea33edaa0b92f22e02169c44212e5ff0f4",
+      "bytes": 3800,
+      "finalSha256": "c9259845a2cbbbaa2ba9cbe351496b1031c6b3b301e3928b7aae103fb8d09c46"
+    },
+    {
+      "original": "knowledge/roadmap/planned/high-fps-timestep.md",
+      "archived": "knowledge/outdated-ideas/2026-10-06-rendering-reset/roadmap/planned/high-fps-timestep.md",
+      "originalSha256": "a6dd04791a1d8e235e3f1647abf664600d20d756f06297188d77bf49d2767f3a",
+      "bytes": 11360,
+      "finalSha256": "a6dd04791a1d8e235e3f1647abf664600d20d756f06297188d77bf49d2767f3a"
+    },
+    {
+      "original": "knowledge/roadmap/planned/model-export-import-roundtrip.md",
+      "archived": "knowledge/outdated-ideas/2026-10-06-rendering-reset/roadmap/planned/model-export-import-roundtrip.md",
+      "originalSha256": "8c1bff5bf0af94431005733d29da8ed4cefe3210e3c837f431901fa1a3d309a8",
+      "bytes": 3724,
+      "finalSha256": "a5116ce54546ef042657f59bce85d81bc4ee1dfabf4262f6c62ff5e6f7bd13cc"
+    },
+    {
+      "original": "knowledge/rules/psyx-modern-mesh-bridge.md",
+      "archived": "knowledge/outdated-ideas/2026-10-06-rendering-reset/rules/psyx-modern-mesh-bridge.md",
+      "originalSha256": "ab27f0bcfefdf3a0bf7162e3d1f981e36b968469475b64732f06d2759c08f379",
+      "bytes": 14567,
+      "finalSha256": "e810138880949ec6ab82cbf2ca09fc638b40d717fdcc36734697258090e565e5"
+    },
+    {
+      "original": "knowledge/rules/renderer-composite-writes.md",
+      "archived": "knowledge/outdated-ideas/2026-10-06-rendering-reset/rules/renderer-composite-writes.md",
+      "originalSha256": "773a7ca0416655263868c6965099776951d3d57ae974d0d08ac20428535e6fea",
+      "bytes": 4465,
+      "finalSha256": "773a7ca0416655263868c6965099776951d3d57ae974d0d08ac20428535e6fea"
+    },
+    {
+      "original": "knowledge/product/legacy-lighting-receptivity.md",
+      "archived": "knowledge/outdated-ideas/2026-10-06-rendering-reset/product/legacy-lighting-receptivity.md",
+      "originalSha256": "4e0e685ee5c28ed206be193637a3572db934f2ea0ca9c784fec161b777dd98fe",
+      "bytes": 8347,
+      "finalSha256": "4e0e685ee5c28ed206be193637a3572db934f2ea0ca9c784fec161b777dd98fe"
+    },
+    {
+      "original": "knowledge/roadmap/done/legacy-lighting-receptivity.md",
+      "archived": "knowledge/outdated-ideas/2026-10-06-rendering-reset/roadmap/done/legacy-lighting-receptivity.md",
+      "originalSha256": "41b8715fc23f0e99a8981523ced72dc8232d9628e21706a58b3fdd5bb84af798",
+      "bytes": 6928,
+      "finalSha256": "41b8715fc23f0e99a8981523ced72dc8232d9628e21706a58b3fdd5bb84af798"
+    },
+    {
+      "original": "knowledge/product/legacy-shadow-casters.md",
+      "archived": "knowledge/outdated-ideas/2026-10-06-rendering-reset/product/legacy-shadow-casters.md",
+      "originalSha256": "2b97e9b50dbf0db289aaf7144ce1fc4a2b64ac3a16b2c12021b3b5079b9e13e2",
+      "bytes": 3883,
+      "finalSha256": "5d57b7f05aa171fa55b6d231f60c5ef94926d2f83894ef396d260cff5dff02ec"
+    },
+    {
+      "original": "knowledge/roadmap/done/legacy-shadow-casters.md",
+      "archived": "knowledge/outdated-ideas/2026-10-06-rendering-reset/roadmap/done/legacy-shadow-casters.md",
+      "originalSha256": "c68b82d5b90fb882ba48aee563b1f852681e8e6993bb811adfcb31e94a6a500d",
+      "bytes": 3219,
+      "finalSha256": "53ca94b339fb1fc30f6e3319fc429a008705f45741d680f3419e4f97757d7112"
+    },
+    {
+      "original": "knowledge/product/point-light-sources.md",
+      "archived": "knowledge/outdated-ideas/2026-10-06-rendering-reset/product/point-light-sources.md",
+      "originalSha256": "56f907f3942c79ff78da899cc558f28b111d90166b63b567e67ab0cd4200d14a",
+      "bytes": 9213,
+      "finalSha256": "56f907f3942c79ff78da899cc558f28b111d90166b63b567e67ab0cd4200d14a"
+    },
+    {
+      "original": "knowledge/roadmap/done/point-light-sources.md",
+      "archived": "knowledge/outdated-ideas/2026-10-06-rendering-reset/roadmap/done/point-light-sources.md",
+      "originalSha256": "1261eca223962c470d68afb13c93c4ab7868f75a976784c18b85abf2f00647ff",
+      "bytes": 2909,
+      "finalSha256": "1261eca223962c470d68afb13c93c4ab7868f75a976784c18b85abf2f00647ff"
+    },
+    {
+      "original": "knowledge/product/vulkan-game-renderer.md",
+      "archived": "knowledge/outdated-ideas/2026-10-06-rendering-reset/product/vulkan-game-renderer.md",
+      "originalSha256": "7c259b3be1b823335ceeed9c8536b06114c125940f496314439bf5ad18b4e927",
+      "bytes": 11030,
+      "finalSha256": "734b139a40db0a0b84d9a71e43e1983a38861fcc6ca2186a2195c7220352eecf"
+    },
+    {
+      "original": "knowledge/roadmap/done/vulkan-game-renderer.md",
+      "archived": "knowledge/outdated-ideas/2026-10-06-rendering-reset/roadmap/done/vulkan-game-renderer.md",
+      "originalSha256": "a2a45b39a42abb37920977c11d2e42ffb72d0471a306b3667e3b28b5d183d091",
+      "bytes": 30744,
+      "finalSha256": "db921ccbe42950b8214c2830a852c0dd6e59d3b1f8d2adbd758277ecf700a11d"
+    },
+    {
+      "original": "knowledge/product/vulkan-ui-image-parity.md",
+      "archived": "knowledge/outdated-ideas/2026-10-06-rendering-reset/product/vulkan-ui-image-parity.md",
+      "originalSha256": "614a5dbf33fc7c3f715dd94e60e2fc65b583685ab24b10515c9a6c71f4cf6cb8",
+      "bytes": 5452,
+      "finalSha256": "53195ebf5d40035d47b9e7976cd4a211ea546ff6c39a1e8b23f9707dae8a0ef8"
+    },
+    {
+      "original": "knowledge/roadmap/done/vulkan-ui-image-parity.md",
+      "archived": "knowledge/outdated-ideas/2026-10-06-rendering-reset/roadmap/done/vulkan-ui-image-parity.md",
+      "originalSha256": "e28c913b64269c23e62b3261ad508b594b152841e9fac93588735bbd9828df50",
+      "bytes": 7035,
+      "finalSha256": "f7b46896d60938a8b8a74f5386d63e5cf9c84556a0d5c98faba228cb7aab074c"
+    },
+    {
+      "original": "knowledge/product/world-space-lighting.md",
+      "archived": "knowledge/outdated-ideas/2026-10-06-rendering-reset/product/world-space-lighting.md",
+      "originalSha256": "b651282c1bcca6b4c2073bd653459984e3861c630a9898ba22942015167d7a31",
+      "bytes": 15157,
+      "finalSha256": "b651282c1bcca6b4c2073bd653459984e3861c630a9898ba22942015167d7a31"
+    }
+  ],
+  "linkMaintenance": "Relative targets repaired after moves; active documents point to current rendering notes; historical changelog/backlog links retain archive provenance."
+}

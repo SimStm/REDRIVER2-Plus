@@ -63,6 +63,13 @@
 #include "assetcatalog_game.h"
 #include "../utils/DeveloperDebugStart.h"
 #include "../utils/DeveloperModernMesh.h"
+#include "../utils/DeveloperStaticScene.h"
+#include "../utils/DeveloperRenderCoverage.h"
+#include "../utils/DeveloperNativeScene.h"
+#include "../utils/DeveloperNativeAssets.h"
+#ifndef PSX
+#include "PsyX/PsyX_native.h"
+#endif
 
 int levelstartpos[8][4] = {
 	{ 4785, -1024, -223340, 0},
@@ -1628,10 +1635,19 @@ int ObjectDrawnValue = 0;
 // [D] [T]
 void DrawGame(void)
 {
+#ifndef PSX
+	DeveloperRenderCoverage_BeginFrame(NumPlayers == 2 ? "split-screen" : "game", FrameCnt);
+	// A missing publication is a native world error, never permission to draw
+	// the old world. The source adapter may explicitly report expected loading.
+	PsyX_Native_SetFrameStatus(PSYX_NATIVE_NO_SNAPSHOT);
+	DeveloperModernMesh_ProcessInput();
+	DeveloperStaticScene_PrepareFrame();
+	DeveloperNativeAssets_PrepareFrame();
+#endif
 	if (NumPlayers == 1 || NoPlayerControl)
 	{
 		ObjectDrawnValue = FrameCnt;
-		DrawPauseMenus();
+		DEVELOPER_COVERAGE_DRAW(RENDER_CATEGORY_HUD, DrawPauseMenus());
 
 		RenderGame2(0);
 
@@ -1639,19 +1655,24 @@ void DrawGame(void)
 		// Camera and instances must be ready before the OT reaches the final
 		// overlays (lens flare at 10, fades at 8, HUD/map/menu at 0..1).
 		DeveloperModernMesh_Update();
+		DeveloperNativeScene_Update();
+		DeveloperNativeAssets_Update();
 		PsyX_SetModernSceneBoundary(current->ot + 10);
 #endif
 		SwapDrawBuffers();
 	}
 	else
 	{
+		#ifndef PSX
+		PsyX_Native_SetFrameStatus(PSYX_NATIVE_UNSUPPORTED);
+		#endif
 		ObjectDrawnValue = FrameCnt;
 		RenderGame2(0);
 		SwapDrawBuffers2(0);
 
 		ObjectDrawnValue += 16;
 
-		DrawPauseMenus();
+		DEVELOPER_COVERAGE_DRAW(RENDER_CATEGORY_HUD, DrawPauseMenus());
 		
 		RenderGame2(1);
 		SwapDrawBuffers2(1);
@@ -1665,8 +1686,12 @@ void DrawGame(void)
 	// The modern fixtures must use the camera the scene was actually rendered
 	// with, which is only final after RenderGame2 has run.
 	if (NumPlayers != 1 && !NoPlayerControl)
+	{
 		DeveloperModernMesh_Update();
+		DeveloperNativeScene_Update();
+	}
 
+	DeveloperRenderCoverage_EndFrame();
 	if (!FadingScreen)
 		PsyX_EndScene();
 #endif
@@ -1740,6 +1765,11 @@ void PrintCommandLineArguments()
 		"Example: REDRIVER2 <command> [arguments]\n\n"
 		"  -ini <filename.ini> : starts game with specific configuration ini\n"
 		"  -cdimage <filename.iso> : starts game with specific ISO/BIN image file\n"
+		"  -nativeworld : isolated native analytic world (Vulkan desktop test)\n"
+		"  -nativeassets : read-only original native asset diagnostics (in progress)\n"
+		"  -nativeassetview : R02 Chicago road/building import fixture (incomplete scene)\n"
+		"  -nativeregionprobe : R03 camera-independent Chicago source inventory (CPU only)\n"
+		"  -nativeregion : R03 Chicago static region (incomplete, opt-in)\n"
 #ifdef DEBUG_OPTIONS
 		"  -exportxasubtitles: Exports strings from XA WAV files to SBN\n"
 		"  -startpos <x> <z>: Set player start position\n"
@@ -1964,7 +1994,7 @@ int redriver2_main(int argc, char** argv)
 		{
 			// do nothing. All command line features use it
 		}
-		else if (!strcmp(argv[i], "-vulkan") || !strcmp(argv[i], "-opengl"))
+		else if (!strcmp(argv[i], "-vulkan") || !strcmp(argv[i], "-opengl") || !strcmp(argv[i], "-nativeworld") || !strcmp(argv[i], "-nativeassets") || !strcmp(argv[i], "-nativeassetview") || !strcmp(argv[i], "-nativeregionprobe") || !strcmp(argv[i], "-nativeregion"))
 		{
 			// Do nothing in this step, only avoids command line popup. The renderer will be initialized later in the startup process.
 		}
@@ -2353,35 +2383,35 @@ void RenderGame2(int view)
 	setupYet = 0;
 
 	if (gLoadedMotionCapture != 0)
-		DrawAllPedestrians();
+		DEVELOPER_COVERAGE_DRAW(RENDER_CATEGORY_PEDESTRIANS, DrawAllPedestrians());
 
 	// do a lot of stuff
-	DisplayMissionTitle();
-	DrawInGameCutscene();
+	DEVELOPER_COVERAGE_DRAW(RENDER_CATEGORY_HUD, DisplayMissionTitle());
+	DEVELOPER_COVERAGE_DRAW(RENDER_CATEGORY_CUTSCENE, DrawInGameCutscene());
 
 	// draw events from level itself
-	DrawEvents(1);
+	DEVELOPER_COVERAGE_DRAW(RENDER_CATEGORY_EVENTS, DrawEvents(1));
 
 	Set_Inv_CameraMatrix();
 	SetCameraVector();
 
 	SetupDrawMapPSX();
 	
-	DrawDrivingGames();
-	DrawThrownBombs();
-	AddGroundDebris();
+	DEVELOPER_COVERAGE_DRAW(RENDER_CATEGORY_HUD, DrawDrivingGames());
+	DEVELOPER_COVERAGE_DRAW(RENDER_CATEGORY_PARTICLES, DrawThrownBombs());
+	DEVELOPER_COVERAGE_DRAW(RENDER_CATEGORY_PARTICLES, AddGroundDebris());
 
 	// draw events that use cell object
-	DrawEvents(0);
+	DEVELOPER_COVERAGE_DRAW(RENDER_CATEGORY_EVENTS, DrawEvents(0));
 
 	current->ot += 10;
 
-	DrawSmashable_sprites();
-	HandleDebris();
+	DEVELOPER_COVERAGE_DRAW(RENDER_CATEGORY_PARTICLES, DrawSmashable_sprites());
+	DEVELOPER_COVERAGE_DRAW(RENDER_CATEGORY_PARTICLES, HandleDebris());
 
 	current->ot -= 10;
 
-	DrawAllExplosions();
+	DEVELOPER_COVERAGE_DRAW(RENDER_CATEGORY_PARTICLES, DrawAllExplosions());
 
 	if (AttractMode != 0)
 	{
@@ -2406,12 +2436,12 @@ void RenderGame2(int view)
 	}
 
 	if (gLoadedOverlay)
-		DisplayOverlays();
+		DEVELOPER_COVERAGE_DRAW(RENDER_CATEGORY_HUD, DisplayOverlays());
 
-	DrawMission();
+	DEVELOPER_COVERAGE_DRAW(RENDER_CATEGORY_HUD, DrawMission());
 
 	if (!FastForward && NumPlayers == 1)
-		DrawLensFlare();
+		DEVELOPER_COVERAGE_DRAW(RENDER_CATEGORY_PARTICLES, DrawLensFlare());
 
 	// Retro calls this BSOD...
 	if (gDieWithFade)
@@ -2459,17 +2489,17 @@ void RenderGame2(int view)
 
 	if (notInDreaAndStevesEvilLair)
 	{		
-		DrawSkyDome();
+		DEVELOPER_COVERAGE_DRAW(RENDER_CATEGORY_SKY, DrawSkyDome());
 
 		if (current->primtab - (current->primptr - PRIMTAB_SIZE) > 40000)
 		{
-			DoWeather(gWeather);
+				DEVELOPER_COVERAGE_DRAW(RENDER_CATEGORY_PARTICLES, DoWeather(gWeather));
 		}
 	}
 
 	if (current->primtab - (current->primptr - PRIMTAB_SIZE) > 37000)
 	{
-		DrawTyreTracks();
+		DEVELOPER_COVERAGE_DRAW(RENDER_CATEGORY_DECALS, DrawTyreTracks());
 	}
 
 	DrawAllTheCars(view);

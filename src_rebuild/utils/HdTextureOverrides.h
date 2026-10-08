@@ -1,6 +1,24 @@
 #ifndef HD_TEXTURE_OVERRIDES_H
 #define HD_TEXTURE_OVERRIDES_H
 
+#include <stdint.h>
+#include <vector>
+
+// Native consumers copy the exact winning active PNG, without retaining a
+// recycled renderer texture ID or changing manifest/CLUT precedence.
+enum class HdNativeImageResult { Original, Ready, SourceChanged, Failed };
+struct HdNativeImage
+{
+	std::vector<unsigned char> rgba;
+	unsigned int width, height;
+	uint64_t revision;
+	char modId[48];
+	HdNativeImage() : width(0), height(0), revision(0) { modId[0] = '\0'; }
+};
+uint64_t HdTextureOverrides_GetNativeRevision();
+HdNativeImageResult HdTextureOverrides_CopyNativeImage(int texturePage, int textureIndex,
+	unsigned short clut, HdNativeImage& image);
+
 struct HdTextureOverrideDiagnostics
 {
 	int supported;

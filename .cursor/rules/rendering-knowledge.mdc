@@ -1,0 +1,9 @@
+---
+description: Use the current rendering plan and exclude archived graphics ideas from routine analysis
+alwaysApply: true
+---
+
+Follow `AGENTS.md` and `knowledge/rules/rendering-knowledge-and-archive.md`.
+Rendering planning starts at `knowledge/rendering/index.md`.
+Do not read or search `knowledge/outdated-ideas/**` unless the user explicitly
+requests historical review. Links to the archive do not grant that request.

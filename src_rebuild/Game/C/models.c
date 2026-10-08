@@ -27,6 +27,26 @@ u_short *Low2LowerDetailTable = NULL;
 int permanentModelSlotBitfield[MAX_MODEL_SLOTS / 32];
 int litSprites[MAX_MODEL_SLOTS / 32];
 
+#ifndef PSX
+static MODEL* sourceSizeModels[MAX_MODEL_SLOTS];
+static unsigned int sourceSizes[MAX_MODEL_SLOTS];
+
+void Models_SetSourceSize(int modelIndex, unsigned int bytes)
+{
+	if (modelIndex < 0 || modelIndex >= MAX_MODEL_SLOTS) return;
+	sourceSizeModels[modelIndex] = modelpointers[modelIndex];
+	sourceSizes[modelIndex] = bytes;
+}
+
+unsigned int Models_GetSourceSize(int modelIndex)
+{
+	if (modelIndex < 0 || modelIndex >= MAX_MODEL_SLOTS ||
+		modelpointers[modelIndex] == &dummyModel || modelpointers[modelIndex] == NULL ||
+		sourceSizeModels[modelIndex] != modelpointers[modelIndex]) return 0;
+	return sourceSizes[modelIndex];
+}
+#endif
+
 // [A] returns freed slot count
 int CleanSpooledModelSlots()
 {
@@ -49,6 +69,9 @@ int CleanSpooledModelSlots()
 
 				// A freed streamed slot invalidates any retained catalog handle.
 				AssetCatalogGame_InvalidateModel(i);
+#ifndef PSX
+				Models_SetSourceSize(i, 0);
+#endif
 
 				num_freed++;
 			}
@@ -124,6 +147,9 @@ void ProcessMDSLump(char *lump_file, int lump_size)
 	{
 		modelpointers[i] = &dummyModel;
 		pLodModels[i] = &dummyModel;
+#ifndef PSX
+		Models_SetSourceSize(i, 0);
+#endif
 	}
 
 	for (i = 0; i < modelAmts; i++)
@@ -138,6 +164,15 @@ void ProcessMDSLump(char *lump_file, int lump_size)
 			
 			model = (MODEL*)mdsfile;
 			modelpointers[i] = model;
+
+#ifndef PSX
+			// Record a span only if the loader-declared model fits this lump.
+			// This metadata does not alter the reconstructed loader's behaviour.
+			const size_t sourceOffset = (size_t)(mdsfile - lump_file);
+			const unsigned int boundedSize = size >= (int)sizeof(MODEL) && lump_size >= 0 &&
+				sourceOffset <= (size_t)lump_size && (size_t)size <= (size_t)lump_size - sourceOffset ? (unsigned int)size : 0;
+			Models_SetSourceSize(i, boundedSize);
+#endif
 
 			ProcessModel(i);
 		}

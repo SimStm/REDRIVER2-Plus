@@ -26,7 +26,12 @@ Do not assume the tools are a drop-in runtime dependency. Do not copy code witho
 
 ## Dependencies and risks
 
-Order 08; read-only format/license investigation can happen earlier. Implement adapters after the catalog contract in [04](../done/asset-catalog-identity.md). Supply evidence for [09](model-export-import-roundtrip.md).
+Read-only format/license investigation can happen independently. Preserve the
+catalog contract in [asset identity](../done/asset-catalog-identity.md). Supply
+source-format/round-trip evidence to the native renderer's
+[asset contract](../../rendering/asset-and-file-compatibility.md) and
+[R09](../../rendering/stages/09-modern-assets-and-pbr-mods.md); external tooling
+is not a prerequisite for loading original game files.
 
 ## Suggested execution order
 

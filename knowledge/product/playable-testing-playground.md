@@ -10,8 +10,9 @@ tags: [product, playground, world, rendering, testing]
 The playground is a finite, resident, procedurally generated driving scene. It
 reuses the original vehicle simulation and the existing renderer, and replaces
 the loaded world's surface, roads, geometry and collisions with generated data.
-It exists to give renderer work (roadmap item 14) and asset tooling (items 04,
-05, 06) a controlled, reproducible scene.
+It gives renderer work and asset tooling a controlled, reproducible scene.
+The [native replacement plan](../rendering/index.md) uses it alongside original
+city routes; it is not an exclusive prerequisite for the new graphics stages.
 
 Scene identity: **`playground.flatpad.v1`**.
 

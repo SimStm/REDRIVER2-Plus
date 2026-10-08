@@ -92,6 +92,13 @@ float g_sunDir[3] = { -0.25f, 0.72f, -0.38f };
 float g_exposure = 1.0f;
 int g_shadows = 1;
 int g_ao = 1;
+// Point light for the multi-light path (roadmap point-light-sources): the
+// fixture has no legacy scene, so it exercises the light plumbing and the
+// modern mesh shading only. Off unless -vkpointlight or the L key asks for it,
+// so a capture has a deterministic reference frame.
+int g_pointLight = 0;
+const float kPointLightPosition[3] = { 0.0f, 700.0f, -1400.0f };
+const float kPointLightRange = 2600.0f;
 
 void BuildLookAt(const float eye[3], const float at[3], float m[16])
 {
@@ -384,8 +391,8 @@ void RotateSun(float angle)
 
 void HandleToggles(const Uint8* keys)
 {
-	static int previous[8] = { 0, 0, 0, 0, 0, 0, 0, 0 };
-	const int current[8] =
+	static int previous[9] = { 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+	const int current[9] =
 	{
 		keys ? keys[SDL_SCANCODE_LEFTBRACKET] : 0,
 		keys ? keys[SDL_SCANCODE_RIGHTBRACKET] : 0,
@@ -395,6 +402,7 @@ void HandleToggles(const Uint8* keys)
 		keys ? keys[SDL_SCANCODE_EQUALS] : 0,
 		keys ? keys[SDL_SCANCODE_0] : 0,
 		keys ? keys[SDL_SCANCODE_9] : 0,
+		keys ? keys[SDL_SCANCODE_L] : 0,
 	};
 
 	if (current[0] && !previous[0]) RotateSun(-0.12f);
@@ -405,8 +413,13 @@ void HandleToggles(const Uint8* keys)
 	if (current[5] && !previous[5]) { g_exposure += 0.1f; if (g_exposure > 4.0f) g_exposure = 4.0f; }
 	if (current[6] && !previous[6]) g_shadows = !g_shadows;
 	if (current[7] && !previous[7]) g_ao = !g_ao;
+	if (current[8] && !previous[8])
+	{
+		g_pointLight = !g_pointLight;
+		VkLog("VkFixture: point light %s\n", g_pointLight ? "on" : "off");
+	}
 
-	for (int i = 0; i < 8; i++)
+	for (int i = 0; i < 9; i++)
 		previous[i] = current[i];
 }
 
@@ -440,15 +453,18 @@ int CaptureToFile(const char* path)
 
 // Phase-1 acceptance run for the emulated PSX path (roadmap R7b): no scene, no
 // ImGui, just the VRAM/LUT/shader pipeline checked against known pixels.
-int RunPsxSelfTest(void)
+enum class VulkanSelfTest { LegacyPsx, NativeWorld };
+
+int RunVulkanSelfTest(VulkanSelfTest test)
 {
-	VkLog("VkFixture: psx self-test start\n");
+	const bool native = test == VulkanSelfTest::NativeWorld;
+	VkLog("VkFixture: %s self-test start\n", native ? "native" : "psx");
 
 	PsyXVkConfig config;
 	memset(&config, 0, sizeof(config));
 	config.width = 1280;
 	config.height = 720;
-	config.title = "REDRIVER2 - Vulkan PSX self-test";
+	config.title = native ? "REDRIVER2 - Vulkan native self-test" : "REDRIVER2 - Vulkan PSX self-test";
 	config.enableImGui = 0;
 	config.gameMode = 1;
 
@@ -458,10 +474,12 @@ int RunPsxSelfTest(void)
 		return 1;
 	}
 
-	char report[4096];
-	const int ok = PsyX_Vk_GameSelfTest(report, sizeof(report));
+	// Keep the complete native ownership/material report, including late-cycle
+	// failures; a truncated success/failure report hides acceptance evidence.
+	char report[32768];
+	const int ok = native ? PsyX_Vk_NativeSelfTest(report, sizeof(report)) : PsyX_Vk_GameSelfTest(report, sizeof(report));
 	VkLog("%s", report);
-	VkLog("VkFixture: psx self-test %s\n", ok ? "PASS" : "FAIL");
+	VkLog("VkFixture: %s self-test %s\n", native ? "native" : "psx", ok ? "PASS" : "FAIL");
 
 	PsyX_Vk_Shutdown();
 	return ok ? 0 : 1;
@@ -539,7 +557,8 @@ int RunFixture(int captureFrames, const char* capturePath, int enableImGui)
 		BuildPerspective(60.0f * kPi / 180.0f, aspect, 10.0f, 60000.0f, proj);
 		PsyX_Vk_SetCamera(view, proj, g_cameraPos);
 
-		// Light set: one directional sun plus ambient/exposure.
+		// Light set: one directional sun plus ambient/exposure, and an opt-in
+		// point light so the multi-light path can be captured without game state.
 		PsyXModernLightSet lights;
 		memset(&lights, 0, sizeof(lights));
 		lights.count = 1;
@@ -549,6 +568,19 @@ int RunFixture(int captureFrames, const char* capturePath, int enableImGui)
 		lights.lights[0].direction[2] = g_sunDir[2];
 		lights.lights[0].color[0] = lights.lights[0].color[1] = lights.lights[0].color[2] = 1.0f;
 		lights.lights[0].intensity = 1.0f;
+		if (g_pointLight)
+		{
+			lights.count = 2;
+			lights.lights[1].type = 1;
+			lights.lights[1].position[0] = kPointLightPosition[0];
+			lights.lights[1].position[1] = kPointLightPosition[1];
+			lights.lights[1].position[2] = kPointLightPosition[2];
+			lights.lights[1].color[0] = 1.0f;
+			lights.lights[1].color[1] = 0.85f;
+			lights.lights[1].color[2] = 0.55f;
+			lights.lights[1].intensity = 1.0f;
+			lights.lights[1].range = kPointLightRange;
+		}
 		lights.ambient[0] = lights.ambient[1] = lights.ambient[2] = 0.18f;
 		lights.exposure = g_exposure;
 		lights.shadowsEnabled = g_shadows;
@@ -573,9 +605,9 @@ int RunFixture(int captureFrames, const char* capturePath, int enableImGui)
 			"%d meshes, %d instances\n"
 			"WASD move, R/F up/down, Shift faster, RMB look\n"
 			"[ ] sun azimuth, ; ' elevation, - = exposure\n"
-			"0 shadows %s, 9 AO %s, F1 screenshot, ESC quit",
+			"0 shadows %s, 9 AO %s, L point light %s, F1 screenshot, ESC quit",
 			info.meshCount, g_instanceCount,
-			g_shadows ? "on" : "off", g_ao ? "on" : "off");
+			g_shadows ? "on" : "off", g_ao ? "on" : "off", g_pointLight ? "on" : "off");
 		PsyX_Vk_SetOverlayText(overlay);
 
 		if (!PsyX_Vk_RenderFrame())
@@ -602,10 +634,11 @@ int RunFixture(int captureFrames, const char* capturePath, int enableImGui)
 }
 } // namespace
 
-int DeveloperVkFixture_HandleCommandLine(int argc, char** argv)
+DeveloperVkFixtureResult DeveloperVkFixture_HandleCommandLine(int argc, char** argv)
 {
 	int requested = 0;
 	int psxSelfTest = 0;
+	int nativeSelfTest = 0;
 	int captureFrames = 0;
 	const char* capturePath = "vk_fixture.png";
 	int enableImGui = 1;
@@ -620,6 +653,11 @@ int DeveloperVkFixture_HandleCommandLine(int argc, char** argv)
 		{
 			requested = 1;
 			psxSelfTest = 1;
+		}
+		else if (!strcmp(argv[i], "-vknativetest"))
+		{
+			requested = 1;
+			nativeSelfTest = 1;
 		}
 		else if (!strcmp(argv[i], "-vkcapture") && i + 1 < argc)
 		{
@@ -636,28 +674,33 @@ int DeveloperVkFixture_HandleCommandLine(int argc, char** argv)
 		{
 			enableImGui = 0;
 		}
+		else if (!strcmp(argv[i], "-vkpointlight"))
+		{
+			requested = 1;
+			g_pointLight = 1;
+		}
 	}
 
 	if (!requested)
-		return 0;
+		return DeveloperVkFixtureResult::NotRequested;
 
-	if (psxSelfTest)
+	if (psxSelfTest || nativeSelfTest)
 	{
-		RunPsxSelfTest();
-		return 1;
+		const int exitCode = RunVulkanSelfTest(nativeSelfTest ? VulkanSelfTest::NativeWorld : VulkanSelfTest::LegacyPsx);
+		return exitCode == 0 ? DeveloperVkFixtureResult::Success : DeveloperVkFixtureResult::Failure;
 	}
 
-	RunFixture(captureFrames, capturePath, enableImGui);
-	return 1;
+	const int exitCode = RunFixture(captureFrames, capturePath, enableImGui);
+	return exitCode == 0 ? DeveloperVkFixtureResult::Success : DeveloperVkFixtureResult::Failure;
 }
 
 #else // unsupported platform
 
-int DeveloperVkFixture_HandleCommandLine(int argc, char** argv)
+DeveloperVkFixtureResult DeveloperVkFixture_HandleCommandLine(int argc, char** argv)
 {
 	(void)argc;
 	(void)argv;
-	return 0;
+	return DeveloperVkFixtureResult::NotRequested;
 }
 
 #endif

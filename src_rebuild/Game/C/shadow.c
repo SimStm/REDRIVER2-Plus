@@ -1,5 +1,6 @@
 #include "driver2.h"
 #include "shadow.h"
+#include "../utils/DeveloperRenderCoverage.h"
 #include "texture.h"
 #include "system.h"
 #include "main.h"
@@ -458,6 +459,9 @@ extern VECTOR dummy;
 // [D] [T] [A] better shadow code
 void PlaceShadowForCar(VECTOR *shadowPoints, int subdiv, int zOfs, int flag)
 {	
+#ifndef PSX
+	const void* coverageBegin = current->primptr;
+#endif
 	MVERTEX subdivVerts[5][5];
 	SVECTOR points[4];
 
@@ -509,6 +513,9 @@ void PlaceShadowForCar(VECTOR *shadowPoints, int subdiv, int zOfs, int flag)
 	drawMesh((MVERTEX(*)[5][5])subdivVerts, subdiv, subdiv, &plotContext);
 
 	current->primptr = plotContext.primptr;
+#ifndef PSX
+	DeveloperRenderCoverage_RecordLegacy(RENDER_CATEGORY_DECALS, coverageBegin, current->primptr);
+#endif
 }
 
 static int numcv;

@@ -16,8 +16,25 @@ Implementation: game-owned identity in
 `src_rebuild/Game/C/assetcatalog.{h,c}` and the producers in `cars.c`,
 `motion_c.c`, `pedest.c`, `objanim.c`, `draw.c` and `tile.c`; the panel in
 `src_rebuild/utils/DeveloperGraphicsPanel.cpp`; picking, cutout coverage and the
-diagnostics in `src_rebuild/PsyCross/src/gpu/PsyX_GPU.cpp` (carried by
-`patches/psycross/developer-overlay.patch`).
+diagnostics in `src_rebuild/PsyCross/src/gpu/PsyX_GPU.cpp` in the project fork.
+
+## Native logical picking (R03)
+
+When native mode is requested, the panel uses the native GPU world ID attachment,
+not the old primitive picker described in the remaining sections of this document.
+Opaque/cutout depth, culling and alpha determine the hit; backdrop and original UI
+cannot replace the world ID. One-pixel readback completes at the ordinary owner
+fence with copied snapshot identity, mesh/material generations and simulation tick.
+Window-to-drawable coordinates, resize, supersession/cancellation and retired
+resources are validated. Missing/loading/failed native frames cannot reuse old IDs.
+
+The game retains owned original logical/rendered/vertex model handles, placement,
+source counts, material-part index and texture/page/index/CLUT/UV metadata. Real
+Chicago checks resolved two parts of building285 to the same logical instance
+with distinct DTGEN011/DTGENL04 artwork, tree162/TREE01 and an explicit sky miss.
+The declared native slice supports logical instances/material parts; native face
+highlighting/export and dynamic-category selection remain pending. It does not
+inherit the four legacy scopes or export guarantees below.
 
 ## Coverage
 

@@ -85,8 +85,8 @@ real but are not required by anything currently in this fork.
 - 2026-09-19: the gating condition ("after Vulkan parity is proven") is now met.
   The Vulkan game renderer is the desktop default and its post-flip defects are
   fixed (see
-  [`../renderer-modernization/index.md`](../renderer-modernization/index.md) and
-  [`../../roadmap/done/vulkan-game-renderer.md`](../../roadmap/done/vulkan-game-renderer.md)),
+  [the active rendering catalog](../../rendering/index.md) and
+  [the current renderer baseline](../../rendering/current-state.md)),
   so an SDL3 migration is no longer blocked by renderer work. No decision has
   been adopted; the recommendation to treat SDL3 as its own bounded milestone
   still stands.

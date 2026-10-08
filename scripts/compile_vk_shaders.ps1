@@ -28,10 +28,14 @@ $shaderDir = Join-Path $repoRoot 'src_rebuild/PsyCross/src/render/vk_shaders'
 $output = Join-Path $repoRoot 'src_rebuild/PsyCross/src/render/PsyX_Vk_Shaders.h'
 
 $shaders = @(
+	@{ Name = 'native_vert'; File = 'native.vert'; Target = 'vulkan1.1' },
+	@{ Name = 'native_frag'; File = 'native.frag'; Target = 'vulkan1.1' },
 	@{ Name = 'fixture_vert'; File = 'fixture.vert' },
 	@{ Name = 'fixture_frag'; File = 'fixture.frag' },
 	@{ Name = 'shadow_vert';  File = 'shadow.vert'  },
 	@{ Name = 'shadow_frag';  File = 'shadow.frag'  },
+	@{ Name = 'psx_shadow_vert'; File = 'psx_shadow.vert' },
+	@{ Name = 'psx_shadow_frag'; File = 'psx.frag'; Output = 'psx_shadow.frag.spv'; Target = 'vulkan1.1'; Defines = @('-DPSYX_SHADOW_PASS=1') },
 	@{ Name = 'fullscreen_vert';    File = 'fullscreen.vert'    },
 	@{ Name = 'psx_modern_vert';    File = 'psx_modern.vert'    },
 	@{ Name = 'psx_modern_frag';    File = 'psx_modern.frag'    },
@@ -54,10 +58,11 @@ $lines.Add('')
 
 foreach ($shader in $shaders) {
 	$source = Join-Path $shaderDir $shader.File
-	$spirv = Join-Path $shaderDir ($shader.File + '.spv')
+	$spirvName = if ($shader.Output) { $shader.Output } else { $shader.File + '.spv' }
+	$spirv = Join-Path $shaderDir $spirvName
 
 	$target = if ($shader.Target) { $shader.Target } else { 'vulkan1.3' }
-	& $Glslang -V $source -o $spirv --target-env $target | Out-Null
+	& $Glslang -V $source -o $spirv --target-env $target @($shader.Defines) | Out-Null
 	if ($LASTEXITCODE -ne 0) {
 		throw "glslang failed for $($shader.File)"
 	}

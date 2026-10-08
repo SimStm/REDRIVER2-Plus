@@ -1,5 +1,6 @@
 #include "driver2.h"
 #include "loadview.h"
+#include "../utils/DeveloperRenderCoverage.h"
 
 #include "E3stuff.h"
 #include "system.h"
@@ -26,6 +27,10 @@ void ShowLoading(void)
 	if (NewLevel == 0 && gInFrontend == 0)
 		return;
 
+#ifndef PSX
+	DeveloperRenderCoverage_BeginFrame("loading", loading_bar_pos);
+	DeveloperRenderCoverage_RecordDirect(RENDER_CATEGORY_LOADING, 2);
+#endif
 	int col = (VERTTYPE)(++loading_bar_pos * load_steps);
 		
 	if (col > 120)
@@ -53,6 +58,7 @@ void ShowLoading(void)
 	PutDispEnv(&load_disp);
 
 #ifndef PSX
+	DeveloperRenderCoverage_EndFrame();
 	PsyX_EndScene();
 #endif
 }
@@ -123,6 +129,9 @@ void FadeGameScreen(int flag)
 		DrawPrim(&poly);
 
 #ifndef PSX
+		DeveloperRenderCoverage_BeginFrame("fade", 0);
+		DeveloperRenderCoverage_RecordDirect(RENDER_CATEGORY_LOADING, 2);
+		DeveloperRenderCoverage_EndFrame();
 		DrawSync(0);
 		PsyX_EndScene();
 #endif
@@ -286,6 +295,11 @@ void ShowLoadingScreen(char *screen_name, int effect, int loading_steps)
 			DrawPrim(&prims[j]);
 		}
 		
+#ifndef PSX
+		DeveloperRenderCoverage_BeginFrame("loading-image", i);
+		DeveloperRenderCoverage_RecordDirect(RENDER_CATEGORY_LOADING, 8);
+		DeveloperRenderCoverage_EndFrame();
+#endif
 		DrawSync(0);
 
 		// [A]
@@ -344,6 +358,11 @@ void CloseShutters(int speed, int width, int height)
 		DrawPrim(&poly[0]);
 		DrawPrim(&poly[1]);
 
+#ifndef PSX
+		DeveloperRenderCoverage_BeginFrame("shutters", h);
+		DeveloperRenderCoverage_RecordDirect(RENDER_CATEGORY_LOADING, 2);
+		DeveloperRenderCoverage_EndFrame();
+#endif
 		DrawSync(0);	// [A] added to avoid rendering bugs
 
 #ifndef PSX
@@ -419,6 +438,9 @@ void DrawFadePoly(void)
 
 	addPrim(current->ot + 1, fl_g4);
 	addPrim(current->ot + 1, &fade_gt4[current->id]);
+#ifndef PSX
+	DeveloperRenderCoverage_RecordDirect(RENDER_CATEGORY_HUD, 2);
+#endif
 }
 
 // [D] [T]

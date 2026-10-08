@@ -26,7 +26,12 @@ Do not change ordinary driving controls or require a second game simulation. An 
 
 ## Dependencies and risks
 
-Order 07 after the handle contract in [04](../done/asset-catalog-identity.md) and enough coverage in [06](../done/inspector-selection-coverage.md). Source model adapters can be delivered with [09](model-export-import-roundtrip.md).
+Keep the handle contract in [asset identity](../done/asset-catalog-identity.md)
+and [selection coverage](../done/inspector-selection-coverage.md). Native source
+adapters and modern asset round trips are now part of
+[R02](../../rendering/stages/02-original-asset-decoding.md) and
+[R09](../../rendering/stages/09-modern-assets-and-pbr-mods.md). This independent
+preview plan does not block the graphics rewrite.
 
 ## Suggested execution order
 

@@ -42,3 +42,26 @@ does both runs and stores the results under `src_rebuild/build/`.
 `glReadPixels` returns bottom-up rows, so `PsyX_TakeScreenshot()` flips the
 image before `SDL_SaveBMP`; keep that flip when changing the capture path or
 screenshots become vertically mirrored.
+
+**When** changing generated `.vcxproj.user` debugger arguments/environment on
+disk, **then** close/reopen the solution and verify the launched process command
+line. Visual Studio can retain old values and run a city instead of a requested
+fixture. Check fresh `vk_fixture.log` timestamps/last run for `-vkpsxtest`;
+`REDRIVER2.log` is not its result log, and appended earlier PASS lines are not
+evidence for the new build. Fixture screenshots are BMP even with a `.png` suffix.
+
+Back up all test INI bytes and debugger settings before modifying them; restore
+and verify hashes after stopping owned sessions. An off-screen saved ImGui panel
+position can make F11 appear ineffective at a smaller resolution: test with a
+temporary visible position and restore it, without claiming an input defect.
+
+**When** validating multiple native states in one paused session, **then** arm
+the existing normal capture tick and resume through the owner breakpoint; wait
+for confirmed Break mode before querying results. Do not execute GPU screenshot
+readback through debugger function evaluation: an early R03 evaluation saved a
+BMP but that session subsequently exited0, with cause unconfirmed. The normal
+capture path subsequently completed all camera/mod/physics tests. Label source
+versus completed-backend ticks separately. If a desktop key pulse is not consumed,
+do not claim driving from it; a finite mapped-pad fixture may test normal physics,
+but record the injection boundary and never assign car/camera transforms for that
+claim. Save pixel/resource evidence and remove only the test-owned breakpoints.

@@ -11,6 +11,11 @@ tags: [discussions, world, levels, procedural, testing, frontend]
 
 ## Context and decision status
 
+2026-10-06 update: the active [native rendering plan](../../rendering/index.md)
+uses this implemented fixture alongside original-city tests. The earlier
+playground-first renderer dependency below is historical and superseded; it
+does not block R00 or original-city implementation in the new plan.
+
 The user asks whether the game can provide a separate, flat driving test level:
 roads or blocks, buildings/objects, and a car that can move freely. Questions
 cover procedural generation, a declarative JSON scene, reuse of original city
@@ -26,13 +31,13 @@ On 2026-09-15 the user requested a roadmap and selected the playground as the
 first implementation stage for renderer modernization. The
 [playground roadmap](../../roadmap/done/playable-testing-playground.md)
 defines the adopted bounded scope and the
-[renderer roadmap](../../roadmap/planned/renderer-modernization.md) consumes it.
+[renderer roadmap](../../roadmap/planned/native-vulkan-renderer.md) consumes it.
 No implementation has started through this documentation task.
 
 The renderer backend port (item 14, R7b) that consumed this fixture is now
 delivered - see the completed
-[Vulkan game renderer record](../../roadmap/done/vulkan-game-renderer.md) and its
-[product document](../../product/vulkan-game-renderer.md).
+[Vulkan game renderer record](../../rendering/current-state.md) and its
+[product document](../../rendering/current-state.md).
 
 This is an adopted sequencing dependency, not a claim that rendering could
 never be prototyped in an original city. Playground P1-P4 now precede renderer

@@ -26,6 +26,8 @@
 #include "utils/DeveloperGraphicsPanel.h"
 #include "utils/DeveloperInputMapping.h"
 #include "utils/DeveloperModernMesh.h"
+#include "utils/DeveloperNativeScene.h"
+#include "utils/DeveloperNativeAssets.h"
 #include "utils/DeveloperVkFixture.h"
 #include "utils/HdTextureOverrides.h"
 
@@ -542,6 +544,8 @@ int main(int argc, char** argv)
 	int useVulkan = 0;
 #endif
 	int useOpenGL = 0;
+	int nativeWorld = 0;
+	int nativeAssets = 0;
 
 	for (int i = 1; i < argc; i++)
 	{
@@ -568,6 +572,16 @@ int main(int argc, char** argv)
 			useOpenGL = 1;
 			useVulkan = 0;
 		}
+		else if (!strcmp(argv[i], "-nativeworld"))
+			nativeWorld = 1;
+		else if (!strcmp(argv[i], "-nativeassets"))
+			nativeAssets = 1;
+		else if (!strcmp(argv[i], "-nativeassetview"))
+			nativeAssets = 2;
+		else if (!strcmp(argv[i], "-nativeregionprobe"))
+			nativeAssets = 3;
+		else if (!strcmp(argv[i], "-nativeregion"))
+			nativeAssets = 4;
 	}
 
 	if (useOpenGL)
@@ -578,8 +592,9 @@ int main(int argc, char** argv)
 	// Developer Vulkan fixture (renderer roadmap R7): a standalone modern-scene
 	// window with its own swapchain. It must run before any OpenGL or game
 	// initialisation because it owns the SDL window for its lifetime.
-	if (DeveloperVkFixture_HandleCommandLine(argc, argv))
-		return 0;
+	const DeveloperVkFixtureResult fixtureResult = DeveloperVkFixture_HandleCommandLine(argc, argv);
+	if (fixtureResult != DeveloperVkFixtureResult::NotRequested)
+		return fixtureResult == DeveloperVkFixtureResult::Failure ? 1 : 0;
 
 	config = ini_load(configFilename);
 
@@ -716,6 +731,16 @@ int main(int argc, char** argv)
 	}
 
 	// start with menu mapping
+	if ((nativeWorld || nativeAssets == 2 || nativeAssets == 4) && PsyX_GetRenderBackend() != PSYX_BACKEND_VULKAN)
+	{
+		const char* message = "Native world rendering requires Vulkan. The selected or initialized backend is unsupported; legacy world recovery is disabled. Choose Vulkan for native rendering or launch OpenGL separately without native scene options.";
+		PsyX_Log_Error("%s\n", message);
+		SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Native renderer unavailable", message, NULL);
+		PsyX_Shutdown();
+		return 1;
+	}
+
+	// start with menu mapping
 	SwitchMappings(1);
 	// The bindings parsed from config.ini are the defaults the developer panel
 	// resets to, so they must be recorded before the developer overrides are
@@ -725,6 +750,8 @@ int main(int argc, char** argv)
 	// The modern-mesh module reads its asset/light config first; the developer
 	// Graphics settings then own the authoritative classic/enhanced toggle.
 	DeveloperModernMesh_Initialise();
+	DeveloperNativeScene_Initialise(nativeAssets == 2 ? 0 : nativeWorld);
+	DeveloperNativeAssets_Initialise(nativeAssets);
 	DeveloperGraphicsPanel_Initialise();
 
 	// An explicit config.ini key is applied after the panel so it can force
@@ -738,6 +765,8 @@ int main(int argc, char** argv)
 
 	DeinitStringMng();
 	DeveloperModernMesh_Shutdown();
+	DeveloperNativeScene_Shutdown();
+	DeveloperNativeAssets_Shutdown();
 	DeveloperGraphicsPanel_Shutdown();
 
 	PsyX_Shutdown();

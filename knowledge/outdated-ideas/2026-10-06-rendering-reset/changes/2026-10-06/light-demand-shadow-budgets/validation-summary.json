@@ -1,0 +1,49 @@
+{
+  "date": "2026-10-06",
+  "configuration": "Release_dev|x64",
+  "psycrossCommit": "446b96daaf74b0aeb6a68338aac7e82d7fd799c5",
+  "spawn18000": {
+    "beforeTriangles": 21766,
+    "afterTriangles": 8751,
+    "changedDepthTexels": 0,
+    "changedColourPixels": 0
+  },
+  "route18000": {
+    "nearChangedTexels": 0,
+    "farChangedTexels": 0,
+    "changedColourPixels": 0,
+    "beforeTriangles": 28632,
+    "afterTriangles": 8535
+  },
+  "route40000": {
+    "afterTriangles": 48477,
+    "farExtent": 40000,
+    "nearChanged": 0,
+    "farPopulatedTexels": 1018432
+  },
+  "nativeCpu": {
+    "sun": [
+      -0.94,
+      0.12,
+      -0.32
+    ],
+    "range": 18000,
+    "collectionWindowUs": [
+      663.4,
+      651.0,
+      644.4
+    ],
+    "warmStaticWindowUs": [
+      130.2,
+      124.8
+    ],
+    "gpuOrFpsGainEstablished": false
+  },
+  "freshRenderDoc146FirstReplayMessages": 0,
+  "mcpRenderDoc141FirstReadMessages": 10,
+  "boundaryAndRangeHarness": "PASS; actual functions with mocked capacity",
+  "psxSelfTest": "fresh launch PASS",
+  "runtimeSettingsRestoredByteExactly": true,
+  "shadersChangedOrRegenerated": false,
+  "openGLValidationPerformed": false
+}

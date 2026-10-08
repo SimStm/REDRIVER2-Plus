@@ -7,6 +7,17 @@ tags: [okf, rules]
 
 # Rules
 
+- [Use the active rendering plan and exclude archived ideas](rendering-knowledge-and-archive.md):
+  start at `knowledge/rendering/`; archived graphics records require explicit
+  user request and do not govern current implementation.
+
+- [Record every Vulkan change for deferred OpenGL compatibility](vulkan-opengl-port-tracking.md):
+  develop Vulkan first and maintain a separate compatibility backlog without
+  assigning roadmap priority or blocking Vulkan delivery.
+- [Use the new drawable extent across Vulkan resize](vulkan-resize-extents.md):
+  allocate targets at the resolved new size and validate world/UI scissors with
+  direct Vulkan validation as well as GPU pixels.
+
 - [Maintain evolving discussion records](discussion-records.md): update the
   same topic as decisions evolve, separating exploration from roadmap adoption
   and implemented behaviour.
@@ -40,23 +51,20 @@ tags: [okf, rules]
 - [Generate a coherent world for a playground or new map](world-scene-generation.md):
   replace surface, cell, collision, visibility and streaming data together when
   adding a generated scene, and avoid donor-world leakage.
-- [Share the legacy projection and depth when adding a modern mesh path](psyx-modern-mesh-bridge.md):
-  reuse `Projection3D` and the GTE vertex encoding, draw in `GR_EndScene`, and
-  restore the caller's VAO instead of binding 0.
 - [Keep asset identity and instance identity separate](asset-identity-lifetime.md):
   resource records are shared and stable while instances and runtime slots are
   not, and retained references must detect reuse.
 - [Self-learning rules](self-learning.md): turn repeated, evidenced constraints
   into durable project knowledge.
 - [Use configured MCP servers for docs, debugging, and game runs](mcp-agent-tooling.md):
-  check for context7, visual-studio-ide-mcp, and desktop-control MCPs first, and
-  never block on a terminal launch of the interactive game process.
+  check available servers; use verified direct build/capture/local replay for
+  routine native checks and VS MCP for debugging; preserve settings and evidence.
 
 - [Verify renderer parity with state and pixel evidence](renderer-parity-evidence.md):
   check API semantics, actual bridge paths and controlled captures.
-- [Write composite results instead of blending above 1.0](renderer-composite-writes.md):
-  sample the scene colour for tinting composites, and treat the PSX depth top
-  band as backdrop rather than geometry.
+- [Validate native backdrop against clipped source geometry and artwork](native-clip-and-backdrop-validation.md):
+  confirm source UVs, matrix layout, six-plane clipping and independent pixels;
+  keep excluded edges and unknown auxiliary producers pending.
 - [Back up the generated Visual Studio projects before regenerating](visual-studio-project-regeneration.md):
   `premake5 vs2022` deletes the hand-added `Release_dev_gl` and
   `Release_dev_playground` configurations, and new `utils/` sources are only
@@ -64,3 +72,23 @@ tags: [okf, rules]
 - [Write developer settings files through DeveloperSettingsFile_WriteKeys](developer-settings-files.md):
   preserve unknown keys and comments, drop what the owner no longer wants, and
   keep the previous contents as `.bak` so a failed save cannot lose the file.
+- [Keep Vulkan CPU selection reads in cached memory](vulkan-cpu-selection-memory.md):
+  host-coherent mappings can be expensive to read; maintain bounded current-frame
+  CPU copies and measure native submission cost.
+- [Preserve upload lifetimes and original atlas UV coverage](native-upload-and-original-uv-lifetimes.md):
+  retain submitted resources after failed waits; named texture rectangles do not
+  bound every original MODEL UV. Active PNGs keep explicit clamp behaviour.
+- [Derive native blending from the original draw policy](native-source-shape-flags.md):
+  collision/shape flags and texture alpha alone do not establish raster blending.
+- [Own and validate complete native mip chains](native-texture-mips.md):
+  linear-light alpha-weighted filtering, quantized cutout coverage and complete
+  ownership/LOD ranges; runtime replacements must fit the declared cap.
+- [Keep native failures explicit and picking tied to the submitted frame](native-scene-failure-and-picking.md):
+  no automatic old-world recovery, distinct loading/error states, owned logical
+  GPU picks and transactional mapped-buffer allocation with real retry evidence.
+- [Preserve native coordinate precision and prove coplanar ownership](native-coplanar-depth.md):
+  cancel large translations before projection; authored paint and source overlaps
+  need distinct evidence, with native pixels/IDs and visible seams still gating acceptance.
+- [Separate native sampling diagnosis from accuracy acceptance](native-sampling-validation.md):
+  isolate texels/UVs/filtering/encoding, preserve failed tolerances and keep
+  hardware characterization distinct from accepted colour accuracy.
