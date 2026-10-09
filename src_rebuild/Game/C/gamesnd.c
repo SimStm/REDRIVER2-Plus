@@ -1559,7 +1559,7 @@ void ExplosionSound(VECTOR* pos, int type)
 
 	Start3DSoundVolPitch(-1, SOUND_BANK_MISSION,
 		bang, P.vx / 4, P.vy / 4, P.vz / 4,
-		0, ((FrameCnt * pos->vx ^ rnd * pos->vz) & 0x3ffU) + 3584);
+		0, ((CameraCnt * pos->vx ^ rnd * pos->vz) & 0x3ffU) + 3584);
 }
 
 
@@ -2581,7 +2581,7 @@ void LeadHorn(CAR_DATA* cp)
 		return;
 
 	if (horn_time == 0)
-		rnd = (cp->hd.where.t[0] ^ cp->hd.where.t[2]) * (FrameCnt ^ cp->hd.where.t[1]) & 0x7f;
+		rnd = (cp->hd.where.t[0] ^ cp->hd.where.t[2]) * (CameraCnt ^ cp->hd.where.t[1]) & 0x7f;
 
 	horn_time++;
 

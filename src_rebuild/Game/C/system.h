@@ -122,7 +122,12 @@ extern DRAW_MODE draw_mode_ntsc;
 #define SCREEN_FB	512
 #define SCREEN_FB_H	256
 
-#ifdef PAL_VERSION
+#ifndef PSX
+#include "../../utils/ProjectClock.h"
+#define SCREEN_H (ProjectClock_GetVideoMode() == PROJECT_VIDEO_PAL ? 256 : 240)
+#define draw_mode (*(ProjectClock_GetVideoMode() == PROJECT_VIDEO_PAL ? &draw_mode_pal : &draw_mode_ntsc))
+#define video_mode (ProjectClock_GetVideoMode() == PROJECT_VIDEO_PAL ? MODE_PAL : MODE_NTSC)
+#elif defined(PAL_VERSION)
 #define SCREEN_H	256
 #define draw_mode draw_mode_pal
 #define video_mode MODE_PAL

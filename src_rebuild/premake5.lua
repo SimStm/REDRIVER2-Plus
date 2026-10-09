@@ -33,6 +33,10 @@ WEBSHELL_PATH = "../platform/Emscripten"	-- must be relative to makefile path (S
 GAME_REGION = os.getenv("GAME_REGION") or "NTSC_VERSION" -- or PAL_VERSION
 GAME_VERSION = os.getenv("APPVEYOR_BUILD_VERSION") or nil
 
+-- RED2_BIN_DIR overrides the output folder so regional or migration builds do
+-- not overwrite each other. Unset keeps the historical bin/<config> location.
+BIN_DIR = os.getenv("RED2_BIN_DIR") or "bin/%{cfg.buildcfg}"
+
 if not (GAME_REGION == "NTSC_VERSION" or GAME_REGION == "PAL_VERSION") then
     error("'GAME_REGION' should be 'NTSC_VERSION' or 'PAL_VERSION'")
 end
@@ -44,7 +48,10 @@ workspace "REDRIVER2"
 		if os.target() == "emscripten" then
     		location "build_web"
 		else
-    		location "build"
+			-- RED2_BUILD_DIR lets a check generate isolated project files
+			-- (e.g. a baseline or migration build) without overwriting the
+			-- default "build" outputs. Unset keeps the historical location.
+			location(os.getenv("RED2_BUILD_DIR") or "build")
 		end
 	else
 		-- setup VSCode generator settings
@@ -208,11 +215,11 @@ project "REDRIVER2"
     kind "WindowedApp"
 
     language "c++"
-    targetdir "bin/%{cfg.buildcfg}"
+    targetdir(BIN_DIR)
 
     -- Launch the debugger from the executable folder so config.ini, mods/ and
     -- developer_debug_start.ini resolve from the expected working directory.
-    debugdir "bin/%{cfg.buildcfg}"
+    debugdir(BIN_DIR)
 
     includedirs { 
         "Game", 
@@ -280,7 +287,7 @@ project "REDRIVER2"
         linkoptions {
 			"/SAFESEH:NO", -- Image Has Safe Exception Handers: No. Because of openal-soft
         }
-        
+
     filter "system:linux"
         includedirs {
             "/usr/include/SDL2"

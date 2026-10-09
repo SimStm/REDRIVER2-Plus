@@ -7,6 +7,9 @@
 #include "gamesnd.h"
 #include "xaplay.h"
 #include "players.h"
+#ifndef PSX
+#include "../../utils/ProjectClock.h"
+#endif
 
 #define SPU_CHANNEL_COUNT 24
 #define LSB_BANK_COUNT 7
@@ -472,7 +475,9 @@ int CompleteSoundSetup(int channel, int bank, int sample, int pitch, int proximi
 
 	rate = samp->samplerate * pitch;
 	bpf = (rate / 4096);
-#ifdef PAL_VERSION
+#ifndef PSX
+	bpf /= ProjectClock_GetVideoMode() == PROJECT_VIDEO_PAL ? 50 : 60;
+#elif defined(PAL_VERSION)
 	bpf /= 50;
 #else
 	bpf /= 60;

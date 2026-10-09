@@ -4,7 +4,7 @@
 project "PsyCross"
     kind "StaticLib"
     language "C++"
-    targetdir "bin/%{cfg.buildcfg}"
+    targetdir(BIN_DIR)
 
     defines { GAME_REGION }
 

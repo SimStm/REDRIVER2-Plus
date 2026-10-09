@@ -4,6 +4,9 @@
 extern void InitCyclingPals(); // 0x000149B4
 
 extern void ColourCycle(); // 0x00013980
+#ifndef PSX
+extern void DrawCyclingPals();
+#endif
 
 extern void FindSmashableObjects(); // 0x00014950
 

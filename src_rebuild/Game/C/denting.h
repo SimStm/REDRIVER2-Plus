@@ -10,6 +10,7 @@ extern void CreateDentableCar(CAR_DATA *cp); // 0x0003A6E4
 
 extern void InitHubcap(); // 0x0003A874
 extern void HandlePlayerHubcaps(int playerId);
+extern void StepHubcap();
 extern void MoveHubcap(); // 0x0003AB4C
 
 extern void SetupSpecDenting(char *loadbuffer); // 0x0003B240

@@ -814,7 +814,10 @@ void SetupDrawBufferData(int num_players)
 		}
 	}
 
-#ifdef PAL_VERSION
+#ifndef PSX
+	InitMatrix(aspect);
+	aspect.m[1][1] = ProjectClock_GetVideoMode() == PROJECT_VIDEO_PAL ? 4300 : 4096;
+#elif defined(PAL_VERSION)
 	InitMatrix(aspect);
 	aspect.m[1][1] = 4300;
 #else

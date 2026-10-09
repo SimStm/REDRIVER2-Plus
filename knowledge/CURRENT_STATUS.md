@@ -7,7 +7,7 @@ tags: [okf, status]
 
 # Current status
 
-> Updated: 2026-10-08.
+> Updated: 2026-10-09.
 > Source of truth for implemented surfaces on the current branch; verify source/Git.
 > [RECENT_CONTEXT](RECENT_CONTEXT.md) records the next task and session handoff.
 
@@ -15,8 +15,9 @@ tags: [okf, status]
 
 `feat/new-engine` starts from parent `2e93f215c54e61dd1bbb5d26e439c25303466709`,
 the existing `master` baseline, through a newly created local `main` alias.
-Remote `master`/default branch was not renamed. PsyCross is clean at the baseline
-gitlink `37d399dfd4584df746647cba4d2d832bc27f0922`, from the project fork.
+Remote `master`/default branch was not renamed. PsyCross pins project-fork commit
+`76d83df0e400bdff5c1e83c7be74d9e01ba0c660` (live VSync), published on
+`codex/new-engine-live-vsync`. Unrelated local input-service edits remain separate.
 
 The former dirty native Vulkan work is committed/pushed separately at
 `e68b6ea6b1e30543af77d6244c109f7993ff65cf` on
@@ -29,9 +30,10 @@ Ignored captures/private helpers/builds remain local and do not travel with Git.
 
 Implemented here: [engine-migration planning](roadmap/planned/engine-migration.md),
 E00-E07 stage contracts, five issue briefs, validation policy and updated agent/
-catalog guidance. **No new engine behavior is implemented.** Current source still
-requires PsyCross. Diligent/DiligentFX, FMOD Core, PopcornFX, converted packages,
-independent ticks and eventual removal are planned. Earlier hybrid graphics/
+catalog guidance. **Migration acceptance is unchanged.** E00-E03 retain their local in-progress
+status; this publication includes the requested timing/presentation scope only. Current source still
+requires PsyCross. Diligent/DiligentFX, FMOD Core, full converted packages and eventual removal
+remain migration work. PopcornFX is an optional final extension. Earlier hybrid graphics/
 timing plans are superseded execution directions here.
 
 ## Project and current services
@@ -39,14 +41,43 @@ timing plans are superseded execution directions here.
 REDRIVER2 is reconstructed Driver 2 game logic, not an emulator. Physics,
 collision, AI, missions and replays live primarily under `src_rebuild/Game/`,
 but still call PsyCross math/GTE, clocks, pad, SPU/CD/streaming and GPU services.
-Main-loop simulation and drawing share `FilterFrameTime`/`VSync`; replay repeats
-and counters remain frame/tick indexed. Independent high-FPS presentation is not
-implemented. Future E01 preserves regional semantics before changing clock owners.
+Desktop simulation now uses project-owned fixed regional ticks; presentation
+uses shared car/camera snapshots. Replay consumption remains tick-indexed.
+The PSX path retains its original gate; no physics retiming is introduced.
 
 PsyCross remains a separate submodule from `git@github.com:SimStm/PsyCross.git`.
 Do not substitute upstream or infer removal from a roadmap. Existing C++11 and
 Windows/Linux/web/Android/PSX guards remain. SDK/compiler/target compatibility
 for the new stack is pending E00, not established by cross-platform advertising.
+
+## Complementary FPS and effect corrections
+
+- `ProjectClock.*` owns exact 30 Hz NTSC / 25 Hz PAL simulation phase, bounded
+  catch-up and independent presentation deadlines. `VisualSnapshot.*` shares
+  car/camera translation and rotation time; drawing restores tick camera globals.
+- Effects emit/age/move on regional ticks: smoke, exhaust, debris, leaves, birds,
+  hubcaps and rain. Light phases, title/input unlock and bomb flash are tick-owned;
+  pause messages use regional service ticks. Drawing consumes local interpolated
+  values, invalidates reused slots and avoids advancing shared effect RNG.
+- Palette colours update at ticks and upload through unique per-frame primitive
+  packets, preventing catch-up ordering-table cycles. Existing PSX branches stay
+  guarded. This remains PsyCross presentation; E05 is not accepted.
+- `-statedump` records gameplay, timers, replay cursors, effect digest and light
+  phases, with an optional recorded-field draw guard. Strict comparison requires
+  equal inventories. Full OpenGL ATTRACT.400 matches all 1378 ticks at NTSC 30/360
+  and PAL 25/360; rainy ATTRACT.401 matches all 2289 ticks at NTSC 30/360.
+- NTSC/PAL Release_dev x64 builds and production timing/settings/effect suites
+  pass, including a fresh staged-source rebuild against clean fork 76d83df.
+  Its 360 FPS night/rain dump matches all 2289 reference ticks. These bounded
+  checks do not certify every field, platform or visual.
+- The user confirms NTSC data and defers replay trajectory investigation. The
+  existing route fault also reproduces on b2d8857/historical fork and official
+  upstream 8.0 with local data; no physics or waypoint workaround is included.
+- Earlier local input-service, replay-versioning, converter and Diligent work
+  remains unpublished by this scoped commit. E00-E03 retain in-progress status.
+
+See [effects/evidence](changes/2026-10-09/effect-timing-replay-regression/index.md)
+and [motion evidence](changes/2026-10-08/e01-presentation-motion-fix/index.md).
 
 ## Existing renderer baseline
 
@@ -113,7 +144,12 @@ targeted native contracts, not universal pixel equality with this old pipeline.
   `scripts/run_debug_start.ps1`.
 - F11 Developer Graphics Panel uses vendored ImGui1.91.9b (Windows/Linux) and
   `developer_graphics.ini`, independently from main `config.ini`.
-- Schema8 display controls implement provisional window/fullscreen selection,
+- Schema9 adds presentation FPS (15..360), NTSC/PAL startup preference and VSync
+  beside resolution. FPS/VSync apply live and autosave `developer_graphics.ini`;
+  region selection uses confirmation and activates after restart. The same binary
+  selects regional clock/aspect/audio values. Vulkan honors live VSync changes.
+  [Display controls](changes/2026-10-08/display-frame-controls/index.md).
+- Display controls retain provisional window/fullscreen selection,
   confirmation/revert and a visible independent confirmation window/input capture.
   Window sizing/revert was tested historically; fullscreen remains untested.
   Countdown behavior under minimized frames/debugger stops has documented limits.
@@ -134,12 +170,9 @@ records and dated change evidence. [Migration validation](engine-migration/valid
 requires deterministic mechanics, conversion inventories and targeted native
 resources/pixels/audio, with actual budgets and platform scope.
 
-This planning change ran Git branch/fork/remote verification and documentation
-hygiene/link/contract checks as recorded in
-[the change record](changes/2026-10-08/engine-migration-plan/index.md).
-No fresh game build, gameplay run, GPU capture or audio/VFX test was executed.
-Previously generated projects/executables may belong to the other branch and
-must be regenerated in isolated outputs before any implementation validation.
+The original planning validation is separate from the FPS/effects checks above.
+Fresh isolated builds and bounded runtime evidence are recorded for this scope;
+no migration stage acceptance or native renderer cutover is implied.
 
 Existing commands include `git diff --check`, Premake/generated builds,
 `-vkpsxtest`, `-vkfixture`, backend flags and

@@ -7,6 +7,8 @@ struct DeveloperGraphicsSettings
 	int pgxpTextureMapping;
 	int pgxpZBuffer;
 	int vsync;
+	int presentationFps;
+	int videoMode;
 	int drawDistance;
 	int fieldOfView;
 	int showLegacyStats;
@@ -27,6 +29,9 @@ DeveloperGraphicsSettings DeveloperGraphicsSettings_ReadRuntime();
 void DeveloperGraphicsSettings_Apply(const DeveloperGraphicsSettings& settings);
 bool DeveloperGraphicsSettings_LoadAndApply();
 bool DeveloperGraphicsSettings_SaveRuntime();
+// Autosaves only frame controls; provisional resolution and unrelated session
+// edits are left untouched in the file.
+bool DeveloperGraphicsSettings_SaveFrameSettings();
 void DeveloperGraphicsSettings_RestoreDefaults();
 
 #endif

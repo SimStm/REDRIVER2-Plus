@@ -63,6 +63,11 @@
 #include "assetcatalog_game.h"
 #include "../utils/DeveloperDebugStart.h"
 #include "../utils/DeveloperModernMesh.h"
+#if !defined(PSX)
+#include "../utils/DeterministicBaseline.h"
+#include "../utils/ProjectClock.h"
+#include "../utils/VisualSnapshot.h"
+#endif
 
 int levelstartpos[8][4] = {
 	{ 4785, -1024, -223340, 0},
@@ -821,11 +826,19 @@ void State_GameInit(void* param)
 #endif
 
 	// switch to STATE_GAMELOOP
+#if !defined(PSX)
+	// The fixed simulation tick is now owned by the project clock.
+	ProjectClock_Init();
+	VisualSnapshot_Reset();
+	VisualSnapshot_Capture();
+	VisualSnapshot_UpdateCameras();
+#endif
 	SetState(STATE_GAMELOOP);
 
 #ifndef PSX
-	// set to 30 FPS VSync
-	PsyX_SetSwapInterval(2);
+	// Present is no longer capped at the tick rate; sync to the display when
+	// the user enabled vsync. The simulation cadence comes from ProjectClock.
+	PsyX_SetSwapInterval(1);
 	PsyX_EnableSwapInterval(1);
 #endif
 }
@@ -1392,6 +1405,7 @@ void StepGame(void)
 
 	combointensity = NightAmbient | NightAmbient << 8 | NightAmbient << 0x10;
 
+#ifdef PSX
 	if (NoPlayerControl && AttractMode == 0)
 		ShowReplayOptions();
 
@@ -1408,9 +1422,11 @@ void StepGame(void)
 		PrintStringFeature(G_LTXT(GTXT_Fastforward), 100, 0x1e, 0x1000, 0x1000, 0);
 	}
 
+#endif
+
 	if (NoPlayerControl == 0)
 	{
-		if (pad_connected < 1 && FrameCnt > 2 && bMissionTitleFade == 0 && gInGameCutsceneActive == 0)
+		if (pad_connected < 1 && CameraCnt > 2 && bMissionTitleFade == 0 && gInGameCutsceneActive == 0)
 		{
 			pauseflag = 1;
 			PauseSound();
@@ -1479,7 +1495,34 @@ void StepGame(void)
 
 	if (AttractMode && (paddp || ReplayParameterPtr->RecordingEnd <= CameraCnt))
 		EndGame(GAMEMODE_QUIT);
+
+#if !defined(PSX)
+	// E01: publish the previous/current visual pose for presentation interpolation.
+	VisualSnapshot_Capture();
+#endif
 }
+
+#ifndef PSX
+static void StepDesktopGame(void)
+{
+	const int previousTick = CameraCnt;
+	StepPauseMessages();
+	StepGame();
+	VisualSnapshot_UpdateCameras();
+	if (CameraCnt != previousTick && !pauseflag)
+	{
+		// Original render-side lifetimes/emissions now have one owner per tick,
+		// including catch-up and cutscene skipping. Drawing only consumes poses.
+		StepMissionTitle();
+		AddGroundDebris();
+		StepDebris();
+		StepBombFlash();
+		StepWeather(gWeather);
+		StepCarPresentation();
+	}
+	DeterministicBaseline_AfterTick();
+}
+#endif
 
 // [D] [T]
 void CheckForPause(void)
@@ -1497,7 +1540,7 @@ void CheckForPause(void)
 	// check pads for pause here
 	if (AttractMode == 0 && pauseflag == 0)
 	{
-		if (FrameCnt > 2)
+		if (CameraCnt > 2)
 		{
 			if (NumPlayers == 1)
 			{
@@ -1564,14 +1607,20 @@ int gMultiStep = 0;
 // [D] [T]
 void State_GameLoop(void* param)
 {
-	int cnt;
-
 	if (gSkipInGameCutscene)
 	{
+#ifdef PSX
 		StepGame();
+#else
+		StepDesktopGame();
+#endif
 		ClearCurrentDrawBuffers();
 		return;
 	}
+
+#ifdef PSX
+	// PSX keeps its real vblank gate and 32 Hz clock-driven multi-step path.
+	int cnt;
 
 	if (!FilterFrameTime())
 		return;
@@ -1583,7 +1632,6 @@ void State_GameLoop(void* param)
 	if (FrameCnt == 5)
 		SetDispMask(1);
 
-#ifdef PSX
 	static int lastTime32Hz = 0;
 
 	int curTime = clock_realTime.time32Hz;
@@ -1609,13 +1657,62 @@ void State_GameLoop(void* param)
 		StepGame();
 	}
 #else
-	cnt = FastForward ? 7 : 1;
-	while (--cnt >= 0)
-		StepGame();
+	// Desktop: ProjectClock owns the fixed simulation cadence, so the tick no
+	// longer depends on the emulated vblank, the swap interval or CPU speed.
+	// Presentation runs every frame; the simulation advances by whole fixed
+	// ticks only, so a higher display FPS adds frames, not game time.
+	int ticks = ProjectClock_BeginFrame();
+
+	// Bounded backlog is explicit: surface dropped ticks instead of silently
+	// losing them, rate-limited so a sustained stall cannot flood the log.
+	{
+		static unsigned int lastDropped = 0;
+		static unsigned long long lastDropLogMicros = 0;
+		const unsigned int dropped = ProjectClock_GetDroppedTicks();
+
+		if (dropped != lastDropped)
+		{
+			const unsigned long long nowMicros = ProjectClock_ElapsedMicros();
+			if (lastDropLogMicros == 0 || nowMicros - lastDropLogMicros > 1000000ULL)
+			{
+				printWarning("ProjectClock: dropped %u simulation tick(s) to bound catch-up (total %u)\n",
+					dropped - lastDropped, dropped);
+				lastDropLogMicros = nowMicros;
+			}
+
+			lastDropped = dropped;
+		}
+	}
+
+	if (ticks > 0 && FastForward)
+		ticks = 7;
+
+	// The display is unmasked once, after the first few presented frames. This
+	// must run on every presentation frame, not only on tick frames, or a
+	// higher presentation FPS could skip over FrameCnt == 5 and stay masked.
+	if (FrameCnt == 5)
+		SetDispMask(1);
+
+	for (int i = 0; i < ticks; ++i)
+	{
+		VisualSnapshot_RestoreCamera();
+		UpdatePadData();
+		CheckForPause();
+		StepDesktopGame();
+	}
 #endif
 
+#ifndef PSX
+	DeterministicBaseline_BeginPresentation();
+#endif
 	_CutRec_Draw();
 	DrawGame();
+#ifndef PSX
+	DeterministicBaseline_EndPresentation();
+#endif
+#ifndef PSX
+	VisualSnapshot_RestoreCamera();
+#endif
 	
 	if (game_over)
 		SetState(STATE_GAMECOMPLETE);
@@ -1883,6 +1980,10 @@ int redriver2_main(int argc, char** argv)
 	// this is the only difference between the files on CD
 #ifdef DEMO_VERSION
 	ScreenNames = OPMScreenNames;
+#elif !defined(PSX)
+	ScreenNames = ProjectClock_GetVideoMode() == PROJECT_VIDEO_PAL ? PALScreenNames : NTSCScreenNames;
+	if (!FileExists(ScreenNames[0]))
+		ScreenNames[0] = ProjectClock_GetVideoMode() == PROJECT_VIDEO_PAL ? NTSCScreenNames[0] : PALScreenNames[0];
 #elif NTSC_VERSION
 	ScreenNames = NTSCScreenNames;
 
@@ -1967,6 +2068,13 @@ int redriver2_main(int argc, char** argv)
 		else if (!strcmp(argv[i], "-vulkan") || !strcmp(argv[i], "-opengl"))
 		{
 			// Do nothing in this step, only avoids command line popup. The renderer will be initialized later in the startup process.
+		}
+		else if (!strcmp(argv[i], "-statedump") || !strcmp(argv[i], "-statedumpevery"))
+		{
+			// Consumed by DeterministicBaseline in the platform entry point.
+			// Skip the option's value here only to avoid the command line popup.
+			if (argc - i >= 2)
+				i++;
 		}
 #ifdef DEBUG_OPTIONS
 		else if (!strcmp(argv[i], "-exportxasubtitles"))
@@ -2330,7 +2438,15 @@ void RenderGame2(int view)
 	int notInDreaAndStevesEvilLair;
 
 	CurrentPlayerView = view;
+#ifndef PSX
+	if (view == 0)
+		DrawCyclingPals();
+#endif
+#ifdef PSX
 	InitCamera(&player[view]);
+#else
+	VisualSnapshot_ApplyCamera(view);
+#endif
 
 #ifndef PSX
 	int screenW, screenH;
@@ -2355,6 +2471,25 @@ void RenderGame2(int view)
 	if (gLoadedMotionCapture != 0)
 		DrawAllPedestrians();
 
+#ifndef PSX
+	if (NoPlayerControl && AttractMode == 0)
+		ShowReplayOptions();
+
+	// process fast forward
+	if (FastForward != 0 && CameraCnt < ReplayParameterPtr->RecordingEnd - 1)
+	{
+		int color;
+		color = CameraCnt & 0x1f;
+
+		if (color > 15)
+			color = 32 - color;
+
+		SetTextColour((color & 0x1f) << 3, 0, 0);
+		PrintStringFeature(G_LTXT(GTXT_Fastforward), 100, 0x1e, 0x1000, 0x1000, 0);
+	}
+
+#endif
+
 	// do a lot of stuff
 	DisplayMissionTitle();
 	DrawInGameCutscene();
@@ -2369,7 +2504,9 @@ void RenderGame2(int view)
 	
 	DrawDrivingGames();
 	DrawThrownBombs();
+#ifdef PSX
 	AddGroundDebris();
+#endif
 
 	// draw events that use cell object
 	DrawEvents(0);

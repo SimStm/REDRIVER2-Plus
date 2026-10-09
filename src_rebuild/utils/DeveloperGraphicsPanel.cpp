@@ -3,6 +3,7 @@
 #include "DeveloperDebugStart.h"
 #include "DeveloperGraphicsSettings.h"
 #include "DeveloperInputMapping.h"
+#include "ProjectClock.h"
 #include "DeveloperModernMesh.h"
 #include "HdTextureOverrides.h"
 
@@ -75,6 +76,7 @@ char g_inspectorExportStatus[512] = "Select a texture to export it into a new or
 const float kDisplayRevertSeconds = 15.0f;
 
 int g_displayRevertArmed = 0;
+int g_pendingVideoMode = -1;
 int g_displayRevertFullscreen = 0;
 int g_displayRevertWidth = 0;
 int g_displayRevertHeight = 0;
@@ -83,6 +85,17 @@ char g_displayStatus[128] = "";
 
 // Defined below, once the binding-capture state it also reads is declared.
 void UpdateOverlayInputState();
+
+bool HasPendingDisplayChange()
+{
+	return g_displayRevertArmed || g_pendingVideoMode >= 0;
+}
+
+void SaveFrameSettings()
+{
+	snprintf(g_persistenceStatus, sizeof(g_persistenceStatus), "%s",
+		DeveloperGraphicsSettings_SaveFrameSettings() ? "Saved developer_graphics.ini" : "Save failed; frame settings remain in session");
+}
 
 int ChaseDisplayMode(int fullscreen, int width, int height)
 {
@@ -100,12 +113,12 @@ int ChaseDisplayMode(int fullscreen, int width, int height)
 void BeginDisplayChange(int fullscreen, int width, int height)
 {
 	SDL_Window* window = PsyX_GetSDLWindow();
-	if (window)
+	if (!g_displayRevertArmed && window)
 	{
 		g_displayRevertFullscreen = (SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) != 0;
 		SDL_GetWindowSize(window, &g_displayRevertWidth, &g_displayRevertHeight);
 	}
-	else
+	else if (!g_displayRevertArmed)
 	{
 		g_displayRevertFullscreen = 0;
 		g_displayRevertWidth = width;
@@ -122,8 +135,10 @@ void BeginDisplayChange(int fullscreen, int width, int height)
 
 void RevertDisplayMode()
 {
-	ChaseDisplayMode(g_displayRevertFullscreen, g_displayRevertWidth, g_displayRevertHeight);
+	if (g_displayRevertArmed)
+		ChaseDisplayMode(g_displayRevertFullscreen, g_displayRevertWidth, g_displayRevertHeight);
 	g_displayRevertArmed = 0;
+	g_pendingVideoMode = -1;
 	g_displayRevertRemaining = 0.0f;
 	UpdateOverlayInputState();
 }
@@ -132,10 +147,14 @@ void RevertDisplayMode()
 // the display tests so both exercise the same path.
 int ConfirmDisplayMode()
 {
+	const bool saveResolution = g_displayRevertArmed != 0;
+	if (g_pendingVideoMode >= 0)
+		ProjectClock_SetPreferredVideoMode(g_pendingVideoMode);
 	g_displayRevertArmed = 0;
+	g_pendingVideoMode = -1;
 	g_displayRevertRemaining = 0.0f;
 	UpdateOverlayInputState();
-	return DeveloperGraphicsSettings_SaveRuntime() ? 1 : 0;
+	return (saveResolution ? DeveloperGraphicsSettings_SaveRuntime() : DeveloperGraphicsSettings_SaveFrameSettings()) ? 1 : 0;
 }
 
 // Runs every frame the overlay is drawn, visible or not, so the countdown is
@@ -150,7 +169,7 @@ int ConfirmDisplayMode()
 // that follow.
 void UpdateDisplayRevert()
 {
-	if (!g_displayRevertArmed)
+	if (!HasPendingDisplayChange())
 		return;
 
 	const float kMaxFrameStep = 0.25f;
@@ -170,7 +189,7 @@ void UpdateDisplayRevert()
 // resolution change it is asking about.
 void DrawDisplayConfirmWindow()
 {
-	if (!g_displayRevertArmed)
+	if (!HasPendingDisplayChange())
 		return;
 
 	const ImGuiIO& io = ImGui::GetIO();
@@ -184,9 +203,12 @@ void DrawDisplayConfirmWindow()
 	if (ImGui::Begin("Display mode", NULL, flags))
 	{
 		ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.3f, 1.0f), "Display mode not confirmed");
+		if (g_pendingVideoMode >= 0)
+			ImGui::Text("%s: takes effect after restarting the application.",
+				g_pendingVideoMode == PROJECT_VIDEO_PAL ? "PAL (25 Hz)" : "NTSC (30 Hz)");
 		ImGui::Text("Reverting in %.0f s.", g_displayRevertRemaining);
 		ImGui::Separator();
-		if (ImGui::Button("Keep this display mode", ImVec2(190.0f, 0.0f)))
+		if (ImGui::Button("Apply and save settings", ImVec2(190.0f, 0.0f)))
 		{
 			snprintf(g_persistenceStatus, sizeof(g_persistenceStatus), "%s",
 				ConfirmDisplayMode() ? "Saved developer_graphics.ini" : "Save failed; display mode is not saved");
@@ -221,11 +243,11 @@ char g_bindingStatus[160] = "Overrides live in developer_input.ini; config.ini i
 // decisions instead of relying on g_visible.
 void UpdateOverlayInputState()
 {
-	const int showCursor = g_visible || g_displayRevertArmed;
+	const int showCursor = g_visible || HasPendingDisplayChange();
 	PsyX_SetCursorRelative(0);
 	SDL_ShowCursor(showCursor ? SDL_ENABLE : SDL_DISABLE);
 
-	const int capture = (g_visible && g_captureGameInput) || g_bindingCapture.active || g_displayRevertArmed;
+	const int capture = (g_visible && g_captureGameInput) || g_bindingCapture.active || HasPendingDisplayChange();
 	PsyX_SetInputCapture(capture ? PSYX_INPUT_CAPTURE_KEYBOARD | PSYX_INPUT_CAPTURE_GAMEPAD : 0);
 }
 
@@ -1843,7 +1865,7 @@ void DrawDeveloperPanel()
 	if (ImGui::Begin("Developer Graphics Panel", &g_visible))
 	{
 		ImGui::PushTextWrapPos(0.0f);
-		ImGui::TextUnformatted("F11 closes this panel. Settings are live.");
+		ImGui::TextUnformatted("F11 closes this panel. Video region requires an application restart; other settings are live.");
 		if (CheckboxWithHelp("Capture game input while panel is open", &g_captureGameInput,
 			"Enabled: keyboard, controller, and mouse events are held by the panel so changing a setting cannot also control the game. Disabled: the panel remains visible while the game continues to receive its normal inputs. UI interactions may then also affect the game."))
 			UpdateOverlayInputState();
@@ -1855,7 +1877,6 @@ void DrawDeveloperPanel()
 				bool bilinear = g_cfg_bilinearFiltering != 0;
 				bool pgxpTextureMapping = g_cfg_pgxpTextureCorrection != 0;
 				bool pgxpZBuffer = g_cfg_pgxpZBuffer != 0;
-				bool vsync = g_cfg_swapInterval != 0;
 				if (ImGui::Checkbox("Bilinear filtering", &bilinear)) g_cfg_bilinearFiltering = bilinear;
 				if (CheckboxWithHelp("PGXP texture mapping", &pgxpTextureMapping,
 					"Perspective-correct textures and sub-pixel vertex positions for the emulated PSX geometry. It also changes the depth the legacy renderer stores, which the modern shadow and lighting reconstruction reads."))
@@ -1863,7 +1884,6 @@ void DrawDeveloperPanel()
 				if (CheckboxWithHelp("PGXP Z-buffer", &pgxpZBuffer,
 					"Depth-tests the emulated PSX geometry with PGXP's interpolated Z. With it off the legacy scene is drawn without depth testing and writes no depth, so the modern shadow and lighting passes have nothing to reconstruct from."))
 					g_cfg_pgxpZBuffer = pgxpZBuffer;
-				if (ImGui::Checkbox("VSync", &vsync)) g_cfg_swapInterval = vsync;
 
 				ImGui::Separator();
 				bool enhancedRenderer = DeveloperModernMesh_GetEnabled() != 0;
@@ -1977,7 +1997,7 @@ void DrawDeveloperPanel()
 
 				ImGui::TextUnformatted("Display mode");
 				ImGui::SameLine();
-				HelpMarker("Applies immediately and resets the render device, so the viewport, aspect and primitive picking all follow the new window size. The change is provisional for 15 seconds: press Keep to save it to developer_graphics.ini, or let it revert. Fullscreen uses the desktop resolution; Alt+Enter toggles fullscreen without saving.");
+				HelpMarker("Applies immediately and resets the render device, so the viewport, aspect and primitive picking all follow the new window size. The change is provisional for 15 seconds: press Apply and save settings to save it to developer_graphics.ini, or let it revert. Fullscreen uses the desktop resolution; Alt+Enter toggles fullscreen without saving.");
 
 				if (ImGui::Checkbox("Fullscreen (desktop)", &fullscreen))
 					BeginDisplayChange(fullscreen ? 1 : 0, windowWidth, windowHeight);
@@ -2005,6 +2025,35 @@ void DrawDeveloperPanel()
 					HelpMarker("Windowed sizes. The current size is always listed so the combo reports what is on screen after a manual resize.");
 				}
 
+				int presentationFps = ProjectClock_GetPresentationFps();
+				const float fpsControlWidth = ImGui::CalcItemWidth() + ImGui::GetStyle().ItemInnerSpacing.x + ImGui::CalcTextSize("FPS limit").x;
+				if (ImGui::SliderInt("FPS limit", &presentationFps, 15, 360, "%d FPS", ImGuiSliderFlags_AlwaysClamp))
+					ProjectClock_SetPresentationFps(presentationFps);
+				// Read this before submitting the help marker: it refers to the slider.
+				if (ImGui::IsItemDeactivatedAfterEdit())
+					SaveFrameSettings();
+				HelpMarkerAfterControl("Presentation limit, applied immediately and saved when editing finishes. Defaults: 30 FPS for NTSC, 25 FPS for PAL. Simulation always keeps the selected region's original cadence. VSync can impose a lower limit.", fpsControlWidth);
+
+				const char* const videoModes[] = { "NTSC (30 Hz)", "PAL (25 Hz)" };
+				int selectedMode = g_pendingVideoMode >= 0 ? g_pendingVideoMode : ProjectClock_GetPreferredVideoMode();
+				if (ImGui::Combo("Video region", &selectedMode, videoModes, 2))
+				{
+					g_pendingVideoMode = selectedMode == ProjectClock_GetPreferredVideoMode() ? -1 : selectedMode;
+					g_displayRevertRemaining = kDisplayRevertSeconds;
+					UpdateOverlayInputState();
+				}
+				HelpMarker("NTSC uses 30 simulation ticks per second; PAL uses 25. Confirm below to save the preference, then restart the application. The running mission or replay keeps its current cadence, aspect and audio timing.");
+				if (ProjectClock_GetPreferredVideoMode() != ProjectClock_GetVideoMode())
+					ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.3f, 1.0f), "Restart required. Active: %s", videoModes[ProjectClock_GetVideoMode()]);
+
+				bool vsync = g_cfg_swapInterval != 0;
+				if (ImGui::Checkbox("VSync", &vsync))
+				{
+					g_cfg_swapInterval = vsync;
+					SaveFrameSettings();
+				}
+				HelpMarkerAfterControl("Applied immediately and saved automatically. Synchronizes frames with display refresh, which can lower the effective FPS below the FPS limit. Driver support determines whether unsynchronized presentation is available.", CheckboxControlWidth("VSync"));
+
 				if (g_displayStatus[0] != '\0')
 					ImGui::TextDisabled("%s", g_displayStatus);
 
@@ -2020,14 +2069,16 @@ void DrawDeveloperPanel()
 				ImGui::Separator();
 				ImGui::TextDisabled("Texture overrides and active mods are on the Mods tab.");
 				ImGui::Separator();
+				ImGui::BeginDisabled(HasPendingDisplayChange());
 				if (ImGui::Button("Save developer settings"))
 					snprintf(g_persistenceStatus, sizeof(g_persistenceStatus), "%s", DeveloperGraphicsSettings_SaveRuntime() ? "Saved developer_graphics.ini" : "Save failed; settings remain in session");
 				ImGui::SameLine();
 				if (ImGui::Button("Restore defaults"))
 				{
 					DeveloperGraphicsSettings_RestoreDefaults();
-					snprintf(g_persistenceStatus, sizeof(g_persistenceStatus), "%s", "Defaults applied to this session");
+					SaveFrameSettings();
 				}
+				ImGui::EndDisabled();
 				ImGui::TextUnformatted(g_persistenceStatus);
 				ImGui::EndTabItem();
 			}

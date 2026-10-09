@@ -26,3 +26,9 @@ default-plus-overrides model (input bindings do this): the file stays small, and
 deleting a line or pressing Reset returns the shipped value. Keys are stable
 identifiers - renaming one silently discards the user's value - and loading must
 validate ranges before applying a value, because the file is user-editable.
+
+Frame-control autosaves own only `schemaVersion`, `presentationFps`, `videoMode`
+and `vsync`: pass that subset as both `knownKeys` and `keys`, otherwise the writer
+removes unrelated owned keys. Never persist provisional resolution via an FPS or
+VSync edit. Regional mode is a confirmed startup preference, separate from the
+active session mode; loading a preference must precede game/audio/video setup.

@@ -2,6 +2,7 @@
 #include "DeveloperModernMesh.h"
 #include "DeveloperSettingsFile.h"
 #include "HdTextureOverrides.h"
+#include "ProjectClock.h"
 
 #include "driver2.h"
 #include "C/camera.h"
@@ -44,6 +45,8 @@ const char* const kSettingKeys[] =
 	"fullscreen",
 	"windowWidth",
 	"windowHeight",
+	"presentationFps",
+	"videoMode",
 };
 const int kSettingKeyCount = (int)(sizeof(kSettingKeys) / sizeof(kSettingKeys[0]));
 
@@ -99,6 +102,8 @@ DeveloperGraphicsSettings DeveloperGraphicsSettings_ReadRuntime()
 	settings.pgxpTextureMapping = g_cfg_pgxpTextureCorrection != 0;
 	settings.pgxpZBuffer = g_cfg_pgxpZBuffer != 0;
 	settings.vsync = g_cfg_swapInterval != 0;
+	settings.presentationFps = ProjectClock_GetPresentationFps();
+	settings.videoMode = ProjectClock_GetPreferredVideoMode();
 	settings.drawDistance = gDrawDistance;
 	settings.fieldOfView = gCameraDefaultScrZ;
 
@@ -126,6 +131,8 @@ void DeveloperGraphicsSettings_Apply(const DeveloperGraphicsSettings& settings)
 	g_cfg_pgxpTextureCorrection = settings.pgxpTextureMapping != 0;
 	g_cfg_pgxpZBuffer = settings.pgxpZBuffer != 0;
 	g_cfg_swapInterval = settings.vsync != 0;
+	ProjectClock_SetPresentationFps(settings.presentationFps);
+	ProjectClock_SetPreferredVideoMode(settings.videoMode);
 	gDrawDistance = Clamp(settings.drawDistance, 441, 1800);
 	gCameraDefaultScrZ = (short)Clamp(settings.fieldOfView, 128, 384);
 
@@ -164,6 +171,7 @@ bool DeveloperGraphicsSettings_LoadAndApply()
 	char line[128];
 	char key[64];
 	int value;
+	bool hasPresentationFps = false;
 
 	while (fgets(line, sizeof(line), file))
 	{
@@ -188,12 +196,22 @@ bool DeveloperGraphicsSettings_LoadAndApply()
 		else if (!strcmp(key, "fullscreen")) settings.fullscreen = value;
 		else if (!strcmp(key, "windowWidth")) settings.windowWidth = value;
 		else if (!strcmp(key, "windowHeight")) settings.windowHeight = value;
+		else if (!strcmp(key, "videoMode")) settings.videoMode = value;
+		else if (!strcmp(key, "presentationFps"))
+		{
+			settings.presentationFps = value;
+			hasPresentationFps = true;
+		}
 	}
 
 	const bool readOk = ferror(file) == 0;
 	fclose(file);
 	if (readOk)
+	{
+		if (!hasPresentationFps)
+			settings.presentationFps = settings.videoMode == PROJECT_VIDEO_PAL ? 25 : 30;
 		DeveloperGraphicsSettings_Apply(settings);
+	}
 	return readOk;
 }
 
@@ -204,7 +222,7 @@ bool DeveloperGraphicsSettings_SaveRuntime()
 	// Values in the same order as kSettingKeys.
 	const int values[] =
 	{
-		8,											// schemaVersion
+		9, // schemaVersion
 		settings.bilinearFiltering,
 		settings.pgxpTextureMapping,
 		settings.pgxpZBuffer,
@@ -223,12 +241,24 @@ bool DeveloperGraphicsSettings_SaveRuntime()
 		settings.fullscreen,
 		settings.windowWidth,
 		settings.windowHeight,
+		settings.presentationFps,
+		settings.videoMode,
 	};
 
 	return DeveloperSettingsFile_WriteKeys(kSettingsFilename,
 		kSettingComments, kSettingCommentCount,
 		kSettingKeys, kSettingKeyCount,
 		kSettingKeys, values, kSettingKeyCount);
+}
+
+bool DeveloperGraphicsSettings_SaveFrameSettings()
+{
+	const char* const keys[] = { "schemaVersion", "presentationFps", "videoMode", "vsync" };
+	const int values[] = { 9, ProjectClock_GetPresentationFps(),
+		ProjectClock_GetPreferredVideoMode(), g_cfg_swapInterval != 0 };
+	const int count = (int)(sizeof(keys) / sizeof(keys[0]));
+	return DeveloperSettingsFile_WriteKeys(kSettingsFilename,
+		kSettingComments, kSettingCommentCount, keys, count, keys, values, count);
 }
 
 void DeveloperGraphicsSettings_RestoreDefaults()
@@ -238,6 +268,8 @@ void DeveloperGraphicsSettings_RestoreDefaults()
 	defaults.pgxpTextureMapping = 1;
 	defaults.pgxpZBuffer = 1;
 	defaults.vsync = 1;
+	defaults.videoMode = ProjectClock_GetPreferredVideoMode();
+	defaults.presentationFps = defaults.videoMode == PROJECT_VIDEO_PAL ? 25 : 30;
 	defaults.drawDistance = 1800;
 	defaults.fieldOfView = 256;
 	defaults.showLegacyStats = 0;

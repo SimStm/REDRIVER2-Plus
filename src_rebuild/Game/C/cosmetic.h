@@ -9,6 +9,7 @@ extern int gcar_num;
 extern void LoadCosmetics(int level); // 0x00031160
 extern void SetupSpecCosmetics(char *loadbuffer); // 0x00031360
 
+extern void BeginCarPresentation(CAR_DATA* cp);
 extern void AddReverseLight(CAR_DATA* cp); // 0x0002F994
 extern void AddIndicatorLight(CAR_DATA *cp, int Type); // 0x0002FAEC
 extern void AddBrakeLight(CAR_DATA *cp); // 0x0002FDE4

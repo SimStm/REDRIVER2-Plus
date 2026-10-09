@@ -516,14 +516,11 @@ void TransparencyOn(void *potz, ushort tpage)
 // [D] [T]
 void UpdateFlashValue(void)
 {
-	int size;
 	int flash;
 
-	if (gShowMap != 0) 
-		size = FrameCnt;
-	else
-		size = CameraCnt;
- 
+	// Tick-based flash so the rate does not change with presentation FPS.
+	int size = CameraCnt;
+
 	flash = size % 16;
 
 	if (flash > 7) 

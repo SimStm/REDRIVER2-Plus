@@ -393,6 +393,7 @@ void SetupFadePolys(void)
 // [D] [T]
 void DrawFadePoly(void)
 {
+#ifdef PSX
 	if (fadeVal < 0) 
 	{
 		bMissionTitleFade = 0;
@@ -402,6 +403,8 @@ void DrawFadePoly(void)
 
 		fadeVal = 0;
 	}
+
+#endif
 
 	POLY_G4 *fl_g4 = &fade_g4[current->id];
 
@@ -422,6 +425,29 @@ void DrawFadePoly(void)
 }
 
 // [D] [T]
+// This fade gates input and mission timers, so advance it with simulation.
+void StepMissionTitle(void)
+{
+	if (bWantFade && CameraCnt == 1)
+	{
+		bWantFade = 0;
+		bMissionTitleFade = 1;
+	}
+	if (!bMissionTitleFade || pauseflag)
+		return;
+	fadeVal -= 6;
+	if (fadeVal < 0)
+	{
+		bMissionTitleFade = 0;
+		if (!gInGameCutsceneActive)
+			gStopPadReads = 0;
+		if (NoPlayerControl)
+			gShowMap = 0;
+		fadeVal = 0;
+	}
+}
+
+#ifdef PSX
 void DisplayMissionTitle(void)
 {
 	if (bWantFade && CameraCnt == 1) 
@@ -466,8 +492,16 @@ void DisplayMissionTitle(void)
 		}
 	}
 }
-
-
-
-
-
+#else
+void DisplayMissionTitle(void)
+{
+	if (!bMissionTitleFade || pauseflag || NoPlayerControl)
+		return;
+	if (gMissionTitle)
+	{
+		SetTextColour(124, 108, 40);
+		PrintStringCentred(gMissionTitle, 120);
+	}
+	DrawFadePoly();
+}
+#endif

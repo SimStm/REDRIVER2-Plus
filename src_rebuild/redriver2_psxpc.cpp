@@ -27,6 +27,7 @@
 #include "utils/DeveloperInputMapping.h"
 #include "utils/DeveloperModernMesh.h"
 #include "utils/DeveloperVkFixture.h"
+#include "utils/DeterministicBaseline.h"
 #include "utils/HdTextureOverrides.h"
 
 #include <SDL_scancode.h>
@@ -726,6 +727,7 @@ int main(int argc, char** argv)
 	// Graphics settings then own the authoritative classic/enhanced toggle.
 	DeveloperModernMesh_Initialise();
 	DeveloperGraphicsPanel_Initialise();
+	ProjectClock_ApplyStartupVideoMode();
 
 	// An explicit config.ini key is applied after the panel so it can force
 	// texture overrides off for reproducible captures. When the key is absent,
@@ -734,8 +736,12 @@ int main(int argc, char** argv)
 		HdTextureOverrides_SetEnabled(textureOverrides);
 	DeveloperDebugStart_ConfigureCapture(captureAfterSeconds);
 
+	// E00/E01 determinism checks: optional canonical per-tick state dump.
+	DeterministicBaseline_ConfigureFromCommandLine(argc, argv);
+
 	redriver2_main(argc, argv);
 
+	DeterministicBaseline_Shutdown();
 	DeinitStringMng();
 	DeveloperModernMesh_Shutdown();
 	DeveloperGraphicsPanel_Shutdown();

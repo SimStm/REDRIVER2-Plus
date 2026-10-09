@@ -93,6 +93,12 @@ extern void Setup_Debris(VECTOR *ipos, VECTOR *ispeed, int num_debris, int type)
 extern void Setup_Smoke(VECTOR *ipos, int start_w, int end_w, int SmokeType, int WheelSpeed, VECTOR *Drift, int Exhaust); // 0x00037474
 extern void Setup_Sparks(VECTOR *ipos, VECTOR *ispeed, int num_sparks, char SparkType); // 0x00037950
 
+#ifndef PSX
+// Field-wise digest of tick-owned pools/phases for deterministic diagnostics.
+unsigned int Debris_GetTimingDigest(void);
+#endif
+
+extern void StepDebris(); // Fixed-tick particle lifetime and motion.
 extern void HandleDebris(); // 0x00038008
 
 extern void add_haze(int top_col, int bot_col, short ot_pos); // 0x00038CB4
@@ -104,6 +110,7 @@ extern void DoLightning(); // 0x00039B78
 extern void RequestThunder(); // 0x0003A120
 
 extern void DoThunder(); // 0x0003A144
+extern void StepWeather(int weather);
 extern void DoWeather(int weather); // 0x0003A000
 
 

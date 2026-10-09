@@ -50,6 +50,9 @@ tags: [okf, rules]
 - [Keep asset identity and instance identity separate](asset-identity-lifetime.md):
   resource records are shared and stable while instances and runtime slots are
   not, and retained references must detect reuse.
+- [Present cars and cameras at the same snapshot time](presentation-snapshot-time.md):
+  advance original camera controls on regional ticks, restore tick globals before
+  simulation, and delimit history at pauses, camera cuts and session/slot resets.
 - [Self-learning rules](self-learning.md): turn repeated, evidenced constraints
   into durable project knowledge.
 - [Use configured MCP servers for docs, debugging, and game runs](mcp-agent-tooling.md):

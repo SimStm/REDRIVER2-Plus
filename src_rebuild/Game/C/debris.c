@@ -21,6 +21,11 @@
 #include "cosmetic.h"
 #include "denting.h"
 #include "gamesnd.h"
+#include "cell.h"
+#ifndef PSX
+#include "../utils/VisualSnapshot.h"
+#include "../utils/PresentationInterpolation.h"
+#endif
 
 #include "ASM/rndrasm.h"
 
@@ -392,6 +397,15 @@ DEBRIS debris[MAX_DEBRIS];
 BIRD birds[MAX_BIRDS];
 int gNumBirds = 0;
 
+#ifndef PSX
+// Bounded previous/current effect poses. Rendering interpolates local copies.
+static SMOKE previousSmoke[MAX_SMOKE];
+static DEBRIS previousDebris[MAX_DEBRIS];
+static LEAF previousLeaf[MAX_LEAVES];
+static VECTOR_NOPAD previousRain[MAX_RAIN_DROPS];
+static BIRD previousBirds[MAX_BIRDS];
+#endif
+
 int StreakCount1 = 0;
 int main_cop_light_pos = 0;
 int NextDamagedLamp = 0;
@@ -405,6 +419,20 @@ MATRIX debris_mat;
 MATRIX leaf_mat;
 
 #define LAMP_STREAK_ID(x,y) (((x) & 0xffff) | (((y) & 0xffff) << 16))
+
+#ifndef PSX
+static void RenderCarTransform(CAR_DATA* cp, MATRIX& pose, MATRIX& draw)
+{
+	pose = cp->hd.where;
+	draw = cp->hd.drawCarMat;
+	const int slot = CAR_INDEX(cp), alpha = VisualSnapshot_GetAlpha();
+	if (!VisualSnapshot_GetPosition(slot, alpha, pose.t)) return;
+	VisualSnapshot_GetRotation(slot, alpha, pose.m);
+	for (int row = 0; row < 3; ++row)
+		for (int col = 0; col < 3; ++col)
+			draw.m[row][col] = row == 1 ? pose.m[row][col] : -pose.m[row][col];
+}
+#endif
 
 // [D] [T]
 void PlacePoolForCar(CAR_DATA *cp, CVECTOR *col, int front, int in_car)
@@ -425,7 +453,13 @@ void PlacePoolForCar(CAR_DATA *cp, CVECTOR *col, int front, int in_car)
 	int car_road_height;
 	int count;
 
+#ifdef PSX
 	pos = *(VECTOR*)cp->hd.where.t;
+#else
+	MATRIX renderPose, renderDraw;
+	RenderCarTransform(cp, renderPose, renderDraw);
+	pos = *(VECTOR*)renderPose.t;
+#endif
 	car_cos = &car_cosmetics[cp->ap.model];
 
 	// [A] there was check that prevented in_car lights in game, but it was working in quick replays...
@@ -510,7 +544,11 @@ void PlacePoolForCar(CAR_DATA *cp, CVECTOR *col, int front, int in_car)
 	s1[0].vz = s1[1].vz;
 	s1[2].vz = s1[3].vz;
 
+#ifdef PSX
 	SetRotMatrix(&cp->hd.drawCarMat);
+#else
+	SetRotMatrix(&renderDraw);
+#endif
 	SetVec(&smid, 0, 0, -500);
 	ApplyRotMatrix(&smid, &toss);
 	VecAdd(&toss, &toss, &pos);
@@ -652,7 +690,13 @@ void PlacePoolForCar(CAR_DATA *cp, CVECTOR *col, int front, int in_car)
 int AllocateLeaf(void)
 {
 	if (next_leaf < MAX_LEAVES)
-		return leaf_alloc[next_leaf++];
+	{
+		const int slot = leaf_alloc[next_leaf++];
+#ifndef PSX
+		previousLeaf[slot].flags = 0;
+#endif
+		return slot;
+	}
 
 	return -1;
 }
@@ -788,6 +832,37 @@ void CreateBirds(VECTOR* pos, int count)
 }
 
 // [D] [T]
+static void StepBirds(void)
+{
+	if (pauseflag)
+		return;
+	for (int i = 0; i < gNumBirds; ++i)
+	{
+		BIRD* bird = &birds[i];
+		if (bird->life <= 0)
+			continue;
+		VECTOR pos;
+		pos.vx = bird->position.vx - camera_position.vx;
+		pos.vy = bird->position.vy - camera_position.vy;
+		pos.vz = bird->position.vz - camera_position.vz;
+		Apply_Inv_CameraMatrix(&pos);
+		if (pos.vz > 13500)
+		{
+			bird->life = 0;
+			continue;
+		}
+		{
+			bird->position.vx += bird->direction.vx;
+			bird->position.vy += bird->direction.vy;
+			bird->position.vz = bird->position.vz + bird->direction.vz;
+
+			if (--bird->step == -1)
+				bird->step = 8;
+			--bird->life;
+		}
+	}
+}
+
 void HandleBirds()
 {
 	BIRD* bird;
@@ -815,6 +890,18 @@ void HandleBirds()
 	for(i = 0; i < gNumBirds; ++i)
 	{
 		bird = &birds[i];
+#ifndef PSX
+		BIRD pose = *bird;
+		const BIRD& old = previousBirds[i];
+		if (old.life > 0)
+		{
+			const int alpha = VisualSnapshot_GetAlpha();
+			pose.position.vx = PresentationInterpolation::Lerp(old.position.vx, pose.position.vx, alpha);
+			pose.position.vy = PresentationInterpolation::Lerp(old.position.vy, pose.position.vy, alpha);
+			pose.position.vz = PresentationInterpolation::Lerp(old.position.vz, pose.position.vz, alpha);
+		}
+		bird = &pose;
+#endif
 		if (bird->life <= 0)
 		{
 			continue;
@@ -827,11 +914,14 @@ void HandleBirds()
 
 		gte_SetTransVector(&pos);
 
+#ifdef PSX
 		if (pauseflag == 0 && pos.vz > 13500)
 		{
 			bird->life = 0;
 			return;
 		}
+
+#endif
 
 		sizeX = 40;
 		if (bird->step < 4)
@@ -908,6 +998,7 @@ void HandleBirds()
 		
 		current->primptr += sizeof(POLY_FT4);
 
+#ifdef PSX
 		if (pauseflag == 0)
 		{
 			bird->position.vx += bird->direction.vx;
@@ -918,6 +1009,7 @@ void HandleBirds()
 				bird->step = 8;
 			--bird->life;
 		}
+#endif
 	}
 }
 
@@ -1022,6 +1114,12 @@ void InitDebris(void)
 	int i, j;
 	TRI_POINT_LONG temptri;
 
+#ifndef PSX
+	memset(previousSmoke, 0, sizeof(previousSmoke));
+	memset(previousDebris, 0, sizeof(previousDebris));
+	memset(previousLeaf, 0, sizeof(previousLeaf));
+	memset(previousBirds, 0, sizeof(previousBirds));
+#endif
 	StreakCount1 = 0;
 	next_debris = 0;
 	next_smoke = 0;
@@ -1132,7 +1230,13 @@ void InitDebris(void)
 int AllocateDebris(void)
 {
 	if (next_debris < MAX_DEBRIS)
-		return debris_alloc[next_debris++];
+	{
+		const int slot = debris_alloc[next_debris++];
+#ifndef PSX
+		previousDebris[slot].flags = 0;
+#endif
+		return slot;
+	}
 
 	return -1;
 }
@@ -1148,7 +1252,13 @@ void ReleaseDebris(short num)
 int AllocateSmoke(void)
 {
 	if (next_smoke < MAX_SMOKE)
-		return smoke_alloc[next_smoke++];
+	{
+		const int slot = smoke_alloc[next_smoke++];
+#ifndef PSX
+		previousSmoke[slot].flags = 0;
+#endif
+		return slot;
+	}
 
 	return -1;
 }
@@ -1159,9 +1269,44 @@ void ReleaseSmoke(short num)
 	smoke_alloc[--next_smoke] = num;
 }
 
+#ifndef PSX
+static void GatherGroundDebris(void)
+{
+	for (int i = 0; i < MAX_GROUND_DEBRIS; ++i) ground_debris[i].type = 0xffff;
+	if (MAP_CELL_SIZE <= 0) return;
+	const int centerX = (camera_position.vx + units_across_halved) / MAP_CELL_SIZE;
+	const int centerZ = (camera_position.vz + units_down_halved) / MAP_CELL_SIZE;
+	const int radius = 9000 / MAP_CELL_SIZE + 1;
+	int count = 0, trees = 0, alleys = 0;
+	for (int z = MAX(0, centerZ - radius); z <= MIN(cells_down - 1, centerZ + radius); ++z)
+		for (int x = MAX(0, centerX - radius); x <= MIN(cells_across - 1, centerX + radius); ++x)
+		{
+			CELL_ITERATOR iterator;
+			for (PACKED_CELL_OBJECT* packed = GetFirstPackedCop(x, z, &iterator, 0, -1); packed; packed = GetNextPackedCop(&iterator))
+			{
+				MODEL* model = modelpointers[(packed->value >> 6) | ((packed->pos.vy & 1) << 10)];
+				if (!model) continue;
+				const bool tree = (model->flags2 & MODEL_FLAG_TREE) != 0;
+				const bool alley = (model->flags2 & MODEL_FLAG_ALLEY) != 0;
+				if ((!tree || (trees++ & 15) != 0) && (!alley || ++alleys % 13 != 0)) continue;
+				CELL_OBJECT object;
+				QuickUnpackCellObject(packed, &iterator.nearCell, &object);
+				const int dx = ABS(object.pos.vx - camera_position.vx), dz = ABS(object.pos.vz - camera_position.vz);
+				if (dx > 9000 || dz > 9000 || (dx <= 7000 && dz <= 7000)) continue;
+				ground_debris[count] = object;
+				count = (count + 1) % MAX_GROUND_DEBRIS;
+			}
+		}
+}
+#endif
+
 // [D] [T]
 void AddGroundDebris(void)
 {
+#ifndef PSX
+	if (pauseflag || !gDoLeaves) return;
+	GatherGroundDebris();
+#endif
 	int seed;
 	int number;
 	int zbound;
@@ -1471,7 +1616,11 @@ void AddSmallStreetLight(CELL_OBJECT *cop, int x, int y, int z, int type)
 				return;
 
 			// do flicker
+			#ifdef PSX
 			col.r = col.g = col.b = (rand() & 0x3f) - (dam->damage * 32 - 90);
+#else
+			col.r = col.g = col.b = ((RAND((u_int)CameraCnt ^ (u_int)dam->index) >> 16) & 0x3f) - (dam->damage * 32 - 90);
+#endif
 			col1.r = col1.g = col1.b = col.r / 2;
 
 			break;
@@ -1690,7 +1839,7 @@ void PreLampStreak(void)
 		if (Known_Lamps[count].set == 0)
 		{
 			Known_Lamps[count].id = NewLamp[--StreakCount1];
-			Known_Lamps[count].clock = FrameCnt - 2;
+			Known_Lamps[count].clock = CameraCnt - 2;
 		}
 	}
 
@@ -2023,6 +2172,7 @@ void ShowCarlight(SVECTOR *v1, CAR_DATA *cp, CVECTOR *col, short size, short fla
 	flareCol.g = (col->g * CarLightFade) >> 10;
 	flareCol.cd = flag;
 
+#ifdef PSX
 	gte_SetRotMatrix(&cp->hd.drawCarMat);
 
 	v1l.vx = cp->hd.where.t[0] - camera_position.vx;
@@ -2030,6 +2180,19 @@ void ShowCarlight(SVECTOR *v1, CAR_DATA *cp, CVECTOR *col, short size, short fla
 	v1l.vy = -camera_position.vy - cp->hd.where.t[1];
 
 	InitFXPos(&v1l, v1, cp);
+
+#else
+	MATRIX renderPose, renderDraw;
+	RenderCarTransform(cp, renderPose, renderDraw);
+	v1l.vx = renderPose.t[0] - camera_position.vx;
+	v1l.vy = -renderPose.t[1] - camera_position.vy;
+	v1l.vz = renderPose.t[2] - camera_position.vz;
+	gte_SetRotMatrix(&renderDraw);
+	gte_SetTransVector(&v1l);
+	gte_ldv0(v1);
+	gte_rtv0tr();
+	gte_stlvnl(&v1l);
+#endif
 
 	if (wetness > 9) 
 	{
@@ -2248,15 +2411,19 @@ void ShowLight(VECTOR *v1, CVECTOR *col, short size, TEXTURE_DETAILS *texture)
 #endif
 	
 	// unified drawing both for car and lamps
-	if (CameraChanged == 0 && *clock == (FrameCnt & 0xffffU) - 1)
+	if (CameraChanged == 0 && (*clock == (short)(CameraCnt - 1)
+#ifndef PSX
+		|| *clock == (short)CameraCnt
+#endif
+		))
 	{
 		int old_x, old_y;
 
-		old_x = trails[FrameCnt - 3U & 3].x;
-		old_y = trails[FrameCnt - 3U & 3].y;
+		old_x = trails[CameraCnt - 3U & 3].x;
+		old_y = trails[CameraCnt - 3U & 3].y;
 
-		trails[FrameCnt & 3].x = x;
-		trails[FrameCnt & 3].y = y;
+		trails[CameraCnt & 3].x = x;
+		trails[CameraCnt & 3].y = y;
 
 		if (size > 1 && ABS(old_x - x) + ABS(old_y - y) > 1)
 		{
@@ -2345,7 +2512,7 @@ void ShowLight(VECTOR *v1, CVECTOR *col, short size, TEXTURE_DETAILS *texture)
 		}
 	}
 
-	*clock = FrameCnt;
+	*clock = CameraCnt;
 }
 
 // [D] [T]
@@ -3102,7 +3269,9 @@ void DisplayDebris(DEBRIS *debris, char type)
 	}
 	else
 	{
+#ifdef PSX
 		debris->life = 1;
+#endif
 	}
 }
 
@@ -3291,7 +3460,7 @@ void DisplaySmoke(SMOKE* smoke)
 int NoRainIndoors = 0;
 
 // [D] [T]
-void HandleDebris(void)
+void StepDebris(void)
 {
 	int Height;
 	SMOKE *sm;
@@ -3300,26 +3469,49 @@ void HandleDebris(void)
 	int i;
 	VECTOR Drift;
 	
+#ifndef PSX
+	if (pauseflag)
+		return;
+	memcpy(previousSmoke, smoke, sizeof(smoke));
+	memcpy(previousDebris, debris, sizeof(debris));
+	memcpy(previousLeaf, leaf, sizeof(leaf));
+	memcpy(previousBirds, birds, sizeof(birds));
+#endif
 	GetSmokeDrift(&Drift);
-
+#ifndef PSX
+	StepHubcap();
+	StepBirds();
+#endif
+#ifdef PSX
 	MoveHubcap();
 	HandleBirds();
 	SetRotMatrix(&inv_camera_matrix);
-
 	gte_SetTransVector(&dummy);
+#endif
 
 	db = debris;
+#ifdef PSX
 	i = next_debris;
+#else
+	i = MAX_DEBRIS;
+#endif
 
 	while (i > 0)
 	{
 		if (db->flags & 0x2)
 		{
+#ifdef PSX
 			DisplayDebris(db, 0);
+#endif
+
 			
 			if (pauseflag == 0)
 			{
-				if (--db->life == 0 || db->position.vy > 0) 
+				if (--db->life == 0 || db->position.vy > 0
+#ifndef PSX
+					|| ABS(db->position.vx - camera_position.vx) > 10000 || ABS(db->position.vz - camera_position.vz) > 10000
+#endif
+				)
 				{
 					db->flags = 0;
 					ReleaseDebris(db->num);
@@ -3343,18 +3535,29 @@ void HandleDebris(void)
 	}
 
 	lf = leaf;
+#ifdef PSX
 	i = next_leaf;
+#else
+	i = MAX_LEAVES;
+#endif
 
 	// Move leaves
 	while (i > 0)
 	{
 		if (lf->flags & 0x2) 
 		{
-			DisplayDebris((DEBRIS *)lf, lf->type);
+#ifdef PSX
+			DisplayDebris((DEBRIS*)lf, lf->type);
+#endif
+
 			
 			if (pauseflag == 0)
 			{
-				if (lf->life == 1) 
+				if (lf->life == 1
+#ifndef PSX
+					|| ABS(lf->position.vx - camera_position.vx) > 10000 || ABS(lf->position.vz - camera_position.vz) > 10000
+#endif
+				)
 				{
 					lf->flags = 0;
 					ReleaseLeaf(lf->num);
@@ -3409,22 +3612,18 @@ void HandleDebris(void)
 	for (i = 0; i < MAX_SMOKE; i++)
 	{
 		sm = &smoke[i];
-
-		if (sm->flags & 0x2)
+#ifdef PSX
+		if (sm->flags & 2)
 		{
-			if (sm->flags & 0x8)
+			if (sm->flags & 8)
+				DisplaySpark(sm);
+			else if (sm->flags & 4)
 			{
-				DisplaySpark(sm);	// yup, smoke particles are sparks too
-			}
-			else if (sm->flags & 0x4)
-			{
-				if (sm->flags & 0x8000)
-					DisplayWater(sm);	// Really obsolete, water was only a thing in Driver 1
-				else
-					DisplaySmoke(sm);
+				if (sm->flags & 0x8000) DisplayWater(sm);
+				else DisplaySmoke(sm);
 			}
 		}
-
+#endif
 		if (sm->flags & 0x2 && pauseflag == 0)
 		{
 			if (sm->flags & 0x8000) 
@@ -3506,7 +3705,7 @@ void HandleDebris(void)
 		main_cop_light_pos++;
 		main_cop_light_pos &= 7;
 
-		  variable_weather = 1;
+		variable_weather = 1;
 
 		if (variable_weather != 0)
 		{
@@ -3523,6 +3722,66 @@ void HandleDebris(void)
 				gRainCount = MAX_RAIN_DROPS;
 		}
 	}
+}
+
+#ifndef PSX
+template<typename Position, typename Effect>
+static void InterpolateEffectPosition(Position& position, const Effect& previous, const Effect& current, int alpha)
+{
+	if (!(previous.flags & 2)) return; // A reused/new slot has no previous pose.
+	position.vx = PresentationInterpolation::Lerp(previous.position.vx, current.position.vx, alpha);
+	position.vy = PresentationInterpolation::Lerp(previous.position.vy, current.position.vy, alpha);
+	position.vz = PresentationInterpolation::Lerp(previous.position.vz, current.position.vz, alpha);
+}
+#endif
+
+// Draw-only on desktop: every view/frame consumes the same tick interval.
+void HandleDebris(void)
+{
+#ifdef PSX
+	StepDebris();
+#else
+	MoveHubcap();
+	HandleBirds();
+	SetRotMatrix(&inv_camera_matrix);
+	gte_SetTransVector(&dummy);
+	const int alpha = VisualSnapshot_GetAlpha();
+	for (int i = 0; i < MAX_DEBRIS; ++i)
+	{
+		if (!(debris[i].flags & 2)) continue;
+		DEBRIS pose = debris[i];
+		InterpolateEffectPosition(pose.position, previousDebris[i], pose, alpha);
+		DisplayDebris(&pose, 0);
+	}
+	for (int i = 0; i < MAX_LEAVES; ++i)
+	{
+		if (!(leaf[i].flags & 2)) continue;
+		LEAF pose = leaf[i];
+		InterpolateEffectPosition(pose.position, previousLeaf[i], pose, alpha);
+		DisplayDebris((DEBRIS*)&pose, pose.type);
+	}
+	for (int i = 0; i < MAX_SMOKE; ++i)
+	{
+		if (!(smoke[i].flags & 2)) continue;
+		SMOKE pose = smoke[i];
+		const SMOKE& old = previousSmoke[i];
+		InterpolateEffectPosition(pose.position, old, pose, alpha);
+		if (old.flags & 2)
+		{
+			pose.start_w = PresentationInterpolation::Lerp(old.start_w, pose.start_w, alpha);
+			pose.transparency = PresentationInterpolation::Lerp(old.transparency, pose.transparency, alpha);
+			pose.final_tail_pos.vx = PresentationInterpolation::Lerp(old.final_tail_pos.vx, pose.final_tail_pos.vx, alpha);
+			pose.final_tail_pos.vy = PresentationInterpolation::Lerp(old.final_tail_pos.vy, pose.final_tail_pos.vy, alpha);
+			pose.final_tail_pos.vz = PresentationInterpolation::Lerp(old.final_tail_pos.vz, pose.final_tail_pos.vz, alpha);
+		}
+		if (pose.flags & 8) DisplaySpark(&pose);
+		else if (pose.flags & 4)
+		{
+			if (pose.flags & 0x8000) DisplayWater(&pose);
+			else DisplaySmoke(&pose);
+		}
+	}
+#endif
 }
 
 // [D] [T]
@@ -3606,7 +3865,11 @@ void ReleaseRainDrop(int RainIndex)
 // [D] [T]
 void DisplaySplashes(void)
 {
+#ifdef PSX
 	static u_int rand;
+#else
+	u_int rand = RAND((u_int)CameraCnt);
+#endif
 
 	int d1;
 	int d2;
@@ -3675,6 +3938,7 @@ void DisplaySplashes(void)
 
 #define RAIN_DROP_SPEED 30		// [A] was 20
 
+#ifdef PSX
 // [D] [T]
 void DrawRainDrops(void)
 {
@@ -3792,6 +4056,85 @@ void DrawRainDrops(void)
 }
 
 
+#else
+static void StepRainDrops(void)
+{
+	VECTOR drift;
+	GetSmokeDrift(&drift);
+	gte_SetRotMatrix(&inv_camera_matrix);
+	gte_SetTransVector(&dummy);
+	for (int active = 0; active < gNextRainDrop;)
+	{
+		const int slot = gRainAlloc[active];
+		RAIN_TYPE& drop = gRain[slot];
+		previousRain[slot] = drop.position;
+		drop.position.vy += RAIN_DROP_SPEED;
+		drop.position.vx -= drift.vx * 2;
+		drop.position.vz -= drift.vz * 2;
+		SVECTOR v;
+		v.vx = drop.position.vx - camera_position.vx;
+		v.vy = drop.position.vy - camera_position.vy;
+		v.vz = drop.position.vz - camera_position.vz;
+		gte_ldv0(&v); gte_rtps();
+		SVECTOR projected;
+		int z;
+		gte_stsxy(&projected.vx); gte_stsz(&z);
+		if (z - 151U >= 2000 || projected.vx <= -101 || projected.vx >= 421 || projected.vy <= -51 || projected.vy >= 257)
+		{
+			gRainAlloc[active] = gRainAlloc[--gNextRainDrop];
+			gRainAlloc[gNextRainDrop] = slot;
+			continue;
+		}
+		++active;
+	}
+}
+
+void DrawRainDrops(void)
+{
+	if (!gNextRainDrop) return;
+	DisplaySplashes();
+	gte_SetRotMatrix(&inv_camera_matrix);
+	gte_SetTransVector(&dummy);
+	POLY_GT3* poly = (POLY_GT3*)current->primptr;
+	const int alpha = VisualSnapshot_GetAlpha();
+	const int bright = gNight ? 55 : 70;
+	for (int active = 0; active < gNextRainDrop; ++active)
+	{
+		const int slot = gRainAlloc[active];
+		const VECTOR_NOPAD& old = previousRain[slot];
+		const VECTOR_NOPAD& now = gRain[slot].position;
+		SVECTOR tail, head;
+		head.vx = PresentationInterpolation::Lerp(old.vx, now.vx, alpha) - camera_position.vx;
+		head.vy = PresentationInterpolation::Lerp(old.vy, now.vy, alpha) - camera_position.vy;
+		head.vz = PresentationInterpolation::Lerp(old.vz, now.vz, alpha) - camera_position.vz;
+		// A full tick-length trail translates with the interpolated drop.
+		tail.vx = head.vx - (now.vx - old.vx);
+		tail.vy = head.vy - (now.vy - old.vy);
+		tail.vz = head.vz - (now.vz - old.vz);
+		gte_ldv0(&tail); gte_rtps(); gte_stsxy(&poly->x0);
+		gte_ldv0(&head); gte_rtps(); gte_stsxy(&poly->x2);
+		int z; gte_stsz(&z);
+		if (z - 151U >= 2000) continue;
+		setPolyGT3(poly); setSemiTrans(poly, 1);
+		setRGB0(poly, 0, 0, 0);
+		setRGB1(poly, bright >> 1, bright >> 1, bright >> 1);
+		setRGB2(poly, bright >> 1, bright >> 1, bright >> 1);
+		poly->x1 = poly->x2 - ((z >> 10) - 1);
+		poly->x2 = poly->x2 + ((z >> 10) - 1);
+		poly->y1 = poly->y2;
+		poly->clut = light_texture.clutid;
+		poly->tpage = light_texture.tpageid | 0x20;
+		*(ushort*)&poly->u0 = *(ushort*)&light_texture.coords.u0;
+		*(ushort*)&poly->u1 = *(ushort*)&light_texture.coords.u1;
+		*(ushort*)&poly->u2 = *(ushort*)&light_texture.coords.u2;
+		addPrim(current->ot + (z >> 1), poly);
+		poly++;
+	}
+	current->primptr = (char*)poly;
+}
+
+#endif
+
 // [D] [T]
 void AddRainDrops(void)
 {
@@ -3859,6 +4202,9 @@ void AddRainDrops(void)
 		rt->oldposition.pad = RainIndex;
 
 		gte_stlvnl(&rt->position);
+#ifndef PSX
+		previousRain[RainIndex] = rt->position;
+#endif
 
 		// OBSOLETE DRIVER 1 CODE
 		/*
@@ -3956,23 +4302,21 @@ void DoThunder(void)
 
 
 // [D] [T]
-void DoWeather(int weather)
+void StepWeather(int weather)
 {
-	if (weather != WEATHER_RAIN)
-		return;
-
+	if (weather != WEATHER_RAIN || pauseflag) return;
 	if(pauseflag == 0)
 	{
 		if (gEffectsTimer < 41) 
 		{
-			if ((FrameCnt & 7U) == 0) 
+			if ((CameraCnt & 7U) == 0)
 				gEffectsTimer++;
 		}
 		else
 		{
 			AddRainDrops();
 
-			if ((FrameCnt & 7U) == 0)
+			if ((CameraCnt & 7U) == 0)
 				gRainCount++;
 
 			if (gRainCount > 35)
@@ -3980,6 +4324,17 @@ void DoWeather(int weather)
 		}
 	}
 
+#ifndef PSX
+	StepRainDrops();
+#endif
+}
+
+void DoWeather(int weather)
+{
+	if (weather != WEATHER_RAIN) return;
+#ifdef PSX
+	StepWeather(weather);
+#endif
 	DrawRainDrops();
 }
 
@@ -4003,3 +4358,81 @@ int GetDebrisColour(CAR_DATA *cp)
 
 
 
+
+#ifndef PSX
+static void HashEffectValue(unsigned int& hash, int value)
+{
+	for (int byte = 0; byte < 4; ++byte)
+	{
+		hash ^= ((unsigned int)value >> (byte * 8)) & 255;
+		hash *= 16777619u;
+	}
+}
+
+template<typename Position>
+static void HashEffectPosition(unsigned int& hash, const Position& position)
+{
+	HashEffectValue(hash, position.vx);
+	HashEffectValue(hash, position.vy);
+	HashEffectValue(hash, position.vz);
+}
+
+unsigned int Debris_GetTimingDigest(void)
+{
+	unsigned int hash = 2166136261u;
+	HashEffectValue(hash, main_cop_light_pos);
+	HashEffectValue(hash, gRainCount);
+	HashEffectValue(hash, gEffectsTimer);
+	for (int slot = 0; slot < MAX_SMOKE; ++slot)
+	{
+		const SMOKE& effect = smoke[slot];
+		HashEffectValue(hash, effect.flags & 2);
+		if (!(effect.flags & 2)) continue;
+		HashEffectValue(hash, effect.flags);
+		HashEffectValue(hash, effect.life);
+		HashEffectValue(hash, effect.start_w);
+		HashEffectValue(hash, effect.transparency);
+		HashEffectPosition(hash, effect.position);
+		HashEffectPosition(hash, effect.drift);
+		HashEffectPosition(hash, effect.drift_change);
+		HashEffectPosition(hash, effect.final_tail_pos);
+	}
+	for (int slot = 0; slot < MAX_DEBRIS; ++slot)
+	{
+		const DEBRIS& effect = debris[slot];
+		HashEffectValue(hash, effect.flags & 2);
+		if (!(effect.flags & 2)) continue;
+		HashEffectValue(hash, effect.life);
+		HashEffectValue(hash, effect.pos);
+		HashEffectPosition(hash, effect.position);
+		HashEffectPosition(hash, effect.direction);
+	}
+	for (int slot = 0; slot < MAX_LEAVES; ++slot)
+	{
+		const LEAF& effect = leaf[slot];
+		HashEffectValue(hash, effect.flags & 2);
+		if (!(effect.flags & 2)) continue;
+		HashEffectValue(hash, effect.life);
+		HashEffectValue(hash, effect.pos);
+		HashEffectValue(hash, effect.sin_index1);
+		HashEffectValue(hash, effect.sin_index2);
+		HashEffectPosition(hash, effect.position);
+		HashEffectPosition(hash, effect.direction);
+	}
+	HashEffectValue(hash, gNextRainDrop);
+	for (int active = 0; active < gNextRainDrop; ++active)
+	{
+		const int slot = gRainAlloc[active];
+		HashEffectValue(hash, slot);
+		HashEffectPosition(hash, gRain[slot].position);
+	}
+	HashEffectValue(hash, gNumBirds);
+	for (int slot = 0; slot < gNumBirds; ++slot)
+	{
+		HashEffectValue(hash, birds[slot].life);
+		HashEffectValue(hash, birds[slot].step);
+		HashEffectPosition(hash, birds[slot].position);
+	}
+	return hash;
+}
+#endif

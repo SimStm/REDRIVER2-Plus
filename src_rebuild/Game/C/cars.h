@@ -40,6 +40,7 @@ extern char RightLight;
 
 extern u_short civ_clut[8][32][6];
 
+extern void StepCarPresentation();
 extern void DrawCar(CAR_DATA *cp, int view); // 0x000210B8
 
 #ifndef PSX

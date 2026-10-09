@@ -21,6 +21,7 @@ extern int gMissionCompletionState;
 extern int UpdatePauseMenu(PAUSEMODE mode);
 extern void ShowPauseMenu(PAUSEMODE mode);
 
+extern void StepPauseMessages();
 extern void DrawPauseMenus();
 extern void ControlMenu();
 

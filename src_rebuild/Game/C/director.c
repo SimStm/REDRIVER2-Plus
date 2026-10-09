@@ -1002,11 +1002,14 @@ void ShowReplayOptions(void)
 	if (gInGameCutsceneActive || quick_replay)
 		return;
 
+#ifdef PSX
 	// [A] handle sound here
 	if (DirectorMenuActive)	// not a FastForward
 		PauseSound();
 	else if (PlayMode != 2 && PlayMode != 3)
 		UnPauseSound();
+
+#endif
 
 	if (!gDoOverlays && (!DirectorMenuActive || EditMode > 0))
 		return;
@@ -1052,6 +1055,15 @@ void ControlReplay(void)
 		//pauseflag = 0;
 		return;
 	}
+
+#ifndef PSX
+	// [A] handle sound here
+	if (DirectorMenuActive)	// not a FastForward
+		PauseSound();
+	else if (PlayMode != 2 && PlayMode != 3)
+		UnPauseSound();
+
+#endif
 
 	// register pads
 	if ((padd & MPAD_D_LEFT) && debounce == 0)
@@ -2278,10 +2290,10 @@ int NoMoreCamerasErrorMessage(void)
 	if (FindFreeCamera())
 		return 0;
 
-	if ((FrameCnt & 0x1fU) < 16)
-		strobe = FrameCnt & 0x1f;
+	if ((CameraCnt & 0x1fU) < 16)
+		strobe = CameraCnt & 0x1f;
 	else
-		strobe = 32 - (FrameCnt & 0x1fU);
+		strobe = 32 - (CameraCnt & 0x1fU);
 
 	SetTextColour((strobe << 3), 0, 0);
 

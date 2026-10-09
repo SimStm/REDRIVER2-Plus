@@ -37,6 +37,51 @@ build\AssetCatalogTests.exe
 It prints a check/failure count and exits non-zero on failure. It creates no
 files, so any working directory is safe.
 
+## Presentation timing and snapshots
+
+`PresentationTimingTests.cpp` compiles the production `ProjectClock.cpp` and
+`VisualSnapshot.cpp` directly, substituting only the SDL counter and stateful
+camera controller. A counter frequency indivisible by 30/25 Hz verifies exact
+NTSC/PAL cadence at 25, 30, 60, 120, 144 and 1000 presentation FPS and irregular
+frame intervals. It checks car/camera temporal alignment, unchanged car/player
+state, tick-camera restoration, paused poses, replay-editor servicing, cuts,
+teleports, slot/session resets, split views, rotation size/wrap/aspect and bounded
+stall phase. It requires Windows Visual Studio C++ tools and the existing SDL2
+headers, with no game assets, running game or GPU. From the repository root:
+
+```powershell
+pwsh -NoProfile -File scripts/run_presentation_timing_tests.ps1
+```
+
+The suite also checks rational FPS pacing at 25/30/60/120/144/360, coarse timer
+wakeups, unchanged simulation phase after a live FPS edit and startup-only region
+activation. `FrameSettingsTests.cpp` links production graphics settings/file
+persistence, verifying defaults, reload, atomic backups, invalid ranges, unknown
+keys/comments, unchanged `config.ini` and unsaved provisional resolution.
+
+Each invocation builds both regions into fresh ignored directories and reports
+compile/test failures explicitly. The stub camera tests the scheduling contract;
+actual camera/gameplay compatibility also needs controlled live replay comparisons.
+
+`EffectTimingTests.cpp` also compiles the production debris pool and mission-title
+fade updates. It checks lifetime/displacement through sparse pool slots, reused
+slot history, pause and input unlock at 15/25/30/60/120/360 presentation FPS for
+both regional tick rates. Wind/camera/hubcap dependencies are substitutes; rain
+projection, GPU rendering and complete replay trajectories require live checks.
+The suite also links production palette cycling and verifies that catch-up ticks
+do not enqueue packets, repeated draws use independent packets, drawing preserves
+palette data and loading invalidates readiness. Palette VRAM/PGXP are substitutes.
+The state comparator has independent parser/inventory/mutation regression tests:
+
+```powershell
+python scripts/engine_migration/test_compare_state.py
+```
+
+Use `e00_compare_state.py --strict a.txt b.txt` for complete same-format replay
+runs: it requires equal tick/entity/field inventories as well as equal values.
+Without `--strict`, older formats can be compared on shared fields. An empty
+shared tick set or a recorded presentation mutation always fails comparison.
+
 Manual in-game verification:
 
 1. Select a texture and export it twice to the same mod id. Both operations

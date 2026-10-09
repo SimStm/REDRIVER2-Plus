@@ -1724,6 +1724,17 @@ void ShowPauseMenu(PAUSEMODE mode)
 	PauseReturnValue = 0;
 }
 
+// Desktop menu-message time follows scheduled regional ticks, even when paused.
+void StepPauseMessages(void)
+{
+#if !defined(PSX) && defined(DEBUG_OPTIONS)
+	extern int g_FreeCameraEnabled;
+	if (g_FreeCameraEnabled) return;
+#endif
+	if (gShowMap == 0 && gDisplayedMessage.show > 0)
+		--gDisplayedMessage.show;
+}
+
 // [D] [T]
 void DrawPauseMenus(void)
 {
@@ -1744,8 +1755,10 @@ void DrawPauseMenus(void)
 		{
 			DisplayMenuMessage(gDisplayedMessage.header, gDisplayedMessage.text);
 
+#ifdef PSX
 			if(gDisplayedMessage.show > 0)
 				gDisplayedMessage.show--;
+#endif
 		}
 		else if (gEnteringScore)
 			DrawHighScoreMenu(gScorePosition);

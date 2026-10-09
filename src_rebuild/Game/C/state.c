@@ -4,6 +4,10 @@
 #include "glaunch.h"
 #include "Frontend/FEmain.h"
 
+#ifndef PSX
+#include "../../utils/ProjectClock.h"
+#endif
+
 //-------------------------------------------
 
 typedef void (*StateFn)(void*);
@@ -49,6 +53,10 @@ void DoStateLoop()
 		if (!stateFn)
 			break;
 
+#ifndef PSX
+		if (stateFn == State_GameLoop || stateFn == State_FrontEnd)
+			ProjectClock_WaitForPresentation();
+#endif
 		stateFn(gCurrentStateParam);
 	} while (true);
 #endif

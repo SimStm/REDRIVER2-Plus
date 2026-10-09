@@ -1,4 +1,5 @@
 #include "driver2.h"
+#include "pause.h"
 #include "bomberman.h"
 #include "convert.h"
 #include "overmap.h"
@@ -41,6 +42,16 @@ void InitThrownBombs(void)
 	CurrentBomb = 0;
 	gWantFlash = 0;
 	gBombTargetVehicle = NULL;
+}
+
+void StepBombFlash(void)
+{
+	if (!pauseflag && gWantFlash)
+	{
+		flashval -= 10;
+		if (flashval < 1)
+			gWantFlash = 0;
+	}
 }
 
 // [D] [T]
@@ -94,10 +105,12 @@ void DrawThrownBombs(void)
 	{
 		add_haze(flashval, flashval, 7);
 
+#ifdef PSX
 		flashval -= 10;
 
 		if (flashval < 1)
 			gWantFlash = 0;
+#endif
 	}
 }
 

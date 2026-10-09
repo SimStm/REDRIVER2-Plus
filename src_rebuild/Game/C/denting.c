@@ -11,6 +11,10 @@
 #include "debris.h"
 #include "players.h"
 #include "main.h"
+#ifndef PSX
+#include "../utils/VisualSnapshot.h"
+#include "../utils/PresentationInterpolation.h"
+#endif
 
 #if USE_PC_FILESYSTEM
 extern int gContentOverride;
@@ -229,10 +233,16 @@ void CreateDentableCar(CAR_DATA *cp)
 
 extern HUBCAP gHubcap;
 int gHubcapTime = 0;
+#ifndef PSX
+static HUBCAP previousHubcap;
+#endif
 
 // [D] [T]
 void InitHubcap(void)
 {
+#ifndef PSX
+	previousHubcap.Duration = 0;
+#endif
 	gHubcapTime = Random2(1) & 0x7ff;
 }
 
@@ -325,9 +335,49 @@ void HandlePlayerHubcaps(int playerId)
 }
 
 // [D] [T]
+void StepHubcap()
+{
+	if (pauseflag)
+		return;
+#ifndef PSX
+	previousHubcap = gHubcap;
+#endif
+	if (gHubcapTime > 0)
+		gHubcapTime--;
+	if (gHubcap.Duration <= 0)
+		return;
+
+	gHubcap.Duration--;
+	gHubcap.Position.vx += gHubcap.Direction.vx;
+	gHubcap.Position.vy += gHubcap.Direction.vy;
+	gHubcap.Position.vz += gHubcap.Direction.vz;
+	gHubcap.Rotation -= 220;
+	gHubcap.Direction.vy += 5;
+
+	const int mapHeight = MapHeight(&gHubcap.Position);
+	if (gHubcap.Position.vy >= -40 - mapHeight)
+	{
+		gHubcap.Direction.vy = -(gHubcap.Direction.vy / 2);
+		gHubcap.Position.vy = -40 - mapHeight;
+	}
+}
+
 void MoveHubcap()
 {
+#ifdef PSX
 	int CurrentMapHeight;
+	HUBCAP& pose = gHubcap;
+#else
+	HUBCAP pose = gHubcap;
+	if (previousHubcap.Duration > 0 && pose.Duration > 0)
+	{
+		const int alpha = VisualSnapshot_GetAlpha();
+		pose.Position.vx = PresentationInterpolation::Lerp(previousHubcap.Position.vx, pose.Position.vx, alpha);
+		pose.Position.vy = PresentationInterpolation::Lerp(previousHubcap.Position.vy, pose.Position.vy, alpha);
+		pose.Position.vz = PresentationInterpolation::Lerp(previousHubcap.Position.vz, pose.Position.vz, alpha);
+		pose.Rotation = PresentationInterpolation::Lerp(previousHubcap.Rotation, pose.Rotation, alpha);
+	}
+#endif
 	int savecombo;
 	int cmb;
 	VECTOR ShadowPos;
@@ -337,47 +387,53 @@ void MoveHubcap()
 
 	InitMatrix(Orientation);
 
+#ifdef PSX
 	if (pauseflag == 0)
 	{
 		if(gHubcapTime > 0)
 			gHubcapTime--;
 	}
 
+#endif
 	// draw current hubcap
-	if (gHubcap.Duration > 0) 
+	if (pose.Duration > 0)
 	{
+#ifdef PSX
 		if (pauseflag == 0 && CurrentPlayerView == 0)
 		{
-			gHubcap.Duration--;
+			pose.Duration--;
 
 			// move hubcap
-			gHubcap.Position.vx += gHubcap.Direction.vx;
-			gHubcap.Position.vy += gHubcap.Direction.vy;
-			gHubcap.Position.vz += gHubcap.Direction.vz;
+			pose.Position.vx += pose.Direction.vx;
+			pose.Position.vy += pose.Direction.vy;
+			pose.Position.vz += pose.Direction.vz;
 
-			gHubcap.Rotation -= 220;
+			pose.Rotation -= 220;
 
-			_RotMatrixX(&Orientation, gHubcap.Rotation);
+			_RotMatrixX(&Orientation, pose.Rotation);
 
-			gHubcap.Direction.vy += 5;
+			pose.Direction.vy += 5;
 
-			CurrentMapHeight = MapHeight(&gHubcap.Position);
+			CurrentMapHeight = MapHeight(&pose.Position);
 
-			if (gHubcap.Position.vy >= -40 - CurrentMapHeight)
+			if (pose.Position.vy >= -40 - CurrentMapHeight)
 			{
-				gHubcap.Direction.vy = -(gHubcap.Direction.vy / 2);
-				gHubcap.Position.vy = -40 - CurrentMapHeight;
+				pose.Direction.vy = -(pose.Direction.vy / 2);
+				pose.Position.vy = -40 - CurrentMapHeight;
 			}
 		}
 
-		MulMatrix0(&gHubcap.Orientation, &Orientation, &Orientation);
+#else
+		_RotMatrixX(&Orientation, pose.Rotation);
+#endif
+		MulMatrix0(&pose.Orientation, &Orientation, &Orientation);
 
-		ShadowPos.vx = gHubcap.Position.vx - camera_position.vx;
-		ShadowPos.vy = -MapHeight(&gHubcap.Position);
-		ShadowPos.vz = gHubcap.Position.vz - camera_position.vz;
+		ShadowPos.vx = pose.Position.vx - camera_position.vx;
+		ShadowPos.vy = -MapHeight(&pose.Position);
+		ShadowPos.vz = pose.Position.vz - camera_position.vz;
 
 		Position.vx = ShadowPos.vx;
-		Position.vy = gHubcap.Position.vy - camera_position.vy;
+		Position.vy = pose.Position.vy - camera_position.vy;
 		Position.vz = ShadowPos.vz;
 
 		SetRotMatrix(&inv_camera_matrix);
@@ -399,6 +455,7 @@ void MoveHubcap()
 		RoundShadow(&ShadowPos, &col, 65);
 	}
 }
+
 
 // [D] [T]
 void ProcessDentLump(char *lump_ptr, int lump_size)

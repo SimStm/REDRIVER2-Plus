@@ -744,16 +744,21 @@ void GlobalTimeStep(void)
 // [D] [T]
 void SetShadowPoints(CAR_DATA* c0, VECTOR* outpoints)
 {
+	SetShadowPointsForMatrix(&c0->hd.where, c0->ap.model, outpoints);
+}
+
+void SetShadowPointsForMatrix(MATRIX* transform, int model, VECTOR* outpoints)
+{
 	int i;
 	CAR_COSMETICS* car_cos;
 
 	sdPlane* surfacePtr;
 	surfacePtr = NULL;
 
-	gte_SetRotMatrix(&c0->hd.where);
-	gte_SetTransMatrix(&c0->hd.where);
+	gte_SetRotMatrix(transform);
+	gte_SetTransMatrix(transform);
 
-	car_cos = &car_cosmetics[c0->ap.model];
+	car_cos = &car_cosmetics[model];
 
 	for (i = 0; i < 4; i++)
 	{

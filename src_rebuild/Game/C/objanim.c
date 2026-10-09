@@ -9,6 +9,7 @@
 #include "mission.h"
 #include "cars.h"
 #include "players.h"
+#include "camera.h"
 #include "cop_ai.h"
 #include "felony.h"
 #include "spool.h"
@@ -186,6 +187,9 @@ int num_cycle_obj = 0;
 
 TEXTURE_DETAILS cycle_tex[12];
 DR_LOAD cyclecluts[12];
+#ifndef PSX
+static bool cyclePaletteReady[12];
+#endif
 
 int cycle_phase = 0;
 int cycle_timer = 0;
@@ -194,6 +198,9 @@ int cycle_timer = 0;
 void InitCyclingPals(void)
 {
 	int i;
+#ifndef PSX
+	memset(cyclePaletteReady, 0, sizeof(cyclePaletteReady));
+#endif
 
 	// only enabled at Night
 	if (gTimeOfDay != TIME_NIGHT)
@@ -232,10 +239,13 @@ void ColourCycle(void)
 	if (LoadingArea != 0)
 	{
 		cycle_phase = 0;
+#ifndef PSX
+		memset(cyclePaletteReady, 0, sizeof(cyclePaletteReady));
+#endif
 		return;
 	}
 
-	if (FrameCnt & 1) // [A]
+	if (CameraCnt & 1) // [A]
 	{
 		return;
 	}
@@ -263,6 +273,10 @@ void ColourCycle(void)
 			cyc->vy = vram.y = (temp >> 6);
 
 			StoreImage(&vram, (u_long*)bufaddr);
+#ifndef PSX
+			SetDrawLoad(&cyclecluts[i], &vram);
+			cyclePaletteReady[i] = true;
+#endif
 		}
 		else
 		{
@@ -293,7 +307,9 @@ void ColourCycle(void)
 
 			SetDrawLoad(&cyclecluts[i], &vram);
 
+#ifdef PSX
 			addPrim(current->ot, &cyclecluts[i]);
+#endif
 		}
 	}
 
@@ -306,6 +322,28 @@ void ColourCycle(void)
 		cycle_phase = 1;
 	}
 }
+
+#ifndef PSX
+void DrawCyclingPals(void)
+{
+	for (int i = 0; i < num_cycle_obj; ++i)
+	{
+		if (!cyclePaletteReady[i] || !tpageloaded[cycle_tex[i].texture_page])
+			continue;
+		if (current->primptr + sizeof(DR_LOAD) > current->primtab + PRIMTAB_SIZE)
+		{
+			printError("No primitive space for cycling palette\n");
+			return;
+		}
+		// Catch-up ticks update palette data only. Each draw owns its packet;
+		// linking the same static packet twice creates a self-cycle in the OT.
+		DR_LOAD* packet = (DR_LOAD*)current->primptr;
+		*packet = cyclecluts[i];
+		current->primptr += sizeof(DR_LOAD);
+		addPrim(current->ot, packet);
+	}
+}
+#endif
 
 
 // [D] [T]

@@ -10,6 +10,13 @@ where release policy permits it.
 
 ### Added
 
+- Display FPS controls (15..360, defaults 30 NTSC / 25 PAL), startup regional
+  selection and live VSync beside resolution. FPS/VSync autosave their owned
+  keys; confirmed region changes apply after application restart.
+- Project-owned regional ticks, shared car/camera snapshots and optional
+  canonical gameplay/effect dumps with strict comparison and draw-mutation checks.
+- Production timing, settings and effect tests for both regional clocks.
+
 - Adopted engine-migration roadmap and five implementation issue briefs covering
   project-owned fixed simulation ticks/replay compatibility, original-content
   conversion, Diligent rendering, FMOD Core, PopcornFX and progressive PsyCross
@@ -476,6 +483,28 @@ where release policy permits it.
   pick until the button is pressed again.
 
 ### Fixed
+
+- Desktop smoke, exhaust, debris, birds, hubcaps, rain and light phases no longer
+  advance per presentation frame. Effect poses interpolate locally at the shared
+  car/camera snapshot time; drawing does not age their simulation pools.
+- Mission-title input unlock, bomb flash and pause-message expiry follow regional
+  ticks; replay UI draws every presentation frame. Existing replay trajectory
+  faults on local original recordings are deferred at the user's request.
+- Night-time palette cycling uses per-frame upload packets, preventing catch-up
+  ticks from creating a cyclic ordering table and hanging replay rendering.
+
+- Vulkan now honors live VSync changes by selecting a supported presentation
+  mode and recreating its buffers at a safe frame boundary. FPS/VSync autosaves
+  preserve unconfirmed resolution and unrelated session edits; small timer
+  overruns no longer accumulate drift in the presentation FPS limiter.
+
+- Car/camera flick and jumps between simulation ticks: original camera control
+  now runs at the regional tick rate and camera/car translation and rotation
+  share one presentation interval. Wheel transforms and shadow corners use the
+  visual car pose; pause, cuts and resets delimit history without changing car
+  physics or replay data. The clock preserves exact NTSC/PAL cadence and the
+  fractional interpolation phase after bounded catch-up. Covered by production
+  timing/snapshot tests at varied FPS and live deterministic replay comparisons.
 
 - The reported Vulkan/OpenGL difference in shadow reception was a measurement
   artefact, not a renderer defect: the two installs had different developer

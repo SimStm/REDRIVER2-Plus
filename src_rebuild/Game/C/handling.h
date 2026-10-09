@@ -13,6 +13,7 @@ extern void FixCarCos(CAR_COSMETICS *carCos, int externalModelNumber); // 0x0005
 extern void GlobalTimeStep(); // 0x00053C00
 
 extern void SetShadowPoints(CAR_DATA *c0, VECTOR* outpoints); // 0x000551EC
+extern void SetShadowPointsForMatrix(MATRIX* transform, int model, VECTOR* outpoints);
 
 extern void LongQuaternion2Matrix(LONGQUATERNION* qua, MATRIX *m); // 0x000553CC
 extern void RebuildCarMatrix(RigidBodyState *st, CAR_DATA *cp); // 0x00056AE4

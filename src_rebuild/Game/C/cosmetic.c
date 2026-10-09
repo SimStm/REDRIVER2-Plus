@@ -103,6 +103,14 @@ void LoadCosmetics(int level)
 #define BACKLIGHT_SIZE			17
 
 // [D] [T]
+#ifndef PSX
+static char renderRearLight[MAX_CARS];
+void BeginCarPresentation(CAR_DATA* cp)
+{
+	renderRearLight[CAR_INDEX(cp)] = 0;
+}
+#endif
+
 void AddReverseLight(CAR_DATA *cp)
 {
 	CAR_COSMETICS *car_cos;
@@ -170,7 +178,11 @@ void AddIndicatorLight(CAR_DATA *cp, int Type)
 	//	return;
 
 	life = &cp->ap.life;
+#ifdef PSX
 	life2 = &cp->ap.life2;
+#else
+	life2 = &renderRearLight[CAR_INDEX(cp)];
+#endif
 
 	if (cp->ap.life < 0)
 		brightness = (255 - (u_int)cp->ap.life) * 2 & 255;
@@ -181,8 +193,10 @@ void AddIndicatorLight(CAR_DATA *cp, int Type)
 	col.g = 0;
 	col.b = 0;
 
+#ifdef PSX
 	if (pauseflag == 0)
 		*life += 8;
+#endif
 
 	car_cos = cp->ap.carCos;
 
@@ -252,7 +266,11 @@ void AddBrakeLight(CAR_DATA *cp)
 	col.g = 0;
 	col.b = 0;
 
+#ifdef PSX
 	life2 = &cp->ap.life2;
+#else
+	life2 = &renderRearLight[CAR_INDEX(cp)];
+#endif
 
 	if (!(car_cos->extraInfo & 8))
 		return;
@@ -356,7 +374,13 @@ void AddCopCarLight(CAR_DATA *cp)
 	SVECTOR v1;
 	CVECTOR col;
 
+#ifdef PSX
 	coplife = &cp->ap.coplife;
+#else
+	// Intra-bar phases are local; extra presentation frames cannot advance them.
+	char renderCopLife = cp->ap.coplife;
+	coplife = &renderCopLife;
+#endif
 
 	if (CameraCar == CAR_INDEX(cp) && cameraview == 2)
 		return;
@@ -436,7 +460,7 @@ void AddCopCarLight(CAR_DATA *cp)
 			}
 
 			if (pauseflag == 0) 
-				cp->ap.coplife += count_speed;
+				*coplife += count_speed;
 
 			ShowCarlight(&v1, cp, &col, size, size*3, &light_texture, 0xff);
 
@@ -474,7 +498,11 @@ void AddNightLights(CAR_DATA *cp)
 	short verticalFlag;
 	short cogOffset;
 
+#ifdef PSX
 	life2 = &cp->ap.life2;
+#else
+	life2 = &renderRearLight[CAR_INDEX(cp)];
+#endif
 
 	LeftLight = 0;
 	RightLight = 0;

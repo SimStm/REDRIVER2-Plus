@@ -129,7 +129,13 @@ void InitCamera(PLAYER *lp)
 
 		if (lp->cameraView == 0)
 		{
-			if (FrameCnt == 0) 
+			if (
+#ifdef PSX
+				FrameCnt == 0
+#else
+				CameraCnt <= 1
+#endif
+			)
 			{
 				lp->cameraDist = 1000;
 
@@ -221,7 +227,7 @@ void ModifyCamera(void)
 		if (Pads[i].mapped & 0x100)
 		{
 			// [A] if only new button is pressed
-			if (lp->viewChange != FrameCnt-1 && (Pads[i].mapnew & 0x100))
+			if (lp->viewChange != CameraCnt-1 && (Pads[i].mapnew & 0x100))
 			{
 				pNextCameraView = inGameCamera;
 
@@ -232,7 +238,7 @@ void ModifyCamera(void)
 				}
 			
 				lp->cameraView = *pNextCameraView;
-				lp->viewChange = FrameCnt;
+				lp->viewChange = CameraCnt;
 			}
 
 			if (lp->cameraView == 1)

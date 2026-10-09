@@ -1,4 +1,5 @@
 #include "driver2.h"
+#include "pause.h"
 #include "cars.h"
 #include "texture.h"
 #include "overmap.h"
@@ -18,6 +19,7 @@
 #include "cutscene.h"
 #include "convert.h"
 #include "glaunch.h"
+#include "../utils/VisualSnapshot.h"
 #include "ASM/rndrasm.h"
 
 #ifndef PSX
@@ -1582,6 +1584,59 @@ bool Cars_ExportInspectorModel(int carId, const char* modId, char* status, int s
 }
 #endif
 
+void StepCarPresentation(void)
+{
+	if (pauseflag)
+		return;
+	for (int slot = 0; slot < MAX_CARS; ++slot)
+	{
+		CAR_DATA* cp = &car_data[slot];
+		if (cp->controlType == CONTROL_TYPE_NONE || cp->controlType == CONTROL_TYPE_CAMERACOLLIDER || !cp->ap.carCos)
+			continue;
+		int WheelSpeed, maxDamage;
+		int doSmoke = 0;
+
+		WheelSpeed = cp->hd.speed * 8192;
+		maxDamage = MaxPlayerDamage[0];
+
+		if (cp->controlType == CONTROL_TYPE_PLAYER)
+		{
+			if(*cp->ai.padid >= 0 && *cp->ai.padid < 2)
+				maxDamage = MaxPlayerDamage[*cp->ai.padid];
+		}
+
+		if (cp->totalDamage >= maxDamage)
+		{
+			if (WheelSpeed + 59999U < 119999)
+				AddFlamingEngine(cp);
+
+			doSmoke = 2;
+		}
+		else
+		{
+			if (cp->ap.damage[0] > 2000 || cp->ap.damage[1] > 2000)
+			{
+				if (cp->ap.damage[0] > 3000 || cp->ap.damage[1] > 3000)
+					doSmoke = 2;
+				else
+					doSmoke = 1;
+			}
+		}
+
+		if (doSmoke && WheelSpeed + 399999U < 1199999)
+			AddSmokingEngine(cp, doSmoke - 1, WheelSpeed);
+
+#if ENABLE_GAME_ENCHANCEMENTS
+		AddExhaustSmoke(cp, doSmoke > 1, WheelSpeed);
+#endif
+
+		cp->ap.life += 8;
+		const int copPhaseStep = (GameLevel == 1 || GameLevel == 3) ? 3 * 48 :
+			(GameLevel == 2 ? 8 * 16 : 6 * 16);
+		cp->ap.coplife += copPhaseStep;
+	}
+}
+
 // [D] [T] [A]
 void DrawCar(CAR_DATA* cp, int view)
 {
@@ -1596,10 +1651,17 @@ void DrawCar(CAR_DATA* cp, int view)
 	VECTOR pos, dist;
 	VECTOR corners[4];
 	MATRIX workmatrix;
+#ifndef PSX
+	MATRIX visualPose = cp->hd.where;
+	MATRIX visualDrawMatrix = cp->hd.drawCarMat;
+#endif
 
 	D_CHECK_ERROR(cp < car_data, "Invalid car");
 
 	model = cp->ap.model;
+#ifndef PSX
+	BeginCarPresentation(cp);
+#endif
 
 	// draw car lights in for InCar camera
 	if (player[view].cameraView == 2 && cp->id == player[view].cameraCarId)
@@ -1635,6 +1697,29 @@ void DrawCar(CAR_DATA* cp, int view)
 	pos.vx = cp->hd.where.t[0];
 	pos.vz = cp->hd.where.t[2];
 	pos.vy = -cp->hd.where.t[1];
+
+#ifndef PSX
+	// E01: render the car between its previous and current tick poses. This only
+	// affects presentation; the authoritative pose is untouched, and the culling
+	// corners, shadow and wheels below all use the same interpolated position.
+	{
+		int interpolated[3];
+		const int alpha = VisualSnapshot_GetAlpha();
+
+		if (VisualSnapshot_GetPosition((int)(cp - car_data), alpha, interpolated))
+		{
+			pos.vx = interpolated[0];
+			pos.vy = -interpolated[1];
+			pos.vz = interpolated[2];
+			for (int axis = 0; axis < 3; ++axis)
+				visualPose.t[axis] = interpolated[axis];
+			VisualSnapshot_GetRotation((int)(cp - car_data), alpha, visualPose.m);
+			for (int row = 0; row < 3; ++row)
+				for (int col = 0; col < 3; ++col)
+					visualDrawMatrix.m[row][col] = row == 1 ? visualPose.m[row][col] : -visualPose.m[row][col];
+		}
+	}
+#endif
 
 	SetFrustrumMatrix();
 
@@ -1674,6 +1759,11 @@ void DrawCar(CAR_DATA* cp, int view)
 	d.vx = cp->hd.oBox.location.vx - camera_position.vx;
 	d.vy = -camera_position.vy - cp->hd.oBox.location.vy;
 	d.vz = cp->hd.oBox.location.vz - camera_position.vz;
+#ifndef PSX
+	d.vx += visualPose.t[0] - cp->hd.where.t[0];
+	d.vy -= visualPose.t[1] - cp->hd.where.t[1];
+	d.vz += visualPose.t[2] - cp->hd.where.t[2];
+#endif
 
 	dist.vx = d.vx * cp->hd.oBox.radii[0].vx + d.vy * cp->hd.oBox.radii[0].vy + d.vz * cp->hd.oBox.radii[0].vz;
 
@@ -1711,7 +1801,11 @@ void DrawCar(CAR_DATA* cp, int view)
 
 	num_cars_drawn++;
 
+#ifdef PSX
 	MulMatrix0(&inv_camera_matrix, &cp->hd.drawCarMat, &workmatrix);
+#else
+	MulMatrix0(&inv_camera_matrix, &visualDrawMatrix, &workmatrix);
+#endif
 
 	// [A] there was mini cars cheat
 	// we need full blown mini cars with physics support
@@ -1732,6 +1826,7 @@ void DrawCar(CAR_DATA* cp, int view)
 	// LOD switching
 	if (pos.vz <= CAR_LOD_SWITCH_DISTANCE && gForceLowDetailCars == 0 || cp->controlType == CONTROL_TYPE_PLAYER)
 	{
+#ifdef PSX
 		int doSmoke = 0;
 
 		WheelSpeed = cp->hd.speed * 8192;
@@ -1768,7 +1863,13 @@ void DrawCar(CAR_DATA* cp, int view)
 		AddExhaustSmoke(cp, doSmoke > 1, WheelSpeed);
 #endif
 
+#endif
+
+#ifdef PSX
 		SetShadowPoints(cp, corners);
+#else
+		SetShadowPointsForMatrix(&visualPose, model, corners);
+#endif
 		PlaceShadowForCar(corners, 4, 10, yVal < 0 ? 0 : 2);
 
 		ComputeCarLightingLevels(cp, 1);
@@ -1784,7 +1885,11 @@ void DrawCar(CAR_DATA* cp, int view)
 
 		if (ActiveCheats.cheat13 != 0)
 		{
+#ifdef PSX
 			MulMatrix0(&inv_camera_matrix, &cp->hd.drawCarMat, &workmatrix);
+#else
+			MulMatrix0(&inv_camera_matrix, &visualDrawMatrix, &workmatrix);
+#endif
 		}
 
 		DrawCarWheels(cp, &workmatrix, &pos, view);
@@ -1798,7 +1903,11 @@ void DrawCar(CAR_DATA* cp, int view)
 
 		if (pos.vz < 8000)
 		{
+#ifdef PSX
 			SetShadowPoints(cp, corners);
+#else
+			SetShadowPointsForMatrix(&visualPose, model, corners);
+#endif
 			PlaceShadowForCar(corners, 0, 0, yVal < 0 ? 0 : 2);
 		}
 

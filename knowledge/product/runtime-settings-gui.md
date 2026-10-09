@@ -14,6 +14,8 @@ the input bindings, and it persists developer state in separate files so
 
 Delivery history and evidence:
 [`knowledge/roadmap/done/runtime-settings-gui.md`](../roadmap/done/runtime-settings-gui.md).
+The complementary frame controls are recorded in
+[2026-10-08 display frame controls](../changes/2026-10-08/display-frame-controls/index.md).
 
 ## Ownership and precedence
 
@@ -42,11 +44,11 @@ captures. Panel edits never write `config.ini`; a setting with no persistence in
   a shadow debug view, so the lighting can be checked at any angle without
   editing the file or restarting. It reads the live direction vector, so the
   `[`/`]`/`;`/`'` keys and the sliders stay in sync.
-- **Display mode** - Fullscreen (desktop) and a window-size combo (current plus
+- **Display mode** - FPS limit, NTSC/PAL, VSync, Fullscreen (desktop) and a window-size combo (current plus
   1280x720, 1600x900, 1920x1080) through `PsyX_ApplyWindowMode`, which resizes
   the SDL window, resets the render device and therefore also moves the viewport,
   aspect handling and primitive picking. A change is provisional for 15 seconds
-  with Keep/Revert. The confirmation is **its own ImGui window** anchored to the
+  with Apply and save settings/Revert. The confirmation is **its own ImGui window** anchored to the
   bottom-left of the applied display size, drawn whether or not the panel is
   open and after it, so a mode change cannot hide the buttons that accept or
   reject it; the countdown runs even with the panel closed, so an unusable mode
@@ -68,6 +70,29 @@ captures. Panel edits never write `config.ini`; a setting with no persistence in
     revert the mode the instant the game resumes. Verified: the first frame
     after a long debugger stop reports `dt=0.2500` and the remaining budget only
     drops by that step.
+- **Frame controls (schema9)** - The FPS slider is a presentation ceiling from
+  15 to 360, with 30 FPS NTSC / 25 FPS PAL defaults. It applies during editing
+  and autosaves on edit completion. VSync sits beside resolution, applies on the
+  next frame and autosaves immediately. Actual throughput can be lower because
+  of rendering cost or display/driver synchronization. Presentation deadlines
+  carry counter remainders and tolerate small overruns without accumulating
+  drift; changing FPS does not reset simulation time or interpolation phase.
+  Vulkan uses supported FIFO when synchronized and IMMEDIATE (MAILBOX fallback)
+  otherwise, recreating resources at a safe frame boundary. The explicit
+  `PSYX_VK_PRESENT_MODE` benchmark override retains precedence. OpenGL keeps
+  its existing SDL swap-interval path.
+- **Regional startup preference** - NTSC selects 30 simulation Hz and PAL 25 Hz.
+  Confirm in the bottom-left window, then restart the application. The selected
+  preference and active mode are distinct; a running mission/replay retains its
+  clock, screen/aspect and sound timing. Both desktop regional builds can select
+  either mode at startup. Canonical dump headers describe the active mode;
+  legacy replay files have no regional metadata. Versioned replay integration
+  remains separate local migration work. Missing FPS
+  uses the saved region's default; an explicitly saved custom cap is retained.
+  Cancel/timeout discards a pending region choice. Frame-control autosaves own
+  only their four keys, preserving unrelated session edits and unconfirmed
+  resolution; full settings save/default buttons are disabled while confirmation
+  is pending.
 - **Input** - the game and menu tables for keyboard and controller, kept
   distinct. Click a binding to capture the next key, controller button or stick
   push; Escape, a right click, Cancel, 10 seconds of silence, or closing the
@@ -104,17 +129,15 @@ marker on its own line.
   value is not written, so deleting a line or pressing Reset returns the binding
   to the shipped value and the file stays small.
 - Every control states when it takes effect (live, next level load, next music
-  start, restart), and the display change is the only one that needs a
-  confirmation window.
+  start, restart). Resolution and regional preference share the display
+  confirmation window; FPS and VSync apply live.
 
 ## Limits
 
-- The panel's own click path cannot be driven by a scripted agent; UI behaviour
-  is verified through the shared functions the widgets call, plus captures that
-  read the rendered panel. Desktop-control MCP clicks do reach the panel once
-  the game window is frontmost, but synthetic clicks on the binding-capture
-  button were not observed to start a capture, so that banner is verified from
-  the code path rather than a click.
+- Sky mouse clicks verified FPS, VSync and regional confirmation in this task.
+  Synthetic F11 did not reach SDL; a temporary panel-open/event probe enabled
+  UI inspection and was removed before final builds. Binding capture, fullscreen
+  and complete platform/input coverage were not revalidated by this change.
 - The fullscreen branch of the display controls is not exercised by the tests
   (it would change the machine's display), and display/DPI changes across
   monitors plus alt-tab are untested.

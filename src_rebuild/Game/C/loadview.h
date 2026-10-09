@@ -15,6 +15,7 @@ extern void CloseShutters(int speed, int width, int height); // 0x000589D0
 extern void SetupFadePolys(); // 0x00058794
 extern void DrawFadePoly(); // 0x00058824
 
+extern void StepMissionTitle();
 extern void DisplayMissionTitle(); // 0x00058B08
 
 
