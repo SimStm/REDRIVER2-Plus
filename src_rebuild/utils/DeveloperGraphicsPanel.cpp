@@ -19,6 +19,7 @@
 
 #include "driver2.h"
 #include "C/assetcatalog.h"
+#include "C/assetcatalog_game.h"
 #include "C/camera.h"
 #include "C/cars.h"
 #include "C/convert.h"
@@ -69,6 +70,7 @@ bool g_inspectorPickMode = false;
 char g_persistenceStatus[96] = "Session settings only";
 char g_inspectorExportModId[48] = "inspector-export";
 char g_inspectorExportStatus[512] = "Select a texture to export it into a new or existing mod directory.";
+char g_assetInventoryStatus[512] = "Reconcile the resident level placements against the asset catalog and write assetcatalog_level_<n>_inventory.txt.";
 
 // A display mode change can leave the window unusable, so it is provisional
 // until the user confirms it. The countdown runs even while the panel is
@@ -897,6 +899,12 @@ void DrawThreeDDebugTab()
 		ImGui::Text("Static footprint: %d bytes", AssetCatalog_GetCapacityBytes());
 		ImGui::SameLine();
 		HelpMarker("Fixed size, populated during level load and region streaming. The catalog performs no per-frame allocation, so its cost does not scale with the frame.");
+
+		if (ImGui::Button("Reconcile level inventory (report)"))
+			AssetCatalogGame_ReconcileLevel(g_assetInventoryStatus, sizeof(g_assetInventoryStatus));
+		ImGui::SameLine();
+		HelpMarker("Decodes every object of the resident world regions with its cell nearCell, reconciles model/texture references and duplicate placement identities against this catalog, and publishes assetcatalog_level_<n>_inventory.txt in the working directory. The Windows-only atomic writer keeps the previous report when a write fails.");
+		ImGui::TextWrapped("%s", g_assetInventoryStatus);
 	}
 
 	ImGui::Separator();

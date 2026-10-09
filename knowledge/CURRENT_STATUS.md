@@ -13,15 +13,10 @@ tags: [okf, status]
 
 ## Branch and adopted plan
 
-`feat/new-engine` starts from parent `2e93f215c54e61dd1bbb5d26e439c25303466709`,
-the existing `master` baseline, through a newly created local `main` alias.
-Remote `master`/default branch was not renamed. The parent records fork commit
-`76d83df0e400bdff5c1e83c7be74d9e01ba0c660` (live Vulkan VSync), based on
-`37d399d`; the submodule working tree has four uncommitted files
-(`include/PsyX/PsyX_public.h`, `include/PsyX/PsyX_vk.h`, `src/PsyX_main.cpp`,
-`src/render/PsyX_Vk.cpp`: headless presentation, post-frame handler and the
-pad-backend disable). All E02/E03 worktree implementation and its docs are
-likewise uncommitted on top of `036dfc34`. The rework fork history was not merged.
+`feat/new-engine` is at checkpoint `7617bd92`; the PsyCross headless-presentation,
+post-frame-hook and pad-backend-disable changes are committed/pushed as `99950a7`.
+Subsequent E02/E04 implementation and documentation changes remain uncommitted.
+The earlier native rework fork history was not merged.
 
 The former dirty native Vulkan work is committed/pushed separately at
 `e68b6ea6b1e30543af77d6244c109f7993ff65cf` on
@@ -49,101 +44,36 @@ E03 still selects Diligent Vulkan, independently of the retiring legacy renderer
 
 ## Engine migration E00 (in progress)
 
-[E00 dependency inventory](engine-migration/e00/dependency-inventory.md) records
-the PsyCross/Psy-Q contracts, NTSC/PAL tick/replay/RNG facts, draw-time mutation
-sites and SDK pins (Diligent is now the official master clone `API256019`; FMOD
-2.03.14 planned), with the mechanical appendix reproduced by
-`scripts/engine_migration/e00_symbol_scan.py` (3618 declared / 400 used).
-`utils/DeterministicBaseline.*` writes a per-tick dump (`-statedump`) compared by
-`scripts/engine_migration/e00_compare_state.py` (0 mismatches: NTSC attract 714,
-PAL 595, NTSC-vs-PAL 597, mission 726). `RED2_BUILD_DIR`/`RED2_BIN_DIR` produced
-isolated NTSC/PAL `Release_dev|x64` builds (Chicago, Vulkan, ~29 FPS).
-[Baseline scenarios](engine-migration/e00/baseline-scenarios.md) list the routes;
-driving/collision/police, pause/loading, region transition and re-record remain
-pending, so E00 is close but not formally accepted.
+[E00 dependency inventory](engine-migration/e00/dependency-inventory.md) and
+[baseline scenarios](engine-migration/e00/baseline-scenarios.md) record service
+contracts, regional/replay/RNG facts and remaining routes. The symbol scan found
+3618 declared / 400 used. Per-tick comparisons had 0 mismatches for NTSC attract
+(714), PAL (595), NTSC-vs-PAL (597) and mission (726); isolated NTSC/PAL builds
+ran Chicago. Driving/collision/police, pause/loading, region transition and
+re-record remain pending, so E00 is not formally accepted. Local FMOD metadata
+identifies 2.03.15; Diligent is official master `API256019`.
 
 ## Engine migration E01 (in progress)
 
-- `src_rebuild/utils/ProjectClock.{h,cpp}` owns the desktop fixed tick from the
-  monotonic counter (30 Hz NTSC, 25 Hz PAL), with bounded catch-up (max 4) and
-  a pause API; `State_GameLoop` steps by due ticks and `State_GameInit` no
-  longer forces a 30 FPS swap interval. Gameplay reads of the draw counter
-  `FrameCnt` moved to the simulation tick in camera/debris/gamesnd/objanim/
-  overlay/director/main.
-- Authoritative determinism vs the pre-E01 E00 baselines (0 mismatches on all
-  shared ticks): NTSC attract replay, NTSC mission, PAL replay.
-- Presentation now draws every frame (fixed ticks decouple simulation from
-  display rate). Presentation-rate independence verified with 0 mismatches:
-  vsync (~30 FPS) vs uncapped (~250 FPS / 4 ms) on NTSC attract replay, NTSC
-  mission and PAL replay; each vsync run also matched its E00 baseline. The
-  dump covers mission/AI timers, message timers, `tannerDeathTimer` and the
-  per-stream replay cursor; a 3x-vsync + 3x-uncapped NTSC mission matrix (all
-  12 pairs) matched.
-- Versioned replay contract: new tapes use `DRIVER2_REPLAY_MAGIC_V2` with an
-  explicit version/region/tick-rate/tick-period and a 32-bit content checksum in
-  the previously unused header reserved fields (on-disk size unchanged). Legacy
-  `DRIVER2_REPLAY_MAGIC` tapes still load. Unknown magic, unsupported version,
-  region/rate mismatch and checksum mismatch are diagnosed explicitly. A
-  `-savereplay`/`-saveat` developer fixture exercises the save path without the
-  pause menu; NTSC/PAL round trips and all four diagnostics were verified, and
-  the V1 `ATTRACT.400` regression still matches the E00 baseline. Re-record
-  writes real input when the player is controlled; a re-recorded tape replays
-  the scenario from its `GameType`, so a playground tape replays as a normal
-  game. Full mission re-record → replay reproduction is still pending.
-- Visual snapshot/interpolation seam: `utils/VisualSnapshot.*` publishes car
-  translation/rotation and per-view camera poses. The 2026-10-08 motion regression
-  fix runs original camera controllers at regional ticks, interpolates camera and
-  cars over the same interval, and restores tick camera globals before simulation.
-  `DrawCar` uses local poses for the body, wheel transform and shadow corners;
-  interpolation never writes to car physics/player state. Pause, camera cuts,
-  teleports, slot replacement and session resets delimit snapshot history.
-  `ProjectClock` uses exact counter-count x regional-rate phase, preserving the
-  fractional remainder after bounded catch-up; rounded replay metadata is unchanged.
-  Moving-route gameplay matched all 900 before/after ticks, including uncapped
-  OpenGL (~220-410 FPS); NTSC/PAL attract baselines matched 714/597 shared ticks.
-  A straight-route temporal probe reduced the maximum camera-relative car step
-  from 143.13 to 1.41 units (ticks 40-155, Vulkan). NTSC/PAL timing tests cover
-  25/30/60/120/144/1000 FPS and irregular schedules. Original
-  wheel spin and pedestrians still need coverage. Tick-owned effects below extend
-  the snapshot boundary; E05 remains pending. A developer toggle is a follow-up.
-  [Fix and evidence](changes/2026-10-08/e01-presentation-motion-fix/index.md).
-- Input service extraction: `utils/InputService.*` now owns the SDL2 keyboard/
-  game-controller polling and the input mapping (types and the four binding
-  tables moved from `PsyX_public.h`), and `Game/C/pad.c` uses it instead of the
-  libpad calls; the pad-state/rumble contract is project-owned. It has no
-  PsyCross dependency. Verified by live keyboard drive tests and unchanged
-  NTSC/PAL replay baselines. PsyX's pad backend is disabled in the project fork
-  (`PsyX_main.cpp`), so `InputService` is the single controller owner; the game
-  still calls `PsyX_UpdateInput` for the SDL event pump (uncommitted fork change).
-- Bounded backlog policy: `ProjectClock` caps catch-up at 4 ticks/frame and
-  counts the excess; `State_GameLoop` now logs the dropped ticks (rate-limited)
-  so discards are never silent. `SetPaused` re-bases on resume and the first
-  frame re-bases so setup time is not accumulated. A `RED2_CLOCKJUMP_MS` fixture
-  verified a 2 s stall yields exactly 4 applied + 56 dropped ticks. Dropped
-  ticks change wall-clock pacing, not the input-determined state at each tick,
-  so the baseline still matches.
-- Complementary effects correction (2026-10-09): emissions, pool lifetime/motion,
-  birds/rain/hubcaps, light phases, mission title/input unlock and bomb flash have
-  regional tick owners; drawing consumes local interpolated poses. Palette uploads
-  use per-frame packets to prevent catch-up OT cycles; pause messages use service ticks.
-  Strict dumps include effect-pool
-  digests and indicator/siren phases plus a recorded-field draw mutation guard.
-  Full OpenGL ATTRACT runs match all 1378 ticks at NTSC 30/360 and PAL 25/360 FPS;
-  both builds and fresh timing/settings/effect tests pass, including an isolated
-  staged-source rebuild with the committed fork. Rainy ATTRACT.401 also
-  matches all 2289 ticks at 30/360 after the palette fix. The wall-collision route
-  remains deferred at the user's request: b2d8857 plus historical PsyCross produces the same
-  gameplay on local assets, including Win32 versus x64. This is schedule
-  independence, not replay trajectory acceptance. The official upstream 8.0
-  Win32 binary also visually reproduces the wall collision with these NTSC data.
+- `ProjectClock` owns 30 Hz NTSC/25 Hz PAL desktop ticks, bounded four-tick
+  catch-up, explicit dropped-tick diagnostics and presentation-rate-independent
+  drawing. Replay V2 carries region/rate/period/checksum while legacy V1 remains
+  supported; mismatch diagnostics and NTSC/PAL round trips were verified.
+- Authoritative replay-state comparisons matched across baseline runs and vsync/
+  uncapped schedules. Full mission re-record/replay reproduction remains open.
+- `VisualSnapshot` and local interpolation cover car/camera poses without writing
+  gameplay state; exact regional phase is retained. Motion regression evidence:
+  [E01 presentation fix](changes/2026-10-08/e01-presentation-motion-fix/index.md).
+- `InputService` owns desktop SDL polling/mapping; `pad.c` uses the project-owned
+  pad state/rumble contract. The project fork disables its competing pad backend.
+- Tick-owned effects cover emissions, pool motion/lifetime, birds/rain/hubcaps,
+  lights, mission title/input unlock, bomb flash and pause messages. Strict
+  OpenGL ATTRACT runs matched 1378 ticks at NTSC 30/360 and PAL 25/360 FPS;
+  rainy ATTRACT.401 matched 2289. This proves schedule independence only, not
+  replay trajectory acceptance; wall-collision route remains user-deferred.
   [Scope/evidence](changes/2026-10-09/effect-timing-replay-regression/index.md).
-- Presentation/sim separation: the camera collider and rear-light render scratch
-  are excluded from gameplay acceptance. The earlier black screen was a `SetDispMask(1)` gating
-  bug (it ran only on tick frames, so a presentation frame could pass
-  `FrameCnt == 5` with `ticks == 0` and stay masked), not a draw-path
-  limitation; unmasking every frame fixed it. Car/camera temporal interpolation
-  is now corrected; complete presentation coverage, live pause/backlog stress
-  and full mission replay re-record remain for later E01 blocks.
+- E01 remains in progress: wheel-spin/pedestrian presentation, full mission
+  re-record reproduction, and complete presentation coverage remain open.
 
 ## Engine migration E02 (in progress)
 
@@ -190,18 +120,20 @@ pending, so E00 is close but not formally accepted.
   `car-mesh`, schema, options and a mods digest) and publishes through
   `AssetConverter_ConvertMesh`; `Cars_ConvertInspectorModel` feeds the resident
   car model (`NewCarModel` + `gTempCarVertDump`) from a new GLB button in the
-  developer panel beside the OBJ export, and `CarMeshSerializerTests` (57 checks)
+  developer panel beside the OBJ export, and `CarMeshSerializerTests` (64 checks)
   covers reuse/rebuild, mods-key sensitivity, invalid arguments and
-  missing-directory failure. All nine inspector suites pass (AssetCatalog 145,
-  AssetPackage 39, ConversionCache 38, GltfRoundTrip 28, AssetConverter 28,
-  CarMeshSerializer 57, AssetPipeline 25, SoundAsset 32, InspectorExport 107).
-- Still pending: Chicago slice inventory reconciliation; the conversion cache is
-  not yet consumed by the native renderer/loading path (E03/E06). Forward notes:
-  derived artifacts live in `mods/<modId>/assets/cache`, so packaging must
-  exclude that directory; converting the live (dented) vehicle vertices means a
-  different dent state creates a new cache entry, so native loading should
-  convert the pristine model and define cache eviction.
-
+  missing-directory failure. Current integration suite results are recorded
+  below; prior per-suite counts in older change records are historical.
+- Chicago inventory (2026-10-09): Gate 4A attempt 2 approved a scoped diagnostic.
+  The final fresh report scans all four eligible Chicago day barrels: 6740 unique
+  placements, 227 straddlers, no overlaps or missing model refs, and 114 unknown
+  material classifications. It reports 0 errors/480 warnings (64 displayed,
+  truncated). This is a source-union diagnostic, not conversion or world
+  acceptance. Corrected traversal includes terminal objects marked `0x8000`;
+  the initial 6078-count report is superseded. Fresh report was copied to
+  `src_rebuild/build_e04_gate4/logs/chicago_inventory_final.txt`. Other cities,
+  variants and dynamic/streamed categories remain open; conversion cache is not
+  consumed by native loading. See [inventory evidence](engine-migration/e02/chicago-inventory.md).
 ## Engine migration E03 (in progress)
 
 - SDK pin/build (block 1, first half): DiligentEngine pinned at `v2.5.6`
@@ -264,14 +196,54 @@ pending, so E00 is close but not formally accepted.
   shutdown (exit 0) with no scene-failure or crash lines.
 - Not yet done: the native scene accepts one converted mesh/instance, not the
   game's world content; world meshes/materials/lighting and the player remain E03
-  work (the car serializer wiring feeding this path is the next E02 block).
+  work; next is the original-world conversion seam.
   Debug configs are not wired (only Release Diligent libraries exist). Headless
   native mode does not run the F11 ImGui overlay yet; a possible PAL double-aspect
   in the camera seam needs a PAL probe.
-- Next E03 block: feed real world content/materials/lighting and the player to
-  the native renderer; then commit the uncommitted E00-E03 work before starting
-  E04 (FMOD Core). The session handoff in [RECENT_CONTEXT](RECENT_CONTEXT.md) has
-  the full checklist.
+- E03 remains without a playable original-world native slice: the native scene
+  accepts converted fixtures, not the game's world/materials/lighting and player.
+  The next conversion seam is original-world content; see [RECENT_CONTEXT](RECENT_CONTEXT.md).
+## Engine migration E04 (in progress)
+
+- Project audio contract (E04-A): `Game/C/audiocontract.{h,c}` is a pure-data
+  boundary between gameplay and the future audio service: stable event ids
+  (kind/bank/voice-or-sequence packing, zero reserved), play flags, request
+  validation with named diagnostics (NaN-safe volume/pitch/distance), a 64-slot
+  voice table with 16-bit per-slot generations (stale handles rejected,
+  zero-wraparound documented) and inclusive loop-metadata validation matching
+  the FMOD `setLoopPoints` semantics. The 216-check test result is historical
+  pre-remediation; fix-5 reports 221/0. Gameplay must not call FMOD directly.
+- Local ignored FMOD SDK metadata identifies 2.03.15 (`FMOD_VERSION` 0x00020315
+  and DLL resource version 2.3.15). Do not infer 2.03.21 from hexadecimal
+  suffix `0x15`; no independent new version verification is claimed. See
+  [the FMOD integration rule](rules/fmod-integration.md).
+- Gate 4B attempt 2 **approved as a bounded SDK-isolated service only**, not
+  consumer migration or audible correctness. Fix-5 contract tests report 221/0;
+  initial smoke was 49/0 and final smoke follow-up is 57/0. It implements true per-channel 2D/3D,
+  concurrent samples, persistent service generations, checked listener updates
+  and an x64 SDK guard. Inclusive endpoints remain unchanged; equal endpoints
+  are rejected; RESTART/stream loops are unsupported; Doppler is disabled pending
+  unit validation. Parent independent builds/suites completed: fresh x64
+  `Release_dev` and `Release_dev_native` SDK-present builds exit 0; SDK-absent
+  x64 `Release_dev` exits 0. SDK-present Win32 project XML excludes service,
+  FMOD link/define and DLL copy; SDK-absent Win32/x64 XML excludes all FMOD
+  integration. Win32 was not built. Copied DLL SHA256 matches SDK DLL:
+  `F58048FB39BD10B68E3701A553D632BDFC8BE3C644E636E715BCA8E7049A6797`.
+  Final suites: catalog 258; audio contract 221; remaining suites 39/38/28/28/
+  64/25/32/107. Final AudioServiceSmoke is 57/0 (exit 0), SDK fetch check exits
+  0, and `scripts/engine_migration/test_fmod_version.ps1` passes nine fixtures
+  (9/0). A temporary reset-on-restart mutant fails 13/57 checks as expected;
+  live-service source hash is unchanged. Both prior nits are resolved. No game
+  rebuild was needed for test/verifier-only changes. Release-failure stream
+  storage lifetime, captured output, device loss and stream stress are unverified.
+  Earlier smoke 39/0 and contract 216/0 are historical only. No game consumer
+  has migrated; this does not establish audible acceptance.
+- Game-target wiring (2026-10-09): premake links `fmod_vc.lib`, defines
+  `RED2_AUDIO_FMOD` and copies `fmod.dll` next to the built
+  executables when the SDK is present; without it the service unit is excluded,
+  so a default build is unchanged. `Release_dev` and `Release_dev_native` build
+  and link with the service compiled in. No game system calls the service yet;
+  E04 remains partial, with E05/E06 pending.
 
 ## Project and current services
 

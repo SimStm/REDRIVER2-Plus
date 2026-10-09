@@ -146,6 +146,8 @@ try
 		-ExtraIncludes @() -LinkLibraries @('windowscodecs.lib', 'ole32.lib')
 	Invoke-Suite -Name 'SoundAssetTests' -Sources @('tests\SoundAssetTests.cpp', 'Game\C\soundasset.c') `
 		-ExtraIncludes @() -LinkLibraries @()
+	Invoke-Suite -Name 'AudioContractTests' -Sources @('tests\AudioContractTests.cpp', 'Game\C\audiocontract.c') `
+		-ExtraIncludes @() -LinkLibraries @()
 	Invoke-Suite -Name 'InspectorExportTests' -Sources @('tests\InspectorExportTests.cpp') `
 		-ExtraIncludes @('dependencies\SDL2-2.30.2\include') -LinkLibraries @('windowscodecs.lib', 'ole32.lib')
 

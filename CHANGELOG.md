@@ -103,8 +103,49 @@ where release policy permits it.
   (source/converter/schema/options/mods key, read-back verify, temp+rename
   publish, content hash), and the developer 3D debug tab can convert the
   selected car model (`Cars_ConvertInspectorModel`) beside the existing OBJ
-  export. Covered by the new `CarMeshSerializerTests` (57 checks); all nine
+  export. Covered by the new `CarMeshSerializerTests` (64 checks); all nine
   inspector suites pass.
+
+- E02 Chicago slice inventory: a pure reconciliation contract
+  (`AssetCatalog_ReconcileInventory`) and a loader-driven report
+  (`AssetCatalogGame_ReconcileLevel`, `-assetinventory` flag and panel button)
+  publish `assetcatalog_level_<n>_inventory.txt`. Gate 4A attempt 2 is approved
+  as a scoped diagnostic only after fix-4; catalog tests pass 258/0. Fresh
+  parent-integrated x64 runtime report scans all four eligible barrels:
+  6740 unique placements, 227 straddlers, 0 overlaps/missing model refs, 114
+  unknown material classifications and 0 errors/480 warnings (64 displayed,
+  truncated). The corrected walker includes terminal objects marked `0x8000`,
+  so the initial 6078-placement report is superseded. This remains a scoped
+  source-union diagnostic, not conversion or world acceptance. See
+  `knowledge/engine-migration/e02/chicago-inventory.md`.
+
+- E04 audio contract: `Game/C/audiocontract.*` defines the project-owned
+  gameplay-to-audio boundary (stable event ids, play flags, request validation,
+  a fixed voice table with per-slot generations and inclusive loop metadata)
+  before any FMOD SDK integration; its initial `AudioContractTests` result (216
+  checks) predates fix-5; the reported post-fix result is 221/0 below.
+  `scripts/fetch_fmod.ps1` checks the gitignored FMOD Engine SDK, whose local
+  header and DLL metadata identify 2.03.15 (0x00020315 / resource 2.3.15), and
+  documents the login-gated acquisition, and
+  `knowledge/rules/fmod-integration.md` records version/distribution/threading
+  and VAG/CD-XA transcode rules.
+
+- E04 FMOD service remediation (fix-5): per-channel 2D/3D replacement,
+  concurrent samples, persistent service generations, checked listener updates,
+  and explicit unsupported RESTART/stream-loop diagnostics are implemented.
+  Inclusive loop endpoints are unchanged and equal endpoints are rejected;
+  Doppler remains disabled pending units validation, and an x64 SDK guard
+  protects target wiring. The initial post-fix smoke was 49/0, with final
+  AudioServiceSmoke 57/0 and AudioContractTests 221/0; SDK fetch check
+  exits 0, and nine SDK-version fixtures pass 9/0. A reset-on-restart mutant
+  fails 13/57 checks as expected; live-service source hash is unchanged. The
+  two nonblocking smoke/version nits are resolved. Gate 4B attempt 2 is approved
+  as a bounded SDK-isolated service only—not consumer migration or audible correctness.
+  Parent independent builds/suites are complete. Release-failure stream storage
+  lifetime, captured output, device loss and stream stress are unverified.
+  Earlier 39/0 and 216/0 results are historical.
+  The game target links `fmod_vc.lib`, defines `RED2_AUDIO_FMOD` and copies
+  `fmod.dll` when the SDK is present; no game consumer calls the service yet.
 
 - E03 SDK pin/build: DiligentEngine is pinned at `v2.5.6` (DiligentCore commit
   `b036337d`) and built Vulkan-only as a static Release library through the new

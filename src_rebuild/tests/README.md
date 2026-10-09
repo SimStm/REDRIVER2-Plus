@@ -145,6 +145,23 @@ cl.exe /nologo /TP /EHsc /std:c++14 /O2 /Gy tests\SoundAssetTests.cpp Game\C\sou
 build\SoundAssetTests.exe
 ```
 
+## Audio contract tests
+
+`AudioContractTests.cpp` tests the E04 audio contract
+(`Game/C/audiocontract.*`): canonical event id packing/unpacking (kind, primary,
+secondary) with reserved-id handling, play flag independence, play request
+validation (event id, kind mismatch, flags, volume, pitch, spatial distances),
+voice handle lifecycle in the fixed pool with per-slot generations (stale
+handles, full table, 16-bit wraparound) and inclusive loop-point validation. It
+is pure data and needs no FMOD SDK, game assets, PsyCross or a GPU context.
+Because the contract is a `.c` file the project compiles as C++, pass `/TP` when
+building it by hand:
+
+```bat
+cl.exe /nologo /TP /EHsc /std:c++14 /O2 /Gy tests\AudioContractTests.cpp Game\C\audiocontract.c /Fo:build\ /Fe:build\AudioContractTests.exe /link /OPT:REF
+build\AudioContractTests.exe
+```
+
 ## Presentation timing and snapshots
 
 `PresentationTimingTests.cpp` compiles the production `ProjectClock.cpp` and

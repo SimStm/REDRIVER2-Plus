@@ -374,6 +374,271 @@ static void TestBoundsAreGraceful()
 	CHECK(models == 0 && textures == 0 && cars == 0 && refs == 0);
 }
 
+static void TestInventoryReconciliation()
+{
+	AssetCatalog_Reset();
+	AssetCatalog_BeginContext(0, 0, 0);
+
+	const int roadA = AssetCatalog_RegisterModel(10, "ROADA", ASSET_CATALOG_SOURCE_DECLARED, -1, -1);
+	const int roadB = AssetCatalog_RegisterModel(11, "ROADB", ASSET_CATALOG_SOURCE_DECLARED, -1, -1);
+	const int asphalt = AssetCatalog_RegisterTexture("asphalt", 1, 2, 3, ASSET_CATALOG_SOURCE_DECLARED);
+	const int kerb = AssetCatalog_RegisterTexture("kerb", 1, 3, 3, ASSET_CATALOG_SOURCE_DECLARED);
+	CHECK(roadA >= 0 && roadB >= 0 && asphalt >= 0 && kerb >= 0);
+	CHECK(AssetCatalog_AddModelTexture(roadA, asphalt));
+	CHECK(AssetCatalog_AddModelTexture(roadB, kerb));
+
+	// A clean set: every model resolves, every referenced model has a material
+	// link and the expected per-region counts match.
+	AssetCatalogPlacement clean[3];
+	memset(clean, 0, sizeof(clean));
+	clean[0].region = 0; clean[0].modelNumber = 10; clean[0].x = 100; clean[0].z = 200; clean[0].rotation = 5;
+	clean[1].region = 0; clean[1].modelNumber = 10; clean[1].x = 300; clean[1].z = 400; clean[1].rotation = 6;
+	clean[2].region = 1; clean[2].modelNumber = 11; clean[2].x = 500; clean[2].y = 1; clean[2].z = 600; clean[2].rotation = 7;
+
+	int expected[4] = { 2, 1, 0, 0 };
+	AssetCatalogInventoryResult result;
+	CHECK(AssetCatalog_ReconcileInventory(clean, 3, expected, &result) == ASSET_CATALOG_INVENTORY_OK);
+	CHECK(result.ok);
+	CHECK(result.placements == 3 && result.uniquePlacements == 3 && result.duplicatePlacements == 0);
+	CHECK(result.sharedPlacements == 0);
+	CHECK(result.missingModelRefs == 0);
+	CHECK(result.registeredModels == 2 && result.referencedModels == 2 && result.unreferencedModels == 0);
+	CHECK(result.registeredTextures == 2 && result.referencedTextures == 2);
+	CHECK(result.missingTextureLinks == 0);
+	CHECK(result.perRegionPlacements[0] == 2 && result.perRegionPlacements[1] == 1);
+	CHECK(result.perRegionPlacements[2] == 0 && result.perRegionPlacements[3] == 0);
+	CHECK(result.findingCount == 0 && !result.findingsTruncated);
+
+	// Without expectations the region check is skipped, not assumed.
+	CHECK(AssetCatalog_ReconcileInventory(clean, 3, NULL, &result) == ASSET_CATALOG_INVENTORY_OK && result.ok);
+
+	// A dangling model reference is counted per occurrence and reported.
+	AssetCatalogPlacement dangling[2];
+	memset(dangling, 0, sizeof(dangling));
+	dangling[0] = clean[0];
+	dangling[1].region = 0; dangling[1].modelNumber = 999; dangling[1].x = 1; dangling[1].y = 2; dangling[1].z = 3; dangling[1].rotation = 4;
+	CHECK(AssetCatalog_ReconcileInventory(dangling, 2, NULL, &result) == ASSET_CATALOG_INVENTORY_OK);
+	CHECK(!result.ok && result.missingModelRefs == 1);
+	CHECK(result.referencedModels == 1 && result.unreferencedModels == 1);
+	CHECK(result.findingCount >= 1 && !result.findings[0].warning);
+	CHECK(TextIs(result.findings[0].reason, "missing model"));
+	CHECK(result.findings[0].modelNumber == 999 && result.findings[0].region == 0);
+	CHECK(result.findings[0].x == 1 && result.findings[0].z == 3 && result.findings[0].rotation == 4);
+
+	// A duplicate placement identity is one extra occurrence, one error.
+	AssetCatalogPlacement duplicate[3];
+	duplicate[0] = clean[0];
+	duplicate[1] = clean[0];
+	duplicate[2] = clean[2];
+	CHECK(AssetCatalog_ReconcileInventory(duplicate, 3, NULL, &result) == ASSET_CATALOG_INVENTORY_OK);
+	CHECK(!result.ok && result.duplicatePlacements == 1 && result.uniquePlacements == 2);
+	CHECK(result.placements == 3);
+	CHECK(result.findingCount >= 1 && !result.findings[0].warning);
+	CHECK(TextIs(result.findings[0].reason, "duplicate placement"));
+
+	// Rotation and region are part of the identity, so those are not duplicates.
+	AssetCatalogPlacement distinct[2];
+	distinct[0] = clean[0];
+	distinct[1] = clean[0];
+	distinct[1].rotation = 6;
+	CHECK(AssetCatalog_ReconcileInventory(distinct, 2, NULL, &result) == ASSET_CATALOG_INVENTORY_OK);
+	CHECK(result.duplicatePlacements == 0 && result.ok);
+	distinct[1].region = 1;
+	CHECK(AssetCatalog_ReconcileInventory(distinct, 2, NULL, &result) == ASSET_CATALOG_INVENTORY_OK);
+	CHECK(result.duplicatePlacements == 0);
+	for (int axis = 0; axis < 3; ++axis)
+	{
+		distinct[1] = clean[0];
+		if (axis == 0) distinct[1].x++;
+		if (axis == 1) distinct[1].y++;
+		if (axis == 2) distinct[1].z++;
+		CHECK(AssetCatalog_ReconcileInventory(distinct, 2, NULL, &result) == ASSET_CATALOG_INVENTORY_OK);
+		CHECK(result.duplicatePlacements == 0 && result.ok);
+	}
+
+	// An unreferenced registered model is a warning that keeps ok true.
+	AssetCatalogPlacement onlyA[1];
+	onlyA[0] = clean[0];
+	CHECK(AssetCatalog_ReconcileInventory(onlyA, 1, NULL, &result) == ASSET_CATALOG_INVENTORY_OK);
+	CHECK(result.ok && result.unreferencedModels == 1);
+	CHECK(result.referencedModels == 1 && result.referencedTextures == 1);
+	CHECK(result.findingCount == 1 && result.findings[0].warning);
+	CHECK(TextIs(result.findings[0].reason, "unreferenced model"));
+	CHECK(result.findings[0].modelNumber == 11);
+
+	// A per-region expectation mismatch is a finding and flips ok.
+	int wrongExpected[4] = { 2, 0, 0, 0 };
+	CHECK(AssetCatalog_ReconcileInventory(clean, 3, wrongExpected, &result) == ASSET_CATALOG_INVENTORY_OK);
+	CHECK(!result.ok && result.perRegionPlacements[1] == 1);
+	CHECK(result.findingCount >= 1 && !result.findings[0].warning);
+	CHECK(strncmp(result.findings[0].reason, "region 1 expected 0 got 1", 25) == 0);
+	CHECK(result.findings[0].region == 1);
+
+	// Negative expected counts are malformed input, not a finding.
+	int negativeExpected[4] = { -1, 0, 0, 0 };
+	CHECK(AssetCatalog_ReconcileInventory(clean, 3, negativeExpected, &result) == ASSET_CATALOG_INVENTORY_ERROR_ARGUMENT);
+
+	// No catalog link leaves source texture classification unknown. This
+	// bounded diagnostic warns; ok does not prove source-material coverage.
+	const int roadC = AssetCatalog_RegisterModel(12, "ROADC", ASSET_CATALOG_SOURCE_DECLARED, -1, -1);
+	CHECK(roadC >= 0);
+	AssetCatalogPlacement noLink[1];
+	memset(noLink, 0, sizeof(noLink));
+	noLink[0].region = 2; noLink[0].modelNumber = 12; noLink[0].x = 7; noLink[0].z = 8;
+	CHECK(AssetCatalog_ReconcileInventory(noLink, 1, NULL, &result) == ASSET_CATALOG_INVENTORY_OK);
+	CHECK(result.ok && result.missingTextureLinks == 1);
+	CHECK(result.referencedTextures == 0);
+	CHECK(result.findingCount == 3 && !result.findingsTruncated);
+	CHECK(result.findings[0].warning && result.findings[1].warning && result.findings[2].warning);
+	CHECK(TextIs(result.findings[0].reason, "no catalog material link; texture classification unknown"));
+	CHECK(result.findings[0].modelNumber == 12);
+
+	// A genuine error on top of the warning still flips ok, and is stored
+	// before the warnings so it can never be hidden by them.
+	AssetCatalogPlacement noLinkDuplicate[2];
+	noLinkDuplicate[0] = noLink[0];
+	noLinkDuplicate[1] = noLink[0];
+	CHECK(AssetCatalog_ReconcileInventory(noLinkDuplicate, 2, NULL, &result) == ASSET_CATALOG_INVENTORY_OK);
+	CHECK(!result.ok && result.duplicatePlacements == 1 && result.missingTextureLinks == 1);
+	CHECK(result.findingCount == 4);
+	CHECK(!result.findings[0].warning && TextIs(result.findings[0].reason, "duplicate placement"));
+	CHECK(result.findings[1].warning);
+
+	// A shared (region -1) placement counts toward the totals but not toward
+	// any per-region count.
+	AssetCatalogPlacement shared[2];
+	shared[0] = clean[0];
+	memset(&shared[1], 0, sizeof(shared[1]));
+	shared[1].region = -1; shared[1].modelNumber = 11; shared[1].x = 9; shared[1].z = 9; shared[1].rotation = 1;
+	int sharedExpected[4] = { 1, 0, 0, 0 };
+	CHECK(AssetCatalog_ReconcileInventory(shared, 2, sharedExpected, &result) == ASSET_CATALOG_INVENTORY_OK);
+	CHECK(result.ok && result.sharedPlacements == 1);
+	CHECK(result.placements == 2 && result.uniquePlacements == 2);
+	CHECK(result.perRegionPlacements[0] == 1 && result.perRegionPlacements[1] == 0);
+
+	// An invalid region is an error finding and never pollutes a region count.
+	AssetCatalogPlacement invalid[1];
+	memset(invalid, 0, sizeof(invalid));
+	invalid[0].region = 7; invalid[0].modelNumber = 10; invalid[0].x = 1; invalid[0].z = 1;
+	CHECK(AssetCatalog_ReconcileInventory(invalid, 1, NULL, &result) == ASSET_CATALOG_INVENTORY_OK);
+	CHECK(!result.ok);
+	CHECK(result.perRegionPlacements[0] == 0 && result.sharedPlacements == 0);
+	CHECK(result.findingCount >= 1 && !result.findings[0].warning);
+	CHECK(TextIs(result.findings[0].reason, "invalid region"));
+
+	// Malformed arguments and the fixed capacity bound.
+	CHECK(AssetCatalog_ReconcileInventory(NULL, 0, NULL, &result) == ASSET_CATALOG_INVENTORY_ERROR_ARGUMENT);
+	CHECK(AssetCatalog_ReconcileInventory(clean, -1, NULL, &result) == ASSET_CATALOG_INVENTORY_ERROR_ARGUMENT);
+	CHECK(AssetCatalog_ReconcileInventory(NULL, 3, NULL, &result) == ASSET_CATALOG_INVENTORY_ERROR_ARGUMENT);
+	CHECK(AssetCatalog_ReconcileInventory(clean, 3, NULL, NULL) == ASSET_CATALOG_INVENTORY_ERROR_ARGUMENT);
+	CHECK(AssetCatalog_ReconcileInventory(clean, ASSET_CATALOG_MAX_PLACEMENTS + 1, NULL, &result) ==
+		ASSET_CATALOG_INVENTORY_ERROR_CAPACITY);
+
+	// No live context: a reset catalog refuses to reconcile.
+	AssetCatalog_Reset();
+	CHECK(AssetCatalog_ReconcileInventory(clean, 3, NULL, &result) == ASSET_CATALOG_INVENTORY_ERROR_NO_CATALOG);
+
+	// Finding bounding: the stored list is capped and truncation is explicit;
+	// error findings are stored before warnings.
+	AssetCatalog_BeginContext(0, 0, 0);
+	static AssetCatalogPlacement many[ASSET_CATALOG_INVENTORY_MAX_FINDINGS + 1];
+	const int manyCount = ASSET_CATALOG_INVENTORY_MAX_FINDINGS + 1;
+	for (int i = 0; i < manyCount; i++)
+	{
+		many[i].region = 0;
+		many[i].modelNumber = 777;
+		many[i].x = i;
+		many[i].y = 0;
+		many[i].z = i;
+		many[i].rotation = i & 63;
+	}
+	CHECK(AssetCatalog_ReconcileInventory(many, manyCount, NULL, &result) == ASSET_CATALOG_INVENTORY_OK);
+	CHECK(result.missingModelRefs == manyCount);
+	CHECK(!result.ok);
+	CHECK(result.findingCount == ASSET_CATALOG_INVENTORY_MAX_FINDINGS);
+	CHECK(result.findingsTruncated);
+	CHECK(!result.findings[0].warning && !result.findings[result.findingCount - 1].warning);
+}
+
+struct WalkFixture { int count; int lastObject; int lastSelector; };
+static void VisitFixture(void* user, int object, int cell, int selector)
+{
+	(void)cell;
+	WalkFixture* fixture = (WalkFixture*)user;
+	fixture->count++;
+	fixture->lastObject = object;
+	fixture->lastSelector = selector;
+}
+
+static void TestTraversalAndMaterialLifetime()
+{
+	unsigned short pointers[] = { 1, 0xffff };
+	unsigned short entries[] = { 0, 2, 0x4007, 0x8003, 0x8004 };
+	AssetCatalogInventoryResult diagnostics = {};
+	diagnostics.ok = true;
+	WalkFixture fixture = {};
+	CHECK(AssetCatalog_WalkInventoryLists(pointers, 2, entries, 5, 1, 4, 2, 2, 4, 0,
+		VisitFixture, &fixture, &diagnostics));
+	CHECK(fixture.count == 2 && fixture.lastObject == 3 && fixture.lastSelector == 7);
+	CHECK(diagnostics.errorCount == 0 && diagnostics.ok);
+	pointers[0] = 0; // inside allocation but outside barrel
+	CHECK(!AssetCatalog_WalkInventoryLists(pointers, 2, entries, 5, 1, 4, 2, 2, 4, 0,
+		VisitFixture, &fixture, &diagnostics));
+	CHECK(diagnostics.errorCount == 1 && !diagnostics.ok);
+	pointers[0] = 4;
+	CHECK(!AssetCatalog_WalkInventoryLists(pointers, 2, entries, 5, 1, 4, 2, 2, 4, 0,
+		VisitFixture, &fixture, &diagnostics));
+	CHECK(diagnostics.errorCount == 2);
+	pointers[0] = 1;
+	entries[3] = 3; // cannot borrow termination from next barrel's entry 4
+	CHECK(!AssetCatalog_WalkInventoryLists(pointers, 2, entries, 5, 1, 4, 2, 2, 4, 0,
+		VisitFixture, &fixture, &diagnostics));
+	CHECK(TextIs(diagnostics.findings[2].reason, "cell list missing terminator"));
+	entries[3] = 0x8004;
+	CHECK(!AssetCatalog_WalkInventoryLists(pointers, 2, entries, 5, 1, 4, 2, 2, 4, 0,
+		VisitFixture, &fixture, &diagnostics));
+	CHECK(TextIs(diagnostics.findings[3].reason, "object reference outside owning barrel"));
+	entries[3] = 0x8001; // shared straddler exception
+	fixture = {};
+	CHECK(AssetCatalog_WalkInventoryLists(pointers, 2, entries, 5, 1, 4, 2, 2, 4, 0,
+		VisitFixture, &fixture, &diagnostics));
+	CHECK(fixture.count == 2 && fixture.lastObject == 1);
+	CHECK(!AssetCatalog_WalkInventoryLists(pointers, 2, entries, 5, 1, 6, 2, 2, 4, 0,
+		VisitFixture, &fixture, &diagnostics));
+
+	diagnostics = {};
+	diagnostics.ok = true;
+	for (int i = 0; i < 70; ++i)
+		AssetCatalog_InventoryDiagnostic(&diagnostics, true, "warning", 0, i);
+	AssetCatalog_InventoryDiagnostic(&diagnostics, false, "adapter traversal failed", 0, 99);
+	CHECK(diagnostics.warningCount == 70 && diagnostics.errorCount == 1);
+	CHECK(diagnostics.findingCount == 64 && diagnostics.findingsTruncated && !diagnostics.ok);
+	bool retained = false;
+	for (int i = 0; i < diagnostics.findingCount; ++i)
+		retained |= !diagnostics.findings[i].warning && TextIs(diagnostics.findings[i].reason, "adapter traversal failed");
+	CHECK(retained);
+
+	AssetCatalog_Reset();
+	AssetCatalog_BeginContext(0, 0, 0);
+	int a = AssetCatalog_RegisterModel(1, "old", ASSET_CATALOG_SOURCE_DECLARED, -1, -1);
+	int b = AssetCatalog_RegisterModel(2, "other", ASSET_CATALOG_SOURCE_DECLARED, -1, -1);
+	int texture = AssetCatalog_RegisterTexture("old", 0, 0, 0, ASSET_CATALOG_SOURCE_DECLARED);
+	CHECK(AssetCatalog_AddModelTexture(a, texture));
+	CHECK(AssetCatalog_AddModelTexture(b, texture));
+	CHECK(AssetCatalog_InvalidateModel(1));
+	CHECK(AssetCatalog_EnumerateModelTextures(b, NULL, 0) == 1);
+	CHECK(AssetCatalog_RegisterModel(1, "new", ASSET_CATALOG_SOURCE_DECLARED, -1, -1) == a);
+	CHECK(AssetCatalog_EnumerateModelTextures(a, NULL, 0) == 0);
+	AssetCatalogPlacement placement = { 0, 1, 0, 0, 0, 0 };
+	CHECK(AssetCatalog_ReconcileInventory(&placement, 1, NULL, &diagnostics) == 0);
+	CHECK(diagnostics.ok && diagnostics.referencedTextures == 0 && diagnostics.missingTextureLinks == 1);
+	CHECK(TextIs(diagnostics.findings[0].reason, "no catalog material link; texture classification unknown"));
+	CHECK(AssetCatalog_AddModelTexture(a, texture));
+	CHECK(AssetCatalog_RegisterModel(1, "replace-live", ASSET_CATALOG_SOURCE_DECLARED, -1, -1) == a);
+	CHECK(AssetCatalog_EnumerateModelTextures(a, NULL, 0) == 0);
+	CHECK(AssetCatalog_EnumerateModelTextures(b, NULL, 0) == 1);
+}
+
 int main()
 {
 	TestLifetimeAndContext();
@@ -385,6 +650,8 @@ int main()
 	TestCarsAndPalettes();
 	TestDiagnostics();
 	TestBoundsAreGraceful();
+	TestInventoryReconciliation();
+	TestTraversalAndMaterialLifetime();
 
 	printf("%d checks, %d failures\n", g_checks, g_failures);
 	return g_failures == 0 ? 0 : 1;

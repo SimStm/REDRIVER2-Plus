@@ -86,6 +86,12 @@ unsigned int s_generation = 0;
 bool s_valid = false;
 AssetCatalogContext s_context = { 0, 0, 0 };
 
+// Scratch for the placement identity sort. The catalog is a singleton and the
+// reconcile runs on one thread, so the order buffer and the placement pointer
+// the comparator needs are plain file state.
+int s_placementOrder[ASSET_CATALOG_MAX_PLACEMENTS];
+const AssetCatalogPlacement* s_sortPlacements = NULL;
+
 void CopyName(char* destination, const char* source)
 {
 	if (source == NULL)
@@ -106,6 +112,64 @@ bool ValidTextureRecord(int record)
 bool ValidCarRecord(int record)
 {
 	return record >= 0 && record < s_carCount && s_cars[record].used;
+}
+
+void RemoveModelMaterials(int record)
+{
+	int kept = 0;
+	for (int i = 0; i < s_materialRefCount; ++i)
+		if (s_materialRefs[i].modelRecord != record)
+			s_materialRefs[kept++] = s_materialRefs[i];
+	s_materialRefCount = kept;
+}
+
+bool SamePlacement(const AssetCatalogPlacement& a, const AssetCatalogPlacement& b)
+{
+	return a.region == b.region && a.modelNumber == b.modelNumber && a.x == b.x &&
+		a.y == b.y && a.z == b.z && a.rotation == b.rotation;
+}
+
+int ComparePlacementIndices(const void* left, const void* right)
+{
+	const AssetCatalogPlacement& a = s_sortPlacements[*(const int*)left];
+	const AssetCatalogPlacement& b = s_sortPlacements[*(const int*)right];
+
+	if (a.region != b.region) return a.region < b.region ? -1 : 1;
+	if (a.modelNumber != b.modelNumber) return a.modelNumber < b.modelNumber ? -1 : 1;
+	if (a.x != b.x) return a.x < b.x ? -1 : 1;
+	if (a.y != b.y) return a.y < b.y ? -1 : 1;
+	if (a.z != b.z) return a.z < b.z ? -1 : 1;
+	if (a.rotation != b.rotation) return a.rotation < b.rotation ? -1 : 1;
+	return 0;
+}
+
+// Stores one bounded finding. Error findings are added before warning findings
+// by the caller, so truncation can only drop warnings after real problems.
+void AddInventoryFinding(AssetCatalogInventoryResult* result, bool warning, const char* reason,
+	int region, int modelNumber, int x, int y, int z, int rotation)
+{
+	if (warning) result->warningCount++; else result->errorCount++;
+	if (result->findingCount >= ASSET_CATALOG_INVENTORY_MAX_FINDINGS)
+	{
+		result->findingsTruncated = true;
+		if (warning) return;
+		int slot = result->findingCount - 1;
+		while (slot >= 0 && !result->findings[slot].warning) --slot;
+		if (slot < 0) return;
+		// Displace a warning; preserve true warning/error totals.
+		result->findings[slot] = result->findings[--result->findingCount];
+	}
+
+	AssetCatalogInventoryFinding* finding = &result->findings[result->findingCount++];
+	memset(finding, 0, sizeof(*finding));
+	finding->warning = warning;
+	snprintf(finding->reason, sizeof(finding->reason), "%s", reason ? reason : "");
+	finding->region = region;
+	finding->modelNumber = modelNumber;
+	finding->x = x;
+	finding->y = y;
+	finding->z = z;
+	finding->rotation = rotation;
 }
 }
 
@@ -174,6 +238,7 @@ int AssetCatalog_RegisterModel(int modelIndex, const char* name,
 	{
 		if (s_models[i].modelIndex == modelIndex)
 		{
+			RemoveModelMaterials(i);
 			s_models[i].used = true;
 			s_models[i].revision++;
 			s_models[i].lodParentModelIndex = lodParentModelIndex;
@@ -218,6 +283,7 @@ bool AssetCatalog_InvalidateModel(int modelIndex)
 	{
 		if (s_models[i].modelIndex == modelIndex && s_models[i].used)
 		{
+			RemoveModelMaterials(i);
 			s_models[i].used = false;
 			s_models[i].revision++;
 			return true;
@@ -690,6 +756,243 @@ int AssetCatalog_EnumerateCarPalettes(int carRecord, int* out, int capacity)
 	return count;
 }
 
+void AssetCatalog_InventoryDiagnostic(AssetCatalogInventoryResult* out, bool warning,
+	const char* reason, int region, int modelNumber)
+{
+	if (!out) return;
+	if (!warning) out->ok = false;
+	AddInventoryFinding(out, warning, reason, region, modelNumber, 0, 0, 0, 0);
+}
+
+bool AssetCatalog_WalkInventoryLists(const unsigned short* pointers, int pointerCount,
+	const unsigned short* entries, int entryCount, int cellBegin, int cellEnd,
+	int straddlers, int objectBegin, int objectEnd, int barrel,
+	AssetCatalogInventoryVisit visit, void* user, AssetCatalogInventoryResult* diagnostics)
+{
+	if (!diagnostics) return false;
+	if (!pointers || !entries || !visit || pointerCount < 0 || cellBegin < 0 ||
+		cellEnd < cellBegin || cellEnd > entryCount || straddlers < 0 ||
+		objectBegin < straddlers || objectEnd < objectBegin || objectEnd > ASSET_CATALOG_MAX_PLACEMENTS)
+	{
+		AssetCatalog_InventoryDiagnostic(diagnostics, false, "invalid traversal spans", barrel, -1);
+		return false;
+	}
+	const int before = diagnostics->errorCount;
+	for (int cell = 0; cell < pointerCount; ++cell)
+	{
+		int entry = pointers[cell];
+		if (entry == 0xffff) continue;
+		if (entry < cellBegin || entry >= cellEnd)
+		{
+			AssetCatalog_InventoryDiagnostic(diagnostics, false, "cell pointer outside barrel span", barrel, cell);
+			continue;
+		}
+		bool terminated = false;
+		int selector = -1;
+		while (entry < cellEnd)
+		{
+			const unsigned short num = entries[entry++];
+			// The end bit belongs to the final entry, not a separate sentinel:
+			// GetFirst/GetNextPackedCop visit that object before stopping.
+			terminated = (num & 0x8000) != 0;
+			if (num & 0x4000)
+			{
+				selector = num & 0x3fff;
+				if (terminated) break;
+				continue;
+			}
+			const int object = num & 0x3fff;
+			if (object >= straddlers && (object < objectBegin || object >= objectEnd))
+			{
+				AssetCatalog_InventoryDiagnostic(diagnostics, false, "object reference outside owning barrel", barrel, object);
+				if (terminated) break;
+				continue;
+			}
+			visit(user, object, cell, selector);
+			if (terminated) break;
+		}
+		if (!terminated)
+			AssetCatalog_InventoryDiagnostic(diagnostics, false, "cell list missing terminator", barrel, cell);
+	}
+	return diagnostics->errorCount == before;
+}
+
+int AssetCatalog_ReconcileInventory(const AssetCatalogPlacement* placements, int placementCount,
+	const int* expectedPerRegionPlacements, AssetCatalogInventoryResult* out)
+{
+	if (out == NULL)
+		return ASSET_CATALOG_INVENTORY_ERROR_ARGUMENT;
+
+	memset(out, 0, sizeof(*out));
+
+	if (!s_valid)
+		return ASSET_CATALOG_INVENTORY_ERROR_NO_CATALOG;
+
+	if (placements == NULL || placementCount < 0)
+		return ASSET_CATALOG_INVENTORY_ERROR_ARGUMENT;
+
+	if (placementCount > ASSET_CATALOG_MAX_PLACEMENTS)
+		return ASSET_CATALOG_INVENTORY_ERROR_CAPACITY;
+
+	if (expectedPerRegionPlacements != NULL)
+	{
+		for (int region = 0; region < 4; region++)
+		{
+			if (expectedPerRegionPlacements[region] < 0)
+				return ASSET_CATALOG_INVENTORY_ERROR_ARGUMENT;
+		}
+	}
+
+	out->placements = placementCount;
+
+	for (int i = 0; i < s_modelCount; i++)
+	{
+		if (s_models[i].used)
+			out->registeredModels++;
+	}
+
+	for (int i = 0; i < s_textureCount; i++)
+	{
+		if (s_textures[i].used)
+			out->registeredTextures++;
+	}
+
+	// Live records touched by the placements, and which of them carry a
+	// material link. Sized by the fixed catalog capacities in this file.
+	bool referencedModels[kMaxModels] = {};
+	bool modelHasLink[kMaxModels] = {};
+	bool referencedTextures[kMaxTextures] = {};
+	int referencedModelCount = 0;
+	int invalidRegionCount = 0;
+
+	for (int i = 0; i < placementCount; i++)
+	{
+		const AssetCatalogPlacement& placement = placements[i];
+
+		if (placement.region >= 0 && placement.region < 4)
+		{
+			out->perRegionPlacements[placement.region]++;
+		}
+		else if (placement.region == -1)
+		{
+			out->sharedPlacements++;
+		}
+		else
+		{
+			invalidRegionCount++;
+			AddInventoryFinding(out, false, "invalid region", placement.region, placement.modelNumber,
+				placement.x, placement.y, placement.z, placement.rotation);
+		}
+
+		const int record = AssetCatalog_FindModel(placement.modelNumber);
+
+		if (record < 0)
+		{
+			out->missingModelRefs++;
+			AddInventoryFinding(out, false, "missing model", placement.region, placement.modelNumber,
+				placement.x, placement.y, placement.z, placement.rotation);
+		}
+		else if (!referencedModels[record])
+		{
+			referencedModels[record] = true;
+			referencedModelCount++;
+		}
+	}
+
+	out->referencedModels = referencedModelCount;
+	out->unreferencedModels = out->registeredModels - referencedModelCount;
+
+	// A material reference only counts toward the report when its model is
+	// referenced by a placement; the rest are library records.
+	for (int i = 0; i < s_materialRefCount; i++)
+	{
+		const MaterialRef& ref = s_materialRefs[i];
+
+		if (ref.modelRecord < 0 || ref.modelRecord >= s_modelCount || !referencedModels[ref.modelRecord])
+			continue;
+
+		modelHasLink[ref.modelRecord] = true;
+		if (ref.textureRecord >= 0 && ref.textureRecord < s_textureCount && s_textures[ref.textureRecord].used)
+			referencedTextures[ref.textureRecord] = true;
+	}
+
+	for (int i = 0; i < s_textureCount; i++)
+	{
+		if (referencedTextures[i])
+			out->referencedTextures++;
+	}
+
+	for (int i = 0; i < s_modelCount; i++)
+	{
+		if (referencedModels[i] && !modelHasLink[i])
+			out->missingTextureLinks++;
+	}
+
+	// Duplicate placement identities. Sorting the index array groups equal
+	// identities, so each extra occurrence is one duplicate count and finding.
+	if (placementCount > 1)
+	{
+		for (int i = 0; i < placementCount; i++)
+			s_placementOrder[i] = i;
+
+		s_sortPlacements = placements;
+		qsort(s_placementOrder, (size_t)placementCount, sizeof(int), ComparePlacementIndices);
+		s_sortPlacements = NULL;
+
+		for (int i = 1; i < placementCount; i++)
+		{
+			const AssetCatalogPlacement& duplicate = placements[s_placementOrder[i]];
+			const AssetCatalogPlacement& previous = placements[s_placementOrder[i - 1]];
+
+			if (!SamePlacement(duplicate, previous))
+				continue;
+
+			out->duplicatePlacements++;
+			AddInventoryFinding(out, false, "duplicate placement", duplicate.region, duplicate.modelNumber,
+				duplicate.x, duplicate.y, duplicate.z, duplicate.rotation);
+		}
+	}
+
+	out->uniquePlacements = placementCount - out->duplicatePlacements;
+
+	bool expectedMismatch = false;
+
+	if (expectedPerRegionPlacements != NULL)
+	{
+		for (int region = 0; region < 4; region++)
+		{
+			if (out->perRegionPlacements[region] == expectedPerRegionPlacements[region])
+				continue;
+
+			expectedMismatch = true;
+			char reason[ASSET_CATALOG_INVENTORY_REASON_CAPACITY];
+			snprintf(reason, sizeof(reason), "region %d expected %d got %d", region,
+				expectedPerRegionPlacements[region], out->perRegionPlacements[region]);
+			AddInventoryFinding(out, false, reason, region, -1, 0, 0, 0, 0);
+		}
+	}
+
+	// Warnings last: they explain legitimate states and never flip ok. Both
+	// models of unknown texture classification and registered models no
+	// placement uses are informational.
+	for (int i = 0; i < s_modelCount; i++)
+	{
+		if (referencedModels[i] && !modelHasLink[i])
+			AddInventoryFinding(out, true, "no catalog material link; texture classification unknown", -1, s_models[i].modelIndex, 0, 0, 0, 0);
+	}
+
+	for (int i = 0; i < s_modelCount; i++)
+	{
+		if (s_models[i].used && !referencedModels[i])
+			AddInventoryFinding(out, true, "unreferenced model", -1, s_models[i].modelIndex, 0, 0, 0, 0);
+	}
+
+	out->ok = out->missingModelRefs == 0 && out->duplicatePlacements == 0 &&
+		invalidRegionCount == 0 && !expectedMismatch;
+
+	return ASSET_CATALOG_INVENTORY_OK;
+}
+
 void AssetCatalog_GetStats(int* models, int* textures, int* cars, int* materialRefs)
 {
 	if (models) *models = s_modelCount;
@@ -709,7 +1012,7 @@ void AssetCatalog_GetCapacities(int* models, int* textures, int* cars, int* mate
 int AssetCatalog_GetCapacityBytes(void)
 {
 	return (int)(sizeof(s_models) + sizeof(s_textures) + sizeof(s_cars) +
-		sizeof(s_materialRefs) + sizeof(s_carPalettes));
+		sizeof(s_materialRefs) + sizeof(s_carPalettes) + sizeof(s_placementOrder));
 }
 
 #endif /* !PSX */

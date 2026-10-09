@@ -655,6 +655,19 @@ void State_GameInit(void* param)
 	int_garage_door();
 	SpoolSYNC();
 
+	// E02: the -assetinventory developer flag reconciles the now-resident
+	// regions against the catalog once. A failed report must never interrupt
+	// the game, so it only logs.
+	if (AssetCatalogGame_InventoryRequested())
+	{
+		char inventoryStatus[512];
+
+		if (AssetCatalogGame_ReconcileLevel(inventoryStatus, sizeof(inventoryStatus)))
+			printInfo("AssetCatalog: %s\n", inventoryStatus);
+		else
+			printWarning("AssetCatalog: %s\n", inventoryStatus);
+	}
+
 	// The playground replaces the loaded world with a generated, resident
 	// fixture while reusing the donor level's car, texture and sound data.
 	if (NewLevel)
@@ -1869,6 +1882,7 @@ void PrintCommandLineArguments()
 		"  -level <number> : select the city/level for the started session\n"
 		"  -savereplay <file> : save the in-progress replay recording to <file>\n"
 		"  -saveat <tick> : tick at which -savereplay writes the file\n"
+		"  -assetinventory : write a level asset inventory report after loading\n"
 #endif // DEBUG_OPTIONS
 		"  -replay <filename.d2rp> : starts replay from file\n"
 #ifdef CUTSCENE_RECORDER
@@ -2097,6 +2111,12 @@ int redriver2_main(int argc, char** argv)
 			// Skip the option's value here only to avoid the command line popup.
 			if (argc - i >= 2)
 				i++;
+		}
+		else if (!strcmp(argv[i], "-assetinventory"))
+		{
+			// Consumed by AssetCatalogGame_ConfigureFromCommandLine in the
+			// platform entry point; accepted here only to avoid the command
+			// line helper popup.
 		}
 #ifdef DEBUG_OPTIONS
 		else if (!strcmp(argv[i], "-exportxasubtitles"))

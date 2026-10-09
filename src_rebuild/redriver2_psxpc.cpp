@@ -7,6 +7,7 @@
 
 #include "driver2.h"
 #include "C/main.h"
+#include "C/assetcatalog_game.h"
 #include "C/system.h"
 #include "C/gamesnd.h"
 #include "C/camera.h"
@@ -886,6 +887,8 @@ int main(int argc, char** argv)
 
 	// E00/E01 determinism checks: optional canonical per-tick state dump.
 	DeterministicBaseline_ConfigureFromCommandLine(argc, argv);
+	// E02: optional level inventory report once the world regions are resident.
+	AssetCatalogGame_ConfigureFromCommandLine(argc, argv);
 
 	redriver2_main(argc, argv);
 

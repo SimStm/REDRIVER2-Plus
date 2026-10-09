@@ -194,6 +194,138 @@ bool AssetCatalog_LinkCarToModel(int carRecord, int modelRecord);
 bool AssetCatalog_AddCarPalette(int carRecord, int paletteIndex);
 int AssetCatalog_EnumerateCarPalettes(int carRecord, int* out, int capacity);
 
+/* --- level placement inventory reconciliation ----------------------------- */
+
+/*
+ * Pure reconciliation contract for the level inventory report.
+ *
+ * The caller decodes the loaded world's PACKED_CELL_OBJECT cell lists into
+ * placements and calls AssetCatalog_ReconcileInventory once. Nothing here
+ * touches assets, GPU state or the level loader, so the same check is used by
+ * the unit tests and by AssetCatalogGame_ReconcileLevel; it reads the live
+ * catalog internals (same translation unit) for the registered
+ * model/texture/material sets.
+ *
+ * A placement identity is (region, modelNumber, x, y, z, rotation). `region`
+ * is the barrel/super-region index in [0, 4); -1 marks a shared, region-
+ * straddling object that is referenced from more than one barrel. Shared
+ * objects count toward placements/unique/duplicate and their model reference,
+ * but not toward perRegionPlacements[].
+ *
+ * Counts are explained, never silently dropped:
+ *  - placements: every input placement
+ *  - uniquePlacements: placements minus duplicate occurrences
+ *  - duplicatePlacements: occurrences after the first of an identical identity
+ *  - missingModelRefs: placements whose modelNumber is not a live model record
+ *  - registeredModels/registeredTextures: live catalog records
+ *  - referencedModels: distinct live model records used by placements
+ *  - unreferencedModels: registeredModels - referencedModels (warnings only)
+ *  - referencedTextures: distinct texture records linked from referenced models
+ *  - missingTextureLinks: referenced model records with no material link; these
+ *    have unknown texture classification and are reported as warnings
+ *  - sharedPlacements: placements with region -1
+ *
+ * `ok` is true when there are no missing model references, no duplicate
+ * placements, no invalid regions and every expected per-region count matches
+ * (expectedPerRegionPlacements is 4 entries or NULL; a NULL array skips the
+ * region expectation check). Unreferenced registered models and referenced
+ * models without a catalog material link are reported as warnings that do not
+ * flip `ok`. No link does not prove an untextured source model; `ok` is not
+ * evidence of source-material coverage.
+ *
+ * Findings are bounded: findingCount counts stored findings and
+ * findingsTruncated marks that more existed. Error findings are stored before
+ * warnings so a warning flood cannot hide a placement problem.
+ */
+
+#define ASSET_CATALOG_INVENTORY_MAX_FINDINGS 64
+#define ASSET_CATALOG_INVENTORY_REASON_CAPACITY 96
+
+/* cell->num is a 14-bit object index, so a level world never references more
+   than this many distinct objects; the reconcile input is bounded by it. */
+#define ASSET_CATALOG_MAX_PLACEMENTS 16384
+
+/* One decoded level placement. `modelNumber` is the CELL_OBJECT type (a model
+   slot index), `rotation` the packed yang. */
+typedef struct AssetCatalogPlacement
+{
+	int region;
+	int modelNumber;
+	int x;
+	int y;
+	int z;
+	int rotation;
+} AssetCatalogPlacement;
+
+typedef struct AssetCatalogInventoryFinding
+{
+	bool warning;	/* warnings never flip the result's ok flag */
+	char reason[ASSET_CATALOG_INVENTORY_REASON_CAPACITY];
+	int region;
+	int modelNumber;
+	int x;
+	int y;
+	int z;
+	int rotation;
+} AssetCatalogInventoryFinding;
+
+typedef struct AssetCatalogInventoryResult
+{
+	int placements;
+	int uniquePlacements;
+	int duplicatePlacements;
+	int sharedPlacements;
+	int missingModelRefs;
+	int registeredModels;
+	int referencedModels;
+	int unreferencedModels;
+	int registeredTextures;
+	int referencedTextures;
+	int missingTextureLinks;
+	int perRegionPlacements[4];
+	int findingCount;
+	int errorCount; /* true counts, including findings omitted by the bound */
+	int warningCount;
+	bool findingsTruncated;
+	bool ok;
+	AssetCatalogInventoryFinding findings[ASSET_CATALOG_INVENTORY_MAX_FINDINGS];
+} AssetCatalogInventoryResult;
+
+/* Named reconcile errors. Zero is success; the result is only valid then. */
+typedef enum AssetCatalogInventoryError
+{
+	ASSET_CATALOG_INVENTORY_OK = 0,
+	ASSET_CATALOG_INVENTORY_ERROR_ARGUMENT,		/* NULL/negative/malformed input */
+	ASSET_CATALOG_INVENTORY_ERROR_NO_CATALOG,	/* no live level context */
+	ASSET_CATALOG_INVENTORY_ERROR_CAPACITY		/* more placements than the fixed bound */
+} AssetCatalogInventoryError;
+
+/* Reconciles decoded placements against the live catalog. Returns
+   ASSET_CATALOG_INVENTORY_OK (0) on success, otherwise a named error; `out` is
+   always zeroed first and is only meaningful on success. */
+int AssetCatalog_ReconcileInventory(const AssetCatalogPlacement* placements, int placementCount,
+	const int* expectedPerRegionPlacements, AssetCatalogInventoryResult* out);
+
+/* Adapter diagnostics retain errors even after the bounded warning list fills.
+   region/modelNumber may identify a barrel/cell or object index respectively. */
+void AssetCatalog_InventoryDiagnostic(AssetCatalogInventoryResult* out, bool warning,
+	const char* reason, int region, int modelNumber);
+
+/* Pure bounded resident-union list walker. 0xffff is an empty cell pointer;
+   0x8000 marks the final entry (still visited unless a header), and 0x4000
+   starts an event variant. Visits every object
+   entry (adapter deduplicates by source object index), never outside the
+   current barrel cell span. Non-straddlers must belong to this barrel's
+   object span. Errors are explicit and make diagnostics->ok false.
+   Callback receives object index, cell ordinal and list selector (-1 default).
+   This checks structural references, not source-material coverage or whether
+   geometric overlaps in mutually exclusive variants are source duplicates. */
+typedef void (*AssetCatalogInventoryVisit)(void*, int, int, int);
+bool AssetCatalog_WalkInventoryLists(const unsigned short* pointers, int pointerCount,
+	const unsigned short* entries, int entryCount, int cellBegin, int cellEnd,
+	int straddlers, int objectBegin, int objectEnd, int barrel,
+	AssetCatalogInventoryVisit visit, void* user, AssetCatalogInventoryResult* diagnostics);
+
 /* --- diagnostics ---------------------------------------------------------- */
 
 void AssetCatalog_GetStats(int* models, int* textures, int* cars, int* materialRefs);

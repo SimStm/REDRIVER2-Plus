@@ -32,6 +32,16 @@ DILIGENT_ROOT = os.getenv("DILIGENT_DIR") or "dependencies/DiligentEngine"
 DILIGENT_CORE = DILIGENT_ROOT .. "/DiligentCore"
 DILIGENT_BUILD = DILIGENT_ROOT .. "/build_core"
 
+-- E04 FMOD Core SDK (login-gated; placed by the user and verified by
+-- scripts/fetch_fmod.ps1). Windows-only; the service unit is excluded without it.
+FMOD_ROOT = os.getenv("FMOD_DIR") or "dependencies/fmod"
+FMOD_CORE = FMOD_ROOT .. "/core"
+if not os.isfile(FMOD_CORE .. "/inc/fmod.h") and os.isfile(FMOD_ROOT .. "/api/core/inc/fmod.h") then
+    FMOD_CORE = FMOD_ROOT .. "/api/core"
+end
+-- Absolute with Windows separators: the postbuild xcopy rejects forward slashes.
+FMOD_RUNTIME = string.gsub(path.getabsolute(FMOD_CORE .. "/lib/x64/fmod.dll"), "/", "\\")
+
 WEBDEMO_DIR = os.getenv("WEBDEMO_DIR") or "../../web_demo@/"	-- FIXME: make it better
 RED2_DIR = os.getenv("RED2_DIR") or "../../data@/"
 WEBSHELL_PATH = "../platform/Emscripten"	-- must be relative to makefile path (SADLY)
@@ -379,6 +389,37 @@ project "REDRIVER2"
             buildoptions { "/std:c++17" }
             defines { "PLATFORM_WIN32=1" }
     end
+
+    -- E04 FMOD Core audio. Windows x64 only, and only when the SDK is present
+    -- (scripts/fetch_fmod.ps1); without it the service translation unit is
+    -- excluded so a default build keeps the existing audio path. Only the
+    -- runtime library ships; fmod.dll is copied next to the executable.
+    local fmodPresent = os.isfile(FMOD_CORE .. "/inc/fmod.h") and
+        os.isfile(FMOD_CORE .. "/lib/x64/fmod_vc.lib") and
+        os.isfile(FMOD_CORE .. "/lib/x64/fmod.dll")
+    filter "system:not windows"
+        removefiles { "utils/AudioService.cpp", "utils/AudioService.h" }
+    filter { "system:Windows", "architecture:not x86_64" }
+        removefiles { "utils/AudioService.cpp", "utils/AudioService.h" }
+    filter {}
+    if os.target() == "windows" and fmodPresent then
+        filter { "system:Windows", "architecture:x86_64" }
+            files {
+                "utils/AudioService.h",
+                "utils/AudioService.cpp",
+            }
+            includedirs { FMOD_CORE .. "/inc" }
+            libdirs { FMOD_CORE .. "/lib/x64" }
+            links { "fmod_vc" }
+            defines { "RED2_AUDIO_FMOD" }
+            postbuildcommands {
+                "xcopy /Q /Y /I \"" .. FMOD_RUNTIME .. "\" \"%{cfg.buildtarget.directory}\" > nul",
+            }
+    else
+        filter {}
+            removefiles { "utils/AudioService.cpp", "utils/AudioService.h" }
+    end
+    filter {}
 
     filter "system:linux"
         includedirs {

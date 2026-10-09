@@ -8,8 +8,8 @@ tags: [okf, status, agents]
 # Recent engineering context
 
 > Updated: 2026-10-09.
-> Read the handoff below first: the plan, the current step (E03) and what must
-> finish before E04. Older task narratives are condensed; their change records
+> Read the handoff below first: E02 diagnostic reconciliation and E04 remediation.
+> Older task narratives are condensed; their change records
 > hold the detail.
 
 ## Handoff (read first): plan, current step, what must finish first
@@ -32,7 +32,7 @@ fixed ticks independent of presentation FPS and CPU speed.
   `NativeRenderer_SetCamera`/`NativeRenderer_RenderScene`.
 - PsyCross: headless window (`PsyX_SetHeadless`, `PsyXVkConfig.headless`) so the
   native renderer owns presentation; generic post-frame hook
-  (`PsyX_SetPostFrameHandler`). Both are submodule working-tree edits (uncommitted).
+  (`PsyX_SetPostFrameHandler`). Fork changes are committed/pushed as `99950a7`.
 - Game: `RED2_NATIVE_RENDERER` gates it; the game feeds its own camera and draws
   every frame. Log: `native renderer active on the game window (1280x720)` and
   `native renderer drawing the game window with the game camera`, 0 Diligent errors.
@@ -47,42 +47,93 @@ fixed ticks independent of presentation FPS and CPU speed.
   re-run), `Release_dev_native` build exit 0, in-game probe with resize applied
   and graceful exit code 0.
 
-**Must finish before E04 (FMOD):**
-1. E03 — converted fixtures are done; remaining: feed the game's actual world
-   meshes/materials/lighting and the player (later E03 block).
-2. E02 — serializer wiring done (`utils/CarMeshSerializer`,
-   `Cars_ConvertInspectorModel`, panel GLB button, `CarMeshSerializerTests`
-   57 checks, all nine inspector suites pass); remaining: Chicago slice
-   inventory reconciliation.
-3. Commit/separate the uncommitted work (see below) — nothing from E02/E03 is
-   committed yet.
-4. Debug configurations are not wired (only the Release Diligent libraries exist).
+**Current step: E02/E04 bounded reconciliation, in progress.** Gate 4B attempt 2
+approved the SDK-isolated service only, not consumer migration or audible
+correctness. Parent integration builds/suites and the final Chicago diagnostic
+are complete. E03 is still without a playable original-world native slice. No
+game consumers are migrated.
+Evidence and boundaries:
+- Fix-5 originally reported AudioContractTests 221/0 and AudioServiceSmoke 49/0;
+  the final smoke follow-up is 57/0. Implemented
+  behavior includes inclusive endpoints unchanged/equal rejected, concurrent
+  samples, explicit RESTART/stream-loop unsupported diagnostics, persistent
+  service generations, actual per-channel 2D/3D replacement, checked listener
+  updates and an x64 SDK guard. Doppler is disabled pending unit validation.
+  Gate approval is bounded to SDK-isolated service behavior. Release-
+  failure stream storage lifetime, captured output, device loss and stream stress
+  are unverified. Earlier 216/0 and 39/0 are historical pre-remediation only.
+- Final nit follow-up: `AudioServiceSmoke` 57/0 (exit 0), SDK fetch check exit 0,
+  and `scripts/engine_migration/test_fmod_version.ps1` nine fixtures 9/0. A
+  temporary reset-on-restart mutant fails 13/57 checks as expected; live-service
+  source hash is unchanged. Both nits are resolved. Test/verifier-only changes
+  needed no game rebuild. Temporary logs:
+  `temp/gate4b-attempt2-167892a6e365428c8711411e2f7632e5`.
+- Independent integration validation: fresh `build_e04_gate4` x64 `Release_dev`
+  and `Release_dev_native` builds exited 0; SDK-absent `build_e04_gate4_absent`
+  x64 `Release_dev` exited 0. SDK-present Win32 project XML omitted the FMOD
+  service/link/define/copy; absent Win32/x64 XML omitted FMOD integration. Win32
+  was not built. Copied DLL SHA256 matched SDK DLL
+  (`F58048FB39BD10B68E3701A553D632BDFC8BE3C644E636E715BCA8E7049A6797`).
+  Catalog/audio contract and remaining suites passed: 258, 221, and
+  39/38/28/28/64/25/32/107 respectively. Logs are under
+  `src_rebuild/build_e04_gate4/logs`. JPEG generator user/project files were
+  restored byte-for-byte. These checks establish build/configuration and bounded
+  test behavior, not audio acceptance.
+- Acquisition/distribution (E04-B): `scripts/fetch_fmod.ps1` verifies the
+  gitignored SDK at `src_rebuild/dependencies/fmod\core` (local version metadata
+  identifies **2.03.15**, from header 0x00020315 and DLL resource 2.3.15);
+  `knowledge/rules/fmod-integration.md` records version, runtime-only
+  distribution, attribution/logo, threading and VAG/CD-XA transcoding rules.
+  Consumer migration map: `knowledge/engine-migration/e04/audio-consumers.md`.
+- There is no requirement to reserve the final sample frame. No game consumer
+  has migrated.
+- Game wiring (2026-10-09): premake links `fmod_vc.lib`, defines
+  `RED2_AUDIO_FMOD` and copies `fmod.dll` beside the executables when
+  the SDK is present (default builds exclude the service unit); the postbuild
+  needs absolute Windows-separator paths (xcopy rejects forward slashes).
+  `Release_dev` and `Release_dev_native` build exit 0 with the service linked.
+- E02 Chicago inventory Gate 4A attempt 2 is approved as a scoped diagnostic.
+  Final isolated integration run: 4/4 barrels, 6740 unique placements, 227
+  straddlers, 0 overlaps/missing model refs, 114 unknown material classifications,
+  0 errors/480 warnings (64 displayed). Corrected walker includes terminal
+  objects marked `0x8000`; the first 6078 count is superseded. This is a
+  source-union diagnostic, not conversion/world acceptance. Full metrics and
+  limits: [inventory evidence](engine-migration/e02/chicago-inventory.md).
 
-**Next concrete action:** finish the E02 serializer wiring (in progress), verify
-the game build and inspector suites, then commit the E00-E03 checkpoint; after
-that start E04 (FMOD Core).
+**Remaining before full acceptance:**
+1. E03 — feed the game's actual world meshes/materials/lighting and the player
+   (blocked on the E02 city conversion slice).
+2. E02 — other cities/variants and dynamic/streamed categories (E06 coverage).
+3. Debug configurations are not wired (only the Release Diligent libraries exist).
+
+**Next concrete action:** proceed with the original-world conversion seam
+(explorer mapping) and audio-consumer migration as separately scoped work. Gate
+approval does not authorize audible acceptance. E05/E06 remain pending.
 
 **Commands:** build `Release_dev|x64` or `Release_dev_native|x64` with
 `premake5.exe vs2022` + MSBuild (env `SDL2_DIR`/`OPENAL_DIR`/`JPEG_DIR`,
 `RED2_BUILD_DIR=build_e00`, `RED2_BIN_DIR=bin/Release_dev`);
 `pwsh -NoProfile -File scripts/run_native_renderer_smoke.ps1` (38 checks);
-`scripts/run_inspector_tests.ps1` (8 E02 suites);
-`scripts/run_presentation_timing_tests.ps1`.
+Previous smoke commands/results are historical where noted; do not treat bounded
+SDK-isolated service approval as consumer or audible correctness.
 
-## Uncommitted state (2026-10-09)
+## Checkpoint commit and current uncommitted work (2026-10-09)
 
-`feat/new-engine` HEAD is `036dfc34`; the E02/E03 implementation and the doc
-edits are **uncommitted**:
-- Worktree: `src_rebuild/native/`, `Game/C/{assetpackage,conversioncache,soundasset}.*`,
-  `utils/{GltfWriter,AssetConverter,InputService}.*`, `premake5.lua`,
-  `premake5_psycross.lua`, `redriver2_psxpc.cpp`, `replays.c`, `pad.c`,
-  `dr2types.h`, tests/scripts and knowledge docs.
-- PsyCross submodule (parent records `76d83df`) has four modified files:
-  `include/PsyX/PsyX_public.h`, `include/PsyX/PsyX_vk.h`, `src/PsyX_main.cpp`,
-  `src/render/PsyX_Vk.cpp` (headless presentation, post-frame handler, pad-backend
-  disable).
-- Note: the goal-mode auto-continue safety limit (25) cannot be changed from
-  inside a session; adjust it in the goal-mode plugin/runtime for longer runs.
+`feat/new-engine` checkpoint `7617bd92` consolidated the E00-E03 implementation,
+tests, scripts, knowledge and CHANGELOG, and removed the tracked agent config
+(`opencode.jsonc`; `.opencode/` stays gitignored). The PsyCross fork change
+(headless presentation, post-frame hook, pad-backend disable) is committed and
+pushed as `99950a7` on `origin/codex/new-engine-live-vsync`; the parent records
+the new gitlink. Both commits are pushed.
+
+Uncommitted after that checkpoint: the E02 inventory and E04 blocks (`Game/C/audiocontract.*`,
+`tests/AudioContractTests.cpp`, `scripts/fetch_fmod.ps1`,
+`knowledge/rules/fmod-integration.md`, the suite registration/README and the
+status/handoff/changelog updates). The ignored FMOD SDK is present locally at
+`src_rebuild/dependencies/fmod/core`; its local version metadata identifies 2.03.15.
+
+Note: the goal-mode auto-continue safety limit is plugin-side; adjust it in the
+plugin/runtime for longer runs.
 
 ## Previous task: effect timing and replay trajectory (committed as 036dfc34)
 
@@ -147,196 +198,17 @@ and [validation](engine-migration/validation.md) own execution. PopcornFX is
 optional E08 only on request after E07; existing effects remain required.
 Planning-only checks are recorded separately from E00-E03 implementation below.
 
-## E00 progress (this session)
+## Durable evidence and next action
 
-[E00 dependency inventory](engine-migration/e00/dependency-inventory.md) records
-the PsyCross consumers with file evidence, the NTSC/PAL tick facts, the replay
-format and the `srand(0x1234)` libc-RNG risk (SDK pins; mechanical appendix
-generated by `scripts/engine_migration/e00_symbol_scan.py`).
-`utils/DeterministicBaseline.*` writes a per-tick canonical dump (`-statedump`)
-compared by `scripts/engine_migration/e00_compare_state.py` (0 mismatches: NTSC
-attract 714, PAL 595, NTSC-vs-PAL 597, NTSC mission 726). `premake5.lua` gained
-`RED2_BUILD_DIR`/`RED2_BIN_DIR`; isolated NTSC/PAL `Release_dev|x64` builds ran
-in-game Chicago. Remaining scenarios (driving/collision/police, pause/loading,
-region transition, re-record) are open; E00 is close but not formally accepted.
-
-## E01 progress (this session)
-
-- `utils/ProjectClock.{h,cpp}` now owns the desktop fixed tick (30 Hz NTSC,
-  25 Hz PAL) from the monotonic counter with bounded catch-up (max 4) and a
-  pause API; `State_GameLoop` steps by due ticks, and gameplay reads of the
-  draw counter `FrameCnt` moved to the simulation tick. `State_GameInit` no
-  longer forces the 30 FPS swap interval.
-- Authoritative determinism vs the pre-E01 E00 baselines (0 mismatches on all
-  shared ticks): NTSC attract replay, NTSC mission, PAL replay.
-- Presentation draws every frame; presentation-rate independence verified with
-  0 mismatches between vsync (~30 FPS) and uncapped (~250 FPS / 4 ms) on NTSC
-  attract replay, NTSC mission and PAL replay. Each vsync run also matched its
-  E00 baseline. The earlier black screen was a `SetDispMask(1)` gating bug
-  (unmask ran only on tick frames), not a draw-path limitation; unmasking every
-  frame fixed it. The dump now also covers mission/AI timers, message timers,
-  `tannerDeathTimer` and the per-stream replay cursor; a 3x-vsync + 3x-uncapped
-  NTSC mission matrix (all 12 pairs) matched.
-- Versioned replay contract (E01 block 4): new tapes use `DRIVER2_REPLAY_MAGIC_V2`
-  carrying version/region/rate/period and a content checksum in the header's
-  reserved fields; legacy V1 tapes still load. Unknown magic, bad version,
-  region/rate mismatch and checksum mismatch all diagnose explicitly. Verified
-  NTSC+PAL round trips and all four diagnostics; V1 `ATTRACT.400` regression
-  still matches the E00 baseline. New `-savereplay`/`-saveat` fixture drives the
-  save path without the pause menu.
-- Visual snapshot/interpolation seam (E01 block 5): `utils/VisualSnapshot.*`
-  publishes previous/current car positions per tick; `DrawCar` interpolates car
-  translation with the clock's Q8 factor. Baselines still match (0 mismatches)
-  with matching gameplay fields. Later complementary car/camera/effect fixes
-  extend this seam; matching ATTRACT state does not prove its route correct.
-- Bounded backlog policy: `ProjectClock` caps catch-up at 4 ticks/frame and
-  counts the excess; `State_GameLoop` logs dropped ticks (rate-limited), so
-  discards are explicit. Verified with `RED2_CLOCKJUMP_MS=2000` (4 applied, 56
-  dropped) and a normal run (startup hitch dropped 16, baseline still matched).
-  Dropped ticks change pacing, not the input-determined state per tick. Wiring
-  the clock pause to the pause menu still needs a precise "sim frozen" signal.
-- Findings: the camera collider and `ap.life`/`ap.life2` are draw-path state
-  (excluded from the authoritative dump). Replay re-record and interpolation
-  coverage beyond car translation remain.
-- Input service extraction (E01 block 1, done): `utils/InputService.*` owns the
-  SDL2 polling and the input mapping; the mapping types/four tables moved from
-  `PsyX_public.h` into the project, `redriver2_psxpc.cpp` applies the active
-  table to `g_inputKeyboardMapping`/`g_inputControllerMapping`, and `pad.c` uses
-  `InputService_*` (init/update/pad-state/rumble) instead of libpad. Verified
-  with a live keyboard drive (car moved) and unchanged NTSC/PAL replay baselines.
-- Replay re-record finding: `-savereplay` writes a V2 tape with real input when
-  the player is controlled (empty during an uncontrolled mission intro), and a
-  re-recorded tape replays the scenario from its `GameType` (a playground tape
-  replays as a normal game with traffic), so full mission re-record → replay
-  reproduction is still pending. The clock pause API is intentionally not wired:
-  the PSX vblank keeps ticking while paused, and `CheckForPause` runs inside the
-  tick loop, so freezing the clock would diverge from PSX.
-- PsyX pad backend disabled in the project fork (`src_rebuild/PsyCross/src/
-  PsyX_main.cpp`: no `PsyX_Pad_InitSystem`/`PsyX_Pad_InternalPadUpdates`/
-  controller event dispatch; `PsyX_UpdateInput` pumps events only). The fork
-  change is in the submodule working tree and NOT committed. Verified: NTSC/PAL
-  baselines still match and a live keyboard drive still works, so `InputService`
-  is the single controller owner. The CD/filesystem path is already project-owned
-  on desktop (stdio + `utils/fs.*`); the GTE and logging/window services are
-  coupled to PsyX (PGXP/renderer, log file/SDL events) and belong to E03/E05. The
-  keyboard-controller F4 selection is fixed at port 0.
-- The Visual Studio debugger confirmed `car_data[21]` is the camera collider
-  updated under `RenderGame2 -> InitCamera -> PlaceCameraFollowCar`.
-
-## E02 progress (this session)
-
-- Reproducible conversion: the texture export path records a canonical 64-bit
-  FNV-1a `contentHash` over the converted pixels in each new manifest entry
-  (`utils/HdTextureOverrides.cpp`: `ComputeContentHash`, `BuildManifestEntry`).
-  `InspectorExportTests` gained 3 checks proving two identical conversions
-  produce equal hashes (107 passed; `AssetCatalogTests` 145 pass). The manifest
-  parser skips unknown keys, so the field is forward-compatible and a re-export
-  preserves the existing hash.
-- Native asset package manifest: `Game/C/assetpackage.{h,c}` is a pure-data
-  module that parses/validates/canonically-serializes a readable JSON package
-  (`schemaVersion`, `id`, `entries[]` with `id`/`type`/`file`/`contentHash`/
-  `dependencies[]`), with named diagnostics and reset-on-failure. New
-  `AssetPackageTests` suite (39 checks) verifies reproducibility and every
-  diagnostic path. `scripts/run_inspector_tests.ps1` now runs all three suites
-  (145 + 39 + 107 checks pass); the game build picks up the regenerated project.
-- Conversion cache contract: `Game/C/conversioncache.{h,c}` is a pure-data
-  module keying a conversion by source hash/converter/schema/options/active
-  mods, with canonical keys, malformed-key diagnostics, staleness reasons and
-  deterministic cache paths. New `ConversionCacheTests` suite (38 checks);
-  `scripts/run_inspector_tests.ps1` now runs four suites (145 + 39 + 38 + 107
-  checks pass).
-- Native mesh record: `utils/GltfWriter.{h,cpp}` writes a bounded GLB and
-  `utils/GltfLoader.{h,cpp}` reads it back (now retaining the node transform),
-  so geometry/UV/transform/flags round-trip and repeated writes are
-  byte-identical. New `GltfRoundTripTests` suite (28 checks);
-  `scripts/run_inspector_tests.ps1` now runs five suites (145 + 39 + 38 + 28 +
-  107 checks pass).
-- Transactional converter: `utils/AssetConverter.{h,cpp}` turns a mesh record
-  into a cached native GLB (keyed by source/converter/schema/options/mods),
-  reusing fresh artifacts, rebuilding stale ones, verifying the written GLB by
-  reading it back and publishing via temp+rename. New `AssetConverterTests`
-  suite (28 checks); `scripts/run_inspector_tests.ps1` now runs six suites
-  (145 + 39 + 38 + 28 + 28 + 107 checks pass).
-- Package assembly: `AssetPackage_SetId`/`AssetPackage_AddEntry` turn a
-  converted GLB's published content hash into a manifest entry with
-  dependencies; the parser still rejects a dangling dependency. New
-  `AssetPipelineTests` suite (25 checks); `scripts/run_inspector_tests.ps1` now
-  runs seven suites (145 + 39 + 38 + 28 + 28 + 25 + 107 checks pass).
-- Sound metadata record: `Game/C/soundasset.{h,c}` carries sample rate,
-  channels, bit depth, frame count, loop points, pitch reference, source
-  bank/voice ids and music bank/program/sequence, with validation and canonical
-  serialization. New `SoundAssetTests` suite (32 checks);
-  `scripts/run_inspector_tests.ps1` now runs eight suites
-  (145 + 39 + 38 + 28 + 28 + 25 + 32 + 107 checks pass).
-- Next E02 work: Chicago slice inventory reconciliation and driving the
-  pipeline from the game-side car serializer (`Game/C/cars.c`
-  `Cars_ExportInspectorModel`). The package/cache/converter/sound modules are
-  project-owned but not yet wired into the game's export path. E03 (Diligent) is
-  feasible next: git/cmake/python/network are available and Diligent is not yet
-  vendored.
-
-## E03 progress (this session)
-
-- SDK pin/build (block 1, first half): DiligentEngine `v2.5.6` (DiligentCore
-  commit `b036337d`), Vulkan-only static Release built with CMake/VS 18. The SDK
-  is in the gitignored `dependencies/DiligentEngine` (133 MB of sources; the
-  Vulkan engine lib is large with debug info). `scripts/fetch_diligent.ps1`
-  pins, acquires and builds it reproducibly and was re-run green. New native
-  renderer modules use C++17.
-- Device/swapchain/present owner: `native/NativeRenderer.{h,cpp}` (Diligent-free
-  C ABI; Diligent types stay in the .cpp, kept out of the game's `utils/` glob)
-  owns one device/context/swap chain for one HWND, with clear-and-present,
-  resize and shutdown. It also exposes `GetDevice`/`GetContext` for a caller
-  that owns the Diligent headers.
-- Converted content + depth + textured camera draw: the smoke loads a converted
-  GLB, verifies positions/indices round-trip through immutable Diligent buffers
-  and a staging readback, renders overlapping triangles through a depth-tested
-  pipeline (D32 target) where depth keeps the nearer one, and samples a
-  base-colour texture on a quad transformed by a constant-buffer MVP (identity
-  samples red; a translated MVP moves it off-centre). Shader note: use
-  `mul(MVP, v)` (column-vector) with the column-major matrix.
-  `scripts/run_native_renderer_smoke.ps1` ran green (15 checks).
-- In-game linkage + probe: the game links the native renderer + Diligent on
-  Windows when the SDK is present. Build gotchas fixed: Diligent's `/GL` breaks
-  a non-LTCG link (disabled in `fetch_diligent.ps1`); ATL (`atls.lib`) only
-  exists under toolset v145, so the game uses v145 and passes ATL by full path;
-  the linkage is guarded by the SDK's presence so a default build is unaffected.
-  A gated `RED2_NATIVE_RENDERER` probe calls `NativeRenderer_Init` on the game's
-  PsyCross window: the device is created but the swap chain fails with
-  `VK_ERROR_NATIVE_WINDOW_IN_USE_KHR` (captured via Diligent's debug callback to
-  `native_renderer.log`) because PsyCross owns the window's swap chain — the
-  stage's warning, reproduced and now definitive.
-- E03 block 2 (done): PsyCross is initializable headless — `PsyX_SetHeadless`
-  / `PsyXVkConfig.headless` create the window but no swapchain and skip
-  presentation, so the native renderer owns the window. The game enables it when
-  `RED2_NATIVE_RENDERER` is set; the log shows `native renderer active on the
-  game window (1280x720)` and a clean release. The SDK was also upgraded to the
-  official master clone (`API256019`), which needs `volk.lib`, one `glslang.lib`
-  and an explicit `/std:c++17` on the native file.
-- E03 block 3 (done): the native renderer draws every frame with the game
-  camera. PsyCross has a generic post-frame handler (`PsyX_SetPostFrameHandler`);
-  the game derives the view from `inv_camera_matrix` (same rotation-only,
-  1/4096-scaled convention as the modern-mesh path) and calls
-  `NativeRenderer_SetCamera`/`NativeRenderer_RenderScene`, which draws a
-  depth-tested textured ground/pillars scene (procedural checkerboard, D32
-  depth) and presents. Verified: `native renderer drawing the game window with
-  the game camera`, no Diligent errors.
-- `Release_dev_native` VS configuration added in premake (game + PsyCross): same
-  build as `Release_dev` (`_native` suffix), debugger env `RED2_NATIVE_RENDERER=1`
-  and args `-nointro -nofmv`. Note: `premake5_psycross.lua` must list a new
-  configuration in its release filters or premake gives it the debug runtime
-  (`UseDebugLibraries=true`), which fails the link with LNK2038.
-- Next E03 work: the native scene is placeholder geometry, not the game's world;
-  feed the game's actual world meshes/materials/lighting and the player, then
-  continue to E04.
-
-## Evidence and next concrete action
-
-Next: continue only a separately requested block. FPS/effects commit `036dfc34` is
-pushed to `origin/feat/new-engine` (remote SHA verified); replay routes remain deferred. Complete routes, targeted
-rain/hubcap visuals and other targets remain unaccepted. E00-E03
-retain their in-progress status. Recheck release binaries and CLI against source;
-do not infer native correctness or PsyCross removal from a successful legacy run.
+E00/E01 implementation details and bounded validation are summarized in
+[`CURRENT_STATUS.md`](CURRENT_STATUS.md) and the dated records linked there.
+E02 inventory findings and limitations are in
+[`chicago-inventory.md`](engine-migration/e02/chicago-inventory.md). E03 has no
+playable original-world native slice. E04 is gated on fix-5 remediation and
+review; do not repeat prior tests or describe historical smoke/contract results
+as accepted audible correctness. Continue only the requested implementation
+block; E05/E06 remain pending. The wall-collision replay route remains deferred
+by the user ([evidence](changes/2026-10-09/effect-timing-replay-regression/index.md)).
 
 Night/rain follow-up: ATTRACT.401 first froze at 857 due to a static `cyclecluts`
 packet linked twice by catch-up ticks. Stack/OT reads identified the self-cycle;

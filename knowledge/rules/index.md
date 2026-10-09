@@ -47,6 +47,10 @@ tags: [okf, rules]
 - [Own input mapping and SDL polling in the project](input-service-ownership.md):
   keep mapping types/tables and pad polling in `utils/InputService.*`, keep the
   `Pads[]`/PADRAW contract, and treat PsyCross's pad system as compatibility only.
+- [Integrate FMOD Core behind the project audio contract](fmod-integration.md):
+  pin the 2.03 line via `scripts/fetch_fmod.ps1`, keep gameplay off FMOD, ship
+  only `fmod.dll` with the required startup attribution, and transcode
+  VAG/CD-XA through the E02 pipeline.
 - [Generate a coherent world for a playground or new map](world-scene-generation.md):
   replace surface, cell, collision, visibility and streaming data together when
   adding a generated scene, and avoid donor-world leakage.
