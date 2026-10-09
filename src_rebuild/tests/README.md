@@ -115,6 +115,25 @@ directory, the way `scripts/run_inspector_tests.ps1` gives each suite its own.
 Re-running it in the same directory would find the earlier artifacts and is not
 supported.
 
+## Source MODEL decoder tests
+
+`SourceModelDecoderTests.cpp` tests the E03 block 1 source-MODEL decoder
+(`utils/SourceModelDecoder.*`), a pure, asset-free module with no game/PSX
+headers and no GPU dependency. Synthetic byte-exact MODEL spans pin the narrow
+textured world allowlist (`PL_POLYFT4` ptype 11 plus `POLYFT3`/`POLYFT4`/
+`POLYGT3`/`POLYGT4` ptypes 20-23), the world quad emission order
+`(v0,v1,v3,v2)` and UV order `(uv0,uv1,uv3,uv2)`, the triangle order, the
+`POLYGT4` normal/UV offsets (the documented non-subdiv suspicion), per-submesh
+color presence for mixed PL/FT models, material grouping by
+`(primitiveClass,textureSet,textureId)`, unsupported-type rejection with zero
+output, span/index/normal validation, the `yang*64` rotation convention gate
+and determinism. It creates no files:
+
+```bat
+cl.exe /nologo /TP /EHsc /std:c++14 /O2 /Gy tests\SourceModelDecoderTests.cpp utils\SourceModelDecoder.cpp /Fo:build\ /Fe:build\SourceModelDecoderTests.exe /link /OPT:REF
+build\SourceModelDecoderTests.exe
+```
+
 ## Asset pipeline tests
 
 `AssetPipelineTests.cpp` tests the E02 conversion → package pipeline: source

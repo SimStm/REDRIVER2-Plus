@@ -55,10 +55,56 @@ New-Item -ItemType Directory -Path $workingRoot -Force | Out-Null
 $executable = Join-Path $workingRoot 'AudioServiceSmoke.exe'
 
 $arguments = @('/nologo', '/std:c++17', '/EHsc', '/O2', '/Gy', '/MD', '/TP', '/I', ('"' + $fmodInclude + '"'))
-$arguments += @('tests\AudioServiceSmoke.cpp', 'utils\AudioService.cpp', 'Game\C\audiocontract.c')
+$arguments += @('tests\AudioServiceSmoke.cpp', 'utils\AudioService.cpp', 'Game\C\audiocontract.c', 'Game\C\sounddecode.c')
 $arguments += @(('/Fo:"' + $workingRoot + '\\"'), ('/Fe:"' + $executable + '"'))
 $arguments += @('/link', '/OPT:REF')
 $arguments += @('"' + $fmodLibrary + '"')
+
+# Phase 1: pure SPU ADPCM decode checks. This translation unit is compiled and
+# run WITHOUT any FMOD header or library; only sounddecode.c and the test share
+# it.
+$decodeRoot = Join-Path $workingRoot 'decode'
+New-Item -ItemType Directory -Path $decodeRoot -Force | Out-Null
+$decodeExecutable = Join-Path $decodeRoot 'SoundDecodeSmoke.exe'
+$decodeArguments = @('/nologo', '/std:c++17', '/EHsc', '/O2', '/Gy', '/MD', '/TP', '/DRED2_DECODE_ONLY')
+$decodeArguments += @('tests\AudioServiceSmoke.cpp', 'Game\C\sounddecode.c')
+$decodeArguments += @(('/Fo:"' + $decodeRoot + '\\"'), ('/Fe:"' + $decodeExecutable + '"'))
+$decodeArguments += @('/link', '/OPT:REF')
+
+Push-Location $sourceRoot
+try
+{
+	$decodeCompileOutput = & cmd.exe /c ('call "' + $vcvars + '" >nul 2>&1 && cl.exe ' + ($decodeArguments -join ' ') + ' 2>&1')
+	$decodeCompileCode = $LASTEXITCODE
+}
+finally
+{
+	Pop-Location
+}
+
+if ($decodeCompileCode -ne 0)
+{
+	$decodeCompileOutput | ForEach-Object { Write-Host $_ }
+	throw "SoundDecodeSmoke failed to compile/link (exit $decodeCompileCode)."
+}
+
+Push-Location $decodeRoot
+try
+{
+	$decodeOutput = & $decodeExecutable 2>&1
+	$decodeCode = $LASTEXITCODE
+}
+finally
+{
+	Pop-Location
+}
+
+$decodeOutput | ForEach-Object { Write-Host $_ }
+if ($decodeCode -ne 0)
+{
+	throw "SoundDecodeSmoke reported failures (exit $decodeCode). Output kept in $decodeRoot."
+}
+Write-Host 'Pure SPU ADPCM decode phase passed.'
 
 Push-Location $sourceRoot
 try

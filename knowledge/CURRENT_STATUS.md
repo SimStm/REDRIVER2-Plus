@@ -15,32 +15,30 @@ tags: [okf, status]
 
 `feat/new-engine` is at checkpoint `7617bd92`; the PsyCross headless-presentation,
 post-frame-hook and pad-backend-disable changes are committed/pushed as `99950a7`.
-Subsequent E02/E04 implementation and documentation changes remain uncommitted.
-The earlier native rework fork history was not merged.
+Subsequent E02/E03/E04 implementation and documentation changes remain uncommitted.
 
 The former dirty native Vulkan work is committed/pushed separately at
 `e68b6ea6b1e30543af77d6244c109f7993ff65cf` on
-[`feat/vulkan-native-rework`](https://github.com/SimStm/REDRIVER2-Plus/tree/feat/vulkan-native-rework).
-That snapshot includes source/tests/tooling/knowledge/archive moves and the fork
-gitlink `ae83dd229f2c4a287575fb4cb853006996d9eef8`, already published in the fork.
-R00-R02 Windows scopes are documented there; R03 is incomplete/R04 unstarted.
-Those native APIs/results are not part of this branch's current implementation.
-Ignored captures/private helpers/builds remain local and do not travel with Git.
+[`feat/vulkan-native-rework`](https://github.com/SimStm/REDRIVER2-Plus/tree/feat/vulkan-native-rework),
+including source/tests/tooling/knowledge/archive moves and fork gitlink
+`ae83dd229f2c4a287575fb4cb853006996d9eef8`; R00-R02 Windows scopes are documented
+there, R03 is incomplete/R04 unstarted, and those native APIs/results are not part
+of this branch. Ignored captures/private helpers/builds remain local.
 
 Implemented here: [engine-migration planning](roadmap/planned/engine-migration.md),
-Required E00-E07 contracts, optional final E08, five issue briefs, validation policy and agent/
-catalog guidance. **The planning change itself implements no engine behavior.**
-Partial implementation is recorded in E00-E03 below; current source still requires
-PsyCross. Diligent/DiligentFX, FMOD Core, complete converted packages and eventual
-removal remain migration work. Earlier hybrid graphics/
-timing plans are superseded execution directions here. PopcornFX is optional
-E08, only upon explicit request after full-game acceptance and PsyCross removal;
-existing effects remain mandatory native consumers in E05.
+required E00-E07 contracts, optional final E08, five issue briefs, validation
+policy and agent/catalog guidance. **The planning change itself implements no
+engine behavior.** Partial implementation is recorded in E00-E04 below; current
+source still requires PsyCross, and Diligent/DiligentFX, FMOD Core, complete
+converted packages and eventual removal remain migration work. Earlier hybrid
+graphics/timing plans are superseded execution directions here. PopcornFX is
+optional E08, only upon explicit request after full-game acceptance and PsyCross
+removal; existing effects remain mandatory native consumers in E05.
 
-[Backend discussion](discussions/engine-migration/index.md) records the adopted legacy
-OpenGL for interim gameplay/regressions and deferring PsyCross Vulkan performance
-work. No default, removal or stage status changed.
-E03 still selects Diligent Vulkan, independently of the retiring legacy renderer.
+[Backend discussion](discussions/engine-migration/index.md) records the adopted
+legacy OpenGL for interim gameplay/regressions and deferring PsyCross Vulkan
+performance work; no default, removal or stage status changed. E03 still selects
+Diligent Vulkan, independently of the retiring legacy renderer.
 
 ## Engine migration E00 (in progress)
 
@@ -50,8 +48,7 @@ contracts, regional/replay/RNG facts and remaining routes. The symbol scan found
 3618 declared / 400 used. Per-tick comparisons had 0 mismatches for NTSC attract
 (714), PAL (595), NTSC-vs-PAL (597) and mission (726); isolated NTSC/PAL builds
 ran Chicago. Driving/collision/police, pause/loading, region transition and
-re-record remain pending, so E00 is not formally accepted. Local FMOD metadata
-identifies 2.03.15; Diligent is official master `API256019`.
+re-record remain pending, so E00 is not formally accepted.
 
 ## Engine migration E01 (in progress)
 
@@ -77,173 +74,176 @@ identifies 2.03.15; Diligent is official master `API256019`.
 
 ## Engine migration E02 (in progress)
 
-- Reproducible conversion: exported texture manifest entries now carry a
-  canonical 64-bit FNV-1a `contentHash` over the converted pixel data
-  (`utils/HdTextureOverrides.cpp`), so two identical conversions produce equal
-  entries. Covered by 3 new `InspectorExportTests` checks (107 passed;
-  `AssetCatalogTests` 145 pass).
-- Native asset package manifest: `Game/C/assetpackage.*` is a pure-data module
-  (no PsyCross/GPU/game state) that parses, validates and canonically serializes
-  a readable JSON package (`schemaVersion`, `id`, `entries[]` with
-  `id`/`type`/`file`/`contentHash`/`dependencies[]`). Failures reset the package
-  and return a named error with a diagnostic (schema version, missing fields,
-  duplicate ids, unknown dependencies, trailing data). Covered by a new
-  `AssetPackageTests` suite (39 checks).
-- Conversion cache contract: `Game/C/conversioncache.*` is a pure-data module
-  that keys a conversion by source hash, converter, schema version, options and
-  active mods, with a canonical key string, malformed-key diagnostics,
-  staleness reasons and deterministic cache paths. Covered by a new
-  `ConversionCacheTests` suite (38 checks).
-- The existing source-aware asset catalog (`Game/C/assetcatalog.*`) already
-  provides model/texture/car identity, LOD policy and selection anchors, with
-  standalone tests.
-- Native mesh record: `utils/GltfWriter.*` writes a bounded GLB (positions/
-  normals/UVs/indices/material/node matrix) and `utils/GltfLoader.*` reads it
-  back and now retains the node transform, so geometry/UV/transform/flags agree
-  in focused fixtures and identical input produces byte-identical GLB. Covered
-  by a new `GltfRoundTripTests` suite (28 checks).
-- Transactional converter: `utils/AssetConverter.*` turns a mesh record into a
-  cached native GLB keyed by source hash/converter/schema/options/active mods;
-  it reuses a fresh GLB, rebuilds a stale one, verifies the written GLB by
-  reading it back, publishes via a temp file + rename, and returns the content
-  hash. Covered by a new `AssetConverterTests` suite (28 checks).
-- Package assembly: `AssetPackage_SetId`/`AssetPackage_AddEntry` let a converted
-  resource's published content hash become a manifest entry with dependencies
-  (added in any order; the parser still rejects a dangling dependency). Covered
-  by a new `AssetPipelineTests` suite (25 checks).
+- Reproducible conversion: exported texture manifest entries carry a canonical
+  64-bit FNV-1a `contentHash` over the converted pixel data
+  (`utils/HdTextureOverrides.cpp`), so identical conversions produce equal
+  entries. Native asset package manifest `Game/C/assetpackage.*` is pure data (no
+  PsyCross/GPU/game state) that parses, validates and canonically serializes a
+  JSON package (`schemaVersion`, `id`, `entries[]` with
+  `id`/`type`/`file`/`contentHash`/`dependencies[]`) with named failure
+  diagnostics. Conversion cache `Game/C/conversioncache.*` keys a conversion by
+  source hash/converter/schema/options/active mods with a canonical key,
+  malformed-key diagnostics, staleness reasons and deterministic paths; the
+  existing `Game/C/assetcatalog.*` provides model/texture/car identity and LOD
+  anchors.
+- Native mesh record: `utils/GltfWriter.*` writes a bounded GLB
+  (positions/normals/UVs/indices/material/node matrix) and `utils/GltfLoader.*`
+  reads it back retaining the node transform, so geometry/UV/transform/flags
+  agree and identical input is byte-identical. `utils/AssetConverter.*` turns a
+  mesh record into a cached native GLB keyed by source/converter/schema/options/
+  mods, reuses a fresh GLB, rebuilds a stale one, verifies by read-back, publishes
+  via a temp file + rename and returns the content hash.
+  `AssetPackage_SetId`/`AssetPackage_AddEntry` let a converted resource's content
+  hash become a manifest entry with dependencies (any order; dangling dependencies
+  still rejected).
 - Sound metadata record: `Game/C/soundasset.*` carries sample rate, channels,
-  bit depth, frame count, loop points, pitch reference, source bank/voice ids
-  and music bank/program/sequence, with validation and canonical serialization.
-  Covered by a new `SoundAssetTests` suite (32 checks).
+  bit depth, frame count, loop points, pitch reference, source bank/voice ids and
+  music bank/program/sequence, with validation and canonical serialization.
 - Car serializer wiring (2026-10-09): `utils/CarMeshSerializer.*` derives a
   deterministic conversion key (raw position/index/identity bytes, converter
   `car-mesh`, schema, options and a mods digest) and publishes through
   `AssetConverter_ConvertMesh`; `Cars_ConvertInspectorModel` feeds the resident
-  car model (`NewCarModel` + `gTempCarVertDump`) from a new GLB button in the
-  developer panel beside the OBJ export, and `CarMeshSerializerTests` (64 checks)
-  covers reuse/rebuild, mods-key sensitivity, invalid arguments and
-  missing-directory failure. Current integration suite results are recorded
-  below; prior per-suite counts in older change records are historical.
+  car model (`NewCarModel` + `gTempCarVertDump`) from a new GLB button beside the
+  OBJ export. Covered by `CarMeshSerializerTests` (64) and the new suite set
+  (AssetPackageTests 39, ConversionCacheTests 38, GltfRoundTripTests 28,
+  AssetConverterTests 28, AssetPipelineTests 25, SoundAssetTests 32); earlier
+  InspectorExportTests 107 / AssetCatalogTests 145 are superseded below.
 - Chicago inventory (2026-10-09): Gate 4A attempt 2 approved a scoped diagnostic.
   The final fresh report scans all four eligible Chicago day barrels: 6740 unique
   placements, 227 straddlers, no overlaps or missing model refs, and 114 unknown
-  material classifications. It reports 0 errors/480 warnings (64 displayed,
+  material classifications, reporting 0 errors/480 warnings (64 displayed,
   truncated). This is a source-union diagnostic, not conversion or world
-  acceptance. Corrected traversal includes terminal objects marked `0x8000`;
-  the initial 6078-count report is superseded. Fresh report was copied to
+  acceptance. Corrected traversal includes terminal objects marked `0x8000`; the
+  initial 6078-count report is superseded. Fresh report was copied to
   `src_rebuild/build_e04_gate4/logs/chicago_inventory_final.txt`. Other cities,
   variants and dynamic/streamed categories remain open; conversion cache is not
-  consumed by native loading. See [inventory evidence](engine-migration/e02/chicago-inventory.md).
+  consumed by native loading. See
+  [inventory evidence](engine-migration/e02/chicago-inventory.md).
+
 ## Engine migration E03 (in progress)
 
-- SDK pin/build (block 1, first half): DiligentEngine pinned at `v2.5.6`
-  (DiligentCore commit `b036337d`), Vulkan-only static Release built. Acquisition
-  is reproducible via `scripts/fetch_diligent.ps1`; the SDK lives in the
-  gitignored `dependencies/DiligentEngine` and is never committed. New native
-  renderer modules use C++17.
-- Device/swapchain/present owner (block 1, second half): `native/NativeRenderer.*`
-  owns one Diligent device/context/swap chain for one native window handle, with
-  a Diligent-free C ABI, clear-and-present, resize and shutdown.
-- Converted content, depth and a textured camera draw (blocks 2-3): a converted
-  GLB's positions and indices are uploaded to immutable Diligent buffers and read
-  back identical; overlapping triangles render through a depth-tested pipeline
-  (D32 depth target) and depth keeps the nearer one; a textured quad samples a
-  base-colour texture through a constant-buffer MVP, and a translated MVP moves
-  it off the centre pixel. Verified by `scripts/run_native_renderer_smoke.ps1`
-  (15 checks).
-- In-game linkage and probe (block 1): the game links the native renderer +
-  Diligent on Windows when the SDK is present (C++17 native file, v145 toolset,
-  ATL by full path, `/GL` disabled in the SDK). A gated `RED2_NATIVE_RENDERER`
-  probe calls the renderer on the game's PsyCross window: the device is created
-  but the swap chain fails with `VK_ERROR_NATIVE_WINDOW_IN_USE_KHR` because
-  PsyCross already owns the window's swap chain (the stage's warning, reproduced
-  and captured through Diligent's debug callback).
-- Headless PsyCross handoff (block 2): PsyCross can create the game window
-  without a swapchain/present (`PsyX_SetHeadless`, `PsyXVkConfig.headless`), so
-  the native renderer owns the window's presentation. Verified in-game: `native
-  renderer active on the game window (1280x720)` / `native renderer released the
-  window`, no Diligent errors; the default path is unchanged.
-- The SDK was upgraded to a direct clone of the official repository (master,
-  DiligentCore `API256019`), Vulkan-only static Release. The new third-party
-  layout needs `volk.lib` and no longer has separate
-  `GenericCodeGen`/`MachineIndependent`/`OSDependent` glslang libs; the native
-  file needs an explicit `/std:c++17`.
-- Camera seam + per-frame draw (block 3): a generic PsyCross post-frame handler
-  (`PsyX_SetPostFrameHandler`) lets the game draw after each finished frame. With
-  `RED2_NATIVE_RENDERER` set, the game keeps the native renderer active and feeds
-  the game camera (view derived from `inv_camera_matrix`, same convention as the
-  modern-mesh path) to `NativeRenderer_SetCamera`/`NativeRenderer_RenderScene`,
-  which draws a depth-tested, textured ground/pillars scene with a D32 depth
-  target. Verified in-game: `native renderer drawing the game window with the
-  game camera`, no Diligent errors.
-- `Release_dev_native` build configuration (premake, both projects): builds like
-  `Release_dev` (`_native` suffix) and launches the debugger with
-  `RED2_NATIVE_RENDERER=1` and `-nointro -nofmv`, so the native path is testable
-  from Visual Studio. Verified: builds and runs the native renderer.
-- Converted content in the native scene (block 4): `NativeRenderer_LoadContent`/
-  `ClearContent`/`HasContent`/`GetContentStats` load a converted GLB through
-  `utils/GltfLoader` into immutable buffers/texture (node transform as the model
-  matrix, base-colour factor/texture, unlit) and draw it in place of the
-  placeholder; `RenderSceneToRGBA` runs the same scene draw offscreen for pixel
-  checks. `RED2_NATIVE_CONTENT` loads a converted GLB into the in-game native
-  path; a failed load keeps the placeholder and does not abort the path. The
-  game now releases the Diligent device before `PsyX_Shutdown` destroys the
-  window, forwards window resizes to the swap chain, and logs scene failure /
-  recovery transitions instead of only the first failure. Verified by the smoke
-  suite (38 checks, 0 failures: node transform, camera movement, placeholder and
-  resize readbacks) and an in-game probe: content loaded, drawn with the game
-  camera, resize applied (`Resizing the swap chain to 1008x561`) and a clean
-  shutdown (exit 0) with no scene-failure or crash lines.
-- Not yet done: the native scene accepts one converted mesh/instance, not the
-  game's world content; world meshes/materials/lighting and the player remain E03
-  work; next is the original-world conversion seam.
-  Debug configs are not wired (only Release Diligent libraries exist). Headless
-  native mode does not run the F11 ImGui overlay yet; a possible PAL double-aspect
-  in the camera seam needs a PAL probe.
-- E03 remains without a playable original-world native slice: the native scene
-  accepts converted fixtures, not the game's world/materials/lighting and player.
-  The next conversion seam is original-world content; see [RECENT_CONTEXT](RECENT_CONTEXT.md).
+- SDK pin/build: DiligentEngine is pinned at `v2.5.6` (DiligentCore `b036337d`),
+  later upgraded to the official repository master (`API256019`), and built
+  Vulkan-only as a static Release through `scripts/fetch_diligent.ps1`. The SDK
+  stays in the gitignored `dependencies/DiligentEngine`; new native modules use
+  C++17 and the layout needs `volk.lib`, one `glslang.lib` and `/std:c++17`.
+- Device/swapchain/present owner: `native/NativeRenderer.*` owns one Diligent
+  device/context/swap chain for one native window handle, with a Diligent-free C
+  ABI, clear-and-present, resize and shutdown. Converted GLB positions/indices
+  upload to immutable buffers and read back identical; overlapping triangles
+  render through a depth-tested pipeline (D32) with the nearer one kept; a
+  textured quad samples a base-colour texture through a constant-buffer MVP.
+  Verified by `scripts/run_native_renderer_smoke.ps1` (15 checks).
+- In-game linkage, headless handoff and camera seam: the game links the native
+  renderer + Diligent on Windows when the SDK is present (C++17 native file, v145
+  toolset, ATL by full path, `/GL` disabled in the SDK). A gated
+  `RED2_NATIVE_RENDERER` probe first reproduced
+  `VK_ERROR_NATIVE_WINDOW_IN_USE_KHR` (PsyCross owned the window's swap chain);
+  PsyCross can now create the window headless (`PsyX_SetHeadless`,
+  `PsyXVkConfig.headless`), and a generic post-frame handler
+  (`PsyX_SetPostFrameHandler`) lets the game feed its camera (view from
+  `inv_camera_matrix`, same convention as the modern-mesh path) to
+  `NativeRenderer_SetCamera`/`NativeRenderer_RenderScene`, drawing a depth-tested,
+  textured scene every frame. `Release_dev_native` builds like `Release_dev`
+  (with `_native` suffix) and launches with `RED2_NATIVE_RENDERER=1 -nointro
+  -nofmv`; the default path is unchanged.
+- Converted content in the native scene (block 4):
+  `NativeRenderer_LoadContent`/`ClearContent`/`HasContent`/`GetContentStats` load
+  a converted GLB through `utils/GltfLoader` into immutable buffers/texture (node
+  transform as model matrix, base-colour factor/texture, unlit) and draw it in
+  place of the placeholder; `RenderSceneToRGBA` runs the same draw offscreen for
+  pixel checks; `RED2_NATIVE_CONTENT` loads a converted GLB in-game and a failed
+  load keeps the placeholder without aborting. The game releases the Diligent
+  device before `PsyX_Shutdown`, forwards window resizes and logs scene
+  failure/recovery transitions. Verified by the smoke suite (38 checks, 0
+  failures) and an in-game probe: content loaded and drawn with the game camera,
+  resize applied (`Resizing the swap chain to 1008x561`) and a clean exit (0),
+  no scene-failure or crash lines.
+- Source MODEL decoder foundation (block 1, oracle-approved attempt 1 with F1-F8
+  remediation): `utils/SourceModelDecoder.*` is a pure, asset-free decoder of the
+  reconstructed MODEL poly block from an explicit `[begin,end)` span (MODEL has no
+  byte span; loader span capture is Block 2). Allowlisted ptypes 11 (`PL_POLYFT4`,
+  16 B, no RGB), 20/21 (`POLYFT3`/`FT4`, 20 B) and 22/23 (`POLYGT3`/`GT4`,
+  24 B), stride `PolySizes[ptype & 0x1f]`, world quad vertex order
+  `(v0,v1,v3,v2)` with UVs `(uv0,uv1,uv3,uv2)`, and declared 20/22 decoded as
+  triangles; the runtime `ConvertPolygonTypes` mutation (20->21/22->23) is
+  deliberately not relied on. Total span/index/normal validation yields named
+  errors with zero output; unsupported ptypes fail the model (the runtime skips
+  them, and skip-vs-fail is a Block 2 real-data decision); instanced models are
+  rejected; per-submesh `hasColors`/`hasNormals` use aligned zero placeholders;
+  face colours are the raw stored colours, not legacy shading. No
+  GPU/GLB/texture/loader/renderer work. Covered by the new
+  `SourceModelDecoderTests` (336/0, synthetic byte-exact fixtures), registered in
+  `scripts/run_inspector_tests.ps1` and `tests/README.md`; the full runner passes
+  (catalog 258, audio contract 221, others as before).
+- Not yet done: the native scene accepts converted fixtures, not the game's
+  world/materials/lighting and player, so E03 has no playable original-world
+  native slice; the next seam is original-world content. Debug configs are not
+  wired (only Release Diligent libraries exist). Headless native mode does not run
+  the F11 ImGui overlay; a possible PAL double-aspect in the camera seam needs a
+  PAL probe. Deferred to Block 2: loader span capture (`models.c:131-139`),
+  `source_object_index` identity (the E02 placement record lacks it), CPU
+  TIM/page/CLUT decode, a per-instance draw API and a camera/unit/winding fixture
+  (the bridge mixes rotation/4096 with raw translation against near/far 0.02/300).
+
 ## Engine migration E04 (in progress)
 
 - Project audio contract (E04-A): `Game/C/audiocontract.{h,c}` is a pure-data
   boundary between gameplay and the future audio service: stable event ids
   (kind/bank/voice-or-sequence packing, zero reserved), play flags, request
   validation with named diagnostics (NaN-safe volume/pitch/distance), a 64-slot
-  voice table with 16-bit per-slot generations (stale handles rejected,
-  zero-wraparound documented) and inclusive loop-metadata validation matching
-  the FMOD `setLoopPoints` semantics. The 216-check test result is historical
-  pre-remediation; fix-5 reports 221/0. Gameplay must not call FMOD directly.
+  voice table with 16-bit per-slot generations (stale handles rejected, zero
+  wraparound documented) and inclusive loop-metadata validation matching the FMOD
+  `setLoopPoints` semantics. Fix-5 reports 221/0. Gameplay must not call FMOD
+  directly.
 - Local ignored FMOD SDK metadata identifies 2.03.15 (`FMOD_VERSION` 0x00020315
-  and DLL resource version 2.3.15). Do not infer 2.03.21 from hexadecimal
-  suffix `0x15`; no independent new version verification is claimed. See
+  and DLL resource version 2.3.15). Do not infer 2.03.21 from hexadecimal suffix
+  `0x15`; no independent new version verification is claimed. See
   [the FMOD integration rule](rules/fmod-integration.md).
 - Gate 4B attempt 2 **approved as a bounded SDK-isolated service only**, not
-  consumer migration or audible correctness. Fix-5 contract tests report 221/0;
-  initial smoke was 49/0 and final smoke follow-up is 57/0. It implements true per-channel 2D/3D,
-  concurrent samples, persistent service generations, checked listener updates
-  and an x64 SDK guard. Inclusive endpoints remain unchanged; equal endpoints
-  are rejected; RESTART/stream loops are unsupported; Doppler is disabled pending
-  unit validation. Parent independent builds/suites completed: fresh x64
-  `Release_dev` and `Release_dev_native` SDK-present builds exit 0; SDK-absent
-  x64 `Release_dev` exits 0. SDK-present Win32 project XML excludes service,
-  FMOD link/define and DLL copy; SDK-absent Win32/x64 XML excludes all FMOD
-  integration. Win32 was not built. Copied DLL SHA256 matches SDK DLL:
+  consumer migration or audible correctness. It implements true per-channel
+  2D/3D, concurrent samples, persistent service generations, checked listener
+  updates and an x64 SDK guard; inclusive endpoints are unchanged, equal
+  endpoints are rejected, RESTART/stream loops are unsupported and Doppler is
+  disabled pending unit validation. Final suites: catalog 258, audio contract 221
+  and remaining 39/38/28/28/64/25/32/107; AudioServiceSmoke 57/0 (exit 0), the SDK
+  fetch check exits 0 and nine FMOD-version fixtures pass 9/0. A reset-on-restart
+  mutant fails 13/57 checks as expected; live-service source hash unchanged.
+  Parent fresh x64 `Release_dev`/`Release_dev_native` SDK-present builds and an
+  SDK-absent x64 `Release_dev` all exit 0; Win32 was not built. Copied DLL SHA256
+  matches the SDK DLL:
   `F58048FB39BD10B68E3701A553D632BDFC8BE3C644E636E715BCA8E7049A6797`.
-  Final suites: catalog 258; audio contract 221; remaining suites 39/38/28/28/
-  64/25/32/107. Final AudioServiceSmoke is 57/0 (exit 0), SDK fetch check exits
-  0, and `scripts/engine_migration/test_fmod_version.ps1` passes nine fixtures
-  (9/0). A temporary reset-on-restart mutant fails 13/57 checks as expected;
-  live-service source hash is unchanged. Both prior nits are resolved. No game
-  rebuild was needed for test/verifier-only changes. Release-failure stream
-  storage lifetime, captured output, device loss and stream stress are unverified.
-  Earlier smoke 39/0 and contract 216/0 are historical only. No game consumer
-  has migrated; this does not establish audible acceptance.
+  Release-failure stream storage lifetime, captured output, device loss and stream
+  stress are unverified; earlier smoke 39/0 and contract 216/0 are historical.
 - Game-target wiring (2026-10-09): premake links `fmod_vc.lib`, defines
-  `RED2_AUDIO_FMOD` and copies `fmod.dll` next to the built
-  executables when the SDK is present; without it the service unit is excluded,
-  so a default build is unchanged. `Release_dev` and `Release_dev_native` build
-  and link with the service compiled in. No game system calls the service yet;
-  E04 remains partial, with E05/E06 pending.
+  `RED2_AUDIO_FMOD` and copies `fmod.dll` next to the built executables when the
+  SDK is present; without it the service unit is excluded, so a default build is
+  unchanged. `Release_dev` and `Release_dev_native` build and link with the
+  service compiled in; no game system calls the service yet.
+- Menu-bank PCM decode + registration seam (P0, oracle-approved attempt 1 with
+  F1-F4 remediation): `Game/C/sounddecode.{h,c}` is an SDK-free PSX SPU ADPCM
+  (VAG) decoder: 16 B -> 28 frames, coefficient recursion with cross-block
+  predictor carry, filter-nibble validation, inclusive block-aligned loop frames,
+  bounded validation with zero partial output, deterministic. Loop start uses the
+  PSX block-start convention, deliberately diverging from the fork reference's
+  FIXME-marked `(block+1)*28` (documented; needs an explicit acceptance decision
+  when looping samples migrate, outside the FESound slice). `Game/C/sound.c` glue
+  under `#ifdef RED2_AUDIO_FMOD` decodes samples 0-3 at the `SBK_ID_MENU` load
+  into `SOUND_BANK_SFX` and registers `SFX(1,0..3)` via
+  `AudioService_RegisterSoundMemory` (streaming=0), unregisters on bank-1 reload,
+  registers nothing when base!=0 and is a no-op when the service is inactive, so
+  the seam is inert until A1 initializes the service. Known caveat: the base==0
+  window also matches the level's first bank-1 load; A1 adds strict menu
+  discrimination (e.g. `gInFrontend`) plus seam-level evidence. A read-only local
+  probe of `data/DRIVER2/SOUND/VOICES2.BLK`: menu lump 4 samples x 560 frames
+  @4000 Hz, no loop; the level lump decodes cleanly. Evidence:
+  `scripts/run_audio_service_smoke.ps1` (pure decode phase without FMOD headers,
+  plus the service phase) 20 + 87 checks, 0 failures.
+- Next: A1 (FESound routing with a runtime SPU_ONLY/FMOD_ONLY switch defaulting to
+  SPU, master gain helper `(10000+gMasterVolume)/10000`, pitch `gamePitch/4096`
+  clamped to `16383/4096`, lazy service init, per-frame Update in `VsyncProc`,
+  shutdown at exit, `gInFrontend` menu gating, in-game log evidence) and E03 Block
+  2. E05/E06 remain pending.
 
 ## Project and current services
 
@@ -255,8 +255,8 @@ now separates the fixed simulation tick from presentation, which draws every
 frame and interpolates car/camera translation and orientation between ticks.
 Replay repeats and counters remain tick indexed. Local effect interpolation now
 covers particles/birds/hubcaps/rain; complete pedestrian/wheel-spin/native VFX
-coverage remains E05 work. E01
-preserves regional semantics before changing clock owners.
+coverage remains E05 work. E01 preserves regional semantics before changing clock
+owners.
 
 PsyCross remains a separate submodule from `git@github.com:SimStm/PsyCross.git`.
 Do not substitute upstream or infer removal from a roadmap. Existing C++11 and
@@ -271,13 +271,13 @@ this is the existing PSX primitive/hybrid architecture, not Diligent.
 support.
 
 - Vulkan PSX shaders implement CLUT/texture windows/dither/filtering, VRAM mirror,
-  blend/stencil/depth, white primitives and queued VRAM copies; `-vkpsxtest` holds
-  readback/CLUT/offscreen/export/blend regression fixtures.
-- The modern mesh API/importer/PBR/shadow composite shares the PSX projection and
-  depth; legacy lighting receptivity is optional and PGXP stays on that composite.
-- World/overlay boundaries split gameplay composition from flare/fade/UI tails;
-  split-screen keeps its limited composition path. This does not prove native
-  mode/category coverage under the new architecture.
+  blend/stencil/depth, white primitives and queued VRAM copies (`-vkpsxtest`
+  readback/CLUT/offscreen/export/blend fixtures); the modern mesh API/importer/
+  PBR/shadow composite shares the PSX projection and depth, with optional legacy
+  lighting receptivity and PGXP on that composite. World/overlay boundaries split
+  gameplay composition from flare/fade/UI tails, and split-screen keeps its
+  limited path; this does not prove native mode/category coverage under the new
+  architecture.
 - Minimize/restore and fence-deadlock fixes are recorded in
   [minimize](changes/2026-09-21/vulkan-minimize-swapchain-crash/index.md) and
   [fence](changes/2026-09-21/vulkan-frame-fence-deadlock/index.md) evidence.
@@ -340,7 +340,7 @@ requires deterministic mechanics, conversion inventories and targeted native
 resources/pixels/audio, with actual budgets and platform scope.
 
 The planning-only validation is recorded in [its change record](changes/2026-10-08/engine-migration-plan/index.md).
-Subsequent E00-E03 and complementary fixes above record their actual isolated
+Subsequent E00-E04 and complementary fixes above record their actual isolated
 builds and bounded tests. The latest effect/replay evidence retains the unresolved
 route fault; a matching dump does not accept a migration stage. Older generated
 projects/executables may belong to the preserved rework branch.

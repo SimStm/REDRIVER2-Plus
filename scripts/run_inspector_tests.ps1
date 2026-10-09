@@ -142,6 +142,8 @@ try
 		-ExtraIncludes @() -LinkLibraries @('windowscodecs.lib', 'ole32.lib')
 	Invoke-Suite -Name 'CarMeshSerializerTests' -Sources @('tests\CarMeshSerializerTests.cpp', 'utils\CarMeshSerializer.cpp', 'utils\AssetConverter.cpp', 'utils\GltfWriter.cpp', 'utils\GltfLoader.cpp', 'Game\C\conversioncache.c') `
 		-ExtraIncludes @() -LinkLibraries @('windowscodecs.lib', 'ole32.lib')
+	Invoke-Suite -Name 'SourceModelDecoderTests' -Sources @('tests\SourceModelDecoderTests.cpp', 'utils\SourceModelDecoder.cpp') `
+		-ExtraIncludes @() -LinkLibraries @()
 	Invoke-Suite -Name 'AssetPipelineTests' -Sources @('tests\AssetPipelineTests.cpp', 'utils\AssetConverter.cpp', 'utils\GltfLoader.cpp', 'utils\GltfWriter.cpp', 'Game\C\conversioncache.c', 'Game\C\assetpackage.c') `
 		-ExtraIncludes @() -LinkLibraries @('windowscodecs.lib', 'ole32.lib')
 	Invoke-Suite -Name 'SoundAssetTests' -Sources @('tests\SoundAssetTests.cpp', 'Game\C\soundasset.c') `

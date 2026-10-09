@@ -10,6 +10,40 @@ where release policy permits it.
 
 ### Added
 
+- E03 source MODEL decoder foundation: `utils/SourceModelDecoder.*` is a pure,
+  asset-free decoder of the reconstructed MODEL poly block from an explicit
+  `[begin,end)` span (the MODEL structure has no byte span; loader span capture
+  is Block 2). It accepts only the allowlisted ptypes 11 (`PL_POLYFT4`, 16 B, no
+  RGB), 20/21 (`POLYFT3`/`FT4`, 20 B) and 22/23 (`POLYGT3`/`GT4`, 24 B), strides
+  by `PolySizes[ptype & 0x1f]`, emits the world quad order `(v0,v1,v3,v2)` with
+  UVs `(uv0,uv1,uv3,uv2)`, decodes declared 20/22 as triangles, validates the
+  total span/indices/normals with named errors and zero output, rejects instanced
+  models, and stores raw stored face colours per submesh with aligned zero
+  placeholders and per-submesh `hasColors`/`hasNormals`. It deliberately does not
+  rely on the runtime `ConvertPolygonTypes` mutation (20->21, 22->23);
+  unsupported ptypes fail the model (the runtime skips them, and skip-vs-fail is a
+  Block 2 real-data decision). No GPU/GLB/texture/loader/renderer work. Covered
+  by the new `SourceModelDecoderTests` (336 checks, 0 failures) with synthetic
+  byte-exact fixtures; all other inspector suites still pass.
+
+- E04 menu-bank PCM decode and registration seam: `Game/C/sounddecode.{h,c}` is
+  an SDK-free PSX SPU ADPCM (VAG) decoder (16 B -> 28 frames, coefficient
+  recursion with cross-block predictor carry, filter-nibble validation, inclusive
+  block-aligned loop frames, bounded validation with zero partial output and
+  deterministic results). It uses the PSX block-start loop convention,
+  deliberately diverging from the fork reference's FIXME-marked `(block+1)*28`
+  (documented; needs an explicit acceptance decision when looping samples
+  migrate, outside the FESound slice). `Game/C/sound.c` glue under
+  `#ifdef RED2_AUDIO_FMOD` decodes samples 0-3 at the `SBK_ID_MENU` load into
+  `SOUND_BANK_SFX` and registers `SFX(1,0..3)` via
+  `AudioService_RegisterSoundMemory` (streaming=0), unregisters on bank-1 reload,
+  registers nothing when base!=0 and is a no-op while the service is inactive, so
+  the seam is inert until A1 initializes it. A read-only local probe of
+  `data/DRIVER2/SOUND/VOICES2.BLK` found the menu lump is 4 samples x 560 frames
+  at 4000 Hz with no loop, and the level lump decodes cleanly. Verified by
+  `scripts/run_audio_service_smoke.ps1` (pure decode phase without FMOD headers
+  plus the service phase): 20 + 87 checks, 0 failures.
+
 - Production effect-timing tests for both regional clocks, strict replay dump
   inventory comparisons and diagnostic detection of recorded draw-time mutations.
 

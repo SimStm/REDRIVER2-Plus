@@ -80,4 +80,4 @@ presentation-FPS dependency to remove).
 - Contract: `Game/C/audiocontract.*` (stable event ids, voice generations,
   listener) - see the E04 section of `knowledge/CURRENT_STATUS.md`.
 - Acquisition/version/distribution/threading: `knowledge/rules/fmod-integration.md`
-  (SDK 2.03.21 verified at `src_rebuild/dependencies/fmod/core`).
+  (SDK 2.03.15 verified at `src_rebuild/dependencies/fmod/core`).

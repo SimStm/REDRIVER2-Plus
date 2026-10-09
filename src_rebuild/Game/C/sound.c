@@ -10,6 +10,10 @@
 #ifndef PSX
 #include "../../utils/ProjectClock.h"
 #endif
+#ifdef RED2_AUDIO_FMOD
+#include "sounddecode.h"
+#include "../../utils/AudioService.h"
+#endif
 
 #define SPU_CHANNEL_COUNT 24
 #define LSB_BANK_COUNT 7
@@ -978,6 +982,111 @@ void UpdateXMSamples(int num_samps)
 		XM_SetVAGAddress(VABID, i, samples[0][i].address);
 }
 
+#ifdef RED2_AUDIO_FMOD
+// E04 frontend one-shot (FESound) slice: register the menu bank's decoded PCM
+// with the audio service. Playback still goes through the existing SPU path;
+// only the registration seam is migrated here. A decoded buffer is released
+// right after registration because streaming=0 lets FMOD copy the sample.
+#define MENU_SOUND_SAMPLE_COUNT 4
+
+static unsigned int g_menuSoundIds[MENU_SOUND_SAMPLE_COUNT];
+static int g_menuSoundCount = 0;
+static int g_menuAppendWarned = 0;
+
+static void UnregisterMenuSounds(void)
+{
+	int i;
+
+	for (i = 0; i < g_menuSoundCount; i++)
+		AudioService_UnregisterSound(g_menuSoundIds[i]);
+
+	g_menuSoundCount = 0;
+}
+
+static void RegisterMenuSounds(const char* payload, int payloadSize, int lumpBase, int appendBase, int numSamples)
+{
+	int i;
+
+	if (!AudioService_IsActive())
+	{
+		g_menuSoundCount = 0;
+		return;
+	}
+
+	// A later load into bank 1 (SFX, sirens) supersedes the menu registrations.
+	UnregisterMenuSounds();
+
+	// The bank can also be appended to (base != 0) without being the menu
+	// lump; there is no unambiguous remap, so register nothing and say so once.
+	if (appendBase != 0)
+	{
+		if (!g_menuAppendWarned)
+		{
+			printInfo("E04: SOUND_BANK_SFX appended at %d; menu PCM registration unavailable\n", appendBase);
+			g_menuAppendWarned = 1;
+		}
+
+		return;
+	}
+
+	for (i = 0; i < MENU_SOUND_SAMPLE_COUNT && i < numSamples; i++)
+	{
+		const SAMPLE_DATA* src = &samples[SOUND_BANK_SFX][appendBase + i];
+		unsigned int eventId = AudioContract_MakeEventId(AUDIO_KIND_SFX, SOUND_BANK_SFX, appendBase + i);
+		SoundDecodeSample record;
+		SoundDecodeInfo decoded;
+		short* pcm;
+		int capacity;
+		char error[SOUND_DECODE_ERROR_CAPACITY];
+
+		if (src->address < (u_int)lumpBase || src->address - (u_int)lumpBase >= (u_int)payloadSize)
+		{
+			printWarning("E04: menu sample %d is outside the loaded bank; not registered\n", i);
+			continue;
+		}
+
+		record.address = src->address - (u_int)lumpBase;
+		record.length = src->length;
+		record.loop = src->loop;
+		record.samplerate = src->samplerate;
+
+		capacity = (int)(record.length / SOUND_DECODE_BLOCK_BYTES) * SOUND_DECODE_FRAMES_PER_BLOCK;
+		if (capacity <= 0)
+		{
+			printWarning("E04: menu sample %d has no PCM to register\n", i);
+			continue;
+		}
+
+		pcm = (short*)malloc((size_t)capacity * sizeof(short));
+		if (!pcm)
+		{
+			printWarning("E04: menu sample %d could not be decoded (out of memory)\n", i);
+			continue;
+		}
+
+		if (SoundDecode_SpuAdpcm((const unsigned char*)payload, payloadSize, &record, pcm, capacity, &decoded, error, sizeof(error)) != SOUND_DECODE_OK)
+		{
+			printWarning("E04: menu sample %d not registered: %s\n", i, error);
+			free(pcm);
+			continue;
+		}
+
+		if (AudioService_RegisterSoundMemory(eventId, pcm, decoded.frameCount * 2, 1, decoded.sampleRate,
+			decoded.frameCount, decoded.loop ? decoded.loopStart : -1, decoded.loop ? decoded.loopEnd : -1, 0, error, sizeof(error)))
+		{
+			g_menuSoundIds[g_menuSoundCount++] = eventId;
+		}
+		else
+		{
+			printWarning("E04: menu sample %d registration failed: %s\n", i, error);
+		}
+
+		// Non-streaming registration: FMOD has copied the sample memory.
+		free(pcm);
+	}
+}
+#endif
+
 // [D] [T]
 int LoadSoundBankDynamic(char *address, int length, int dbank)
 {
@@ -1028,6 +1137,10 @@ int LoadSoundBankDynamic(char *address, int length, int dbank)
 		lsbTabs.append = 1;
 	}
 
+#ifdef RED2_AUDIO_FMOD
+	const int appendBase = lsbTabs.count[dbank];
+#endif
+
 	num_samples = *(int *)address;
 	slength = num_samples * sizeof(SAMPLE_DATA) + sizeof(int);
 
@@ -1046,7 +1159,12 @@ int LoadSoundBankDynamic(char *address, int length, int dbank)
 		samples[dbank][lsbTabs.count[dbank]].address += lsbTabs.addr;
 		lsbTabs.count[dbank]++;
 	}
-	
+
+#ifdef RED2_AUDIO_FMOD
+	if (dbank == SOUND_BANK_SFX)
+		RegisterMenuSounds((const char*)address + slength, length - slength, lsbTabs.addr, appendBase, num_samples);
+#endif
+
 	lsbTabs.addr += length - slength;
 
 	return num_samples;

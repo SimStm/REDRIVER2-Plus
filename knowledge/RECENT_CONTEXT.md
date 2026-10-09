@@ -8,7 +8,7 @@ tags: [okf, status, agents]
 # Recent engineering context
 
 > Updated: 2026-10-09.
-> Read the handoff below first: E02 diagnostic reconciliation and E04 remediation.
+> Read the handoff below first: E03 Block 1, E04 P0 and the next A1/Block 2 step.
 > Older task narratives are condensed; their change records
 > hold the detail.
 
@@ -46,11 +46,23 @@ fixed ticks independent of presentation FPS and CPU speed.
   logging were added after the oracle gate. Evidence: smoke 38/0 (orchestrator
   re-run), `Release_dev_native` build exit 0, in-game probe with resize applied
   and graceful exit code 0.
+- Source MODEL decoder foundation (E03 Block 1, oracle-approved attempt 1 with
+  F1-F8 remediation): `utils/SourceModelDecoder.*` is a pure, asset-free decoder
+  of the reconstructed MODEL poly block from an explicit `[begin,end)` span
+  (MODEL has no byte span; loader span capture is Block 2). Allowlisted ptypes
+  11/20/21/22/23, stride `PolySizes[ptype&0x1f]`, world quad vertex/UV order,
+  declared 20/22 decoded as triangles, total span/index/normal validation with
+  named errors and zero output, unsupported ptypes fail the model, instanced
+  models rejected, per-submesh colour/normal flags with raw stored face colours.
+  New `SourceModelDecoderTests` 336/0 (synthetic byte-exact fixtures); the full
+  inspector runner passes (catalog 258, audio contract 221, others as before).
 
-**Current step: E02/E04 bounded reconciliation, in progress.** Gate 4B attempt 2
-approved the SDK-isolated service only, not consumer migration or audible
-correctness. Parent integration builds/suites and the final Chicago diagnostic
-are complete. E03 is still without a playable original-world native slice. No
+**Current step: E03 Block 2 / E04 A1 next, in progress.** E03 Block 1 and E04 P0
+are complete; the next audio step is A1 and the next E03 step is Block 2. Gate 4B
+attempt 2 approved the SDK-isolated service only, not consumer migration or
+audible correctness. Parent integration builds/suites and the final Chicago
+diagnostic are complete. E03 is still without a playable original-world native
+slice. No
 game consumers are migrated.
 Evidence and boundaries:
 - Fix-5 originally reported AudioContractTests 221/0 and AudioServiceSmoke 49/0;
@@ -92,6 +104,21 @@ Evidence and boundaries:
   the SDK is present (default builds exclude the service unit); the postbuild
   needs absolute Windows-separator paths (xcopy rejects forward slashes).
   `Release_dev` and `Release_dev_native` build exit 0 with the service linked.
+- Menu-bank PCM decode + registration seam (E04 P0, oracle-approved attempt 1
+  with F1-F4 remediation): `Game/C/sounddecode.{h,c}` is an SDK-free PSX SPU
+  ADPCM (VAG) decoder (16 B -> 28 frames, coefficient recursion with cross-block
+  predictor carry, filter-nibble validation, inclusive block-aligned loop frames,
+  bounded validation with zero partial output). `Game/C/sound.c` glue under
+  `RED2_AUDIO_FMOD` decodes samples 0-3 at the `SBK_ID_MENU` load into
+  `SOUND_BANK_SFX` and registers `SFX(1,0..3)` via
+  `AudioService_RegisterSoundMemory` (streaming=0), unregisters on bank-1 reload,
+  registers nothing when base!=0 and is inert until A1 initializes the service.
+  Loop start uses the PSX block-start convention, deliberately diverging from the
+  fork reference's FIXME-marked `(block+1)*28` (documented; needs an acceptance
+  decision when looping samples migrate, outside the FESound slice). Caveat: the
+  base==0 window also matches the level's first bank-1 load; A1 adds strict menu
+  discrimination. `scripts/run_audio_service_smoke.ps1` (pure decode phase
+  without FMOD headers plus the service phase) reports 20 + 87 checks, 0 failures.
 - E02 Chicago inventory Gate 4A attempt 2 is approved as a scoped diagnostic.
   Final isolated integration run: 4/4 barrels, 6740 unique placements, 227
   straddlers, 0 overlaps/missing model refs, 114 unknown material classifications,
@@ -101,14 +128,19 @@ Evidence and boundaries:
   limits: [inventory evidence](engine-migration/e02/chicago-inventory.md).
 
 **Remaining before full acceptance:**
-1. E03 — feed the game's actual world meshes/materials/lighting and the player
-   (blocked on the E02 city conversion slice).
-2. E02 — other cities/variants and dynamic/streamed categories (E06 coverage).
-3. Debug configurations are not wired (only the Release Diligent libraries exist).
+1. E03 Block 2 — loader span capture (`models.c:131-139`), `source_object_index`
+   identity (the E02 placement record lacks it), CPU TIM/page/CLUT decode,
+   per-instance draw API, camera/unit/winding fixture, then the original-world
+   conversion seam (blocked on the E02 city conversion slice).
+2. A1 — FESound routing (runtime SPU_ONLY/FMOD_ONLY switch defaulting to SPU,
+   master gain helper, pitch `gamePitch/4096` clamped to `16383/4096`, lazy
+   service init, per-frame Update in `VsyncProc`, shutdown at exit,
+   `gInFrontend` menu gating, in-game log evidence).
+3. E02 — other cities/variants and dynamic/streamed categories (E06 coverage);
+   debug configurations are not wired (only the Release Diligent libraries exist).
 
-**Next concrete action:** proceed with the original-world conversion seam
-(explorer mapping) and audio-consumer migration as separately scoped work. Gate
-approval does not authorize audible acceptance. E05/E06 remain pending.
+**Next concrete action:** implement A1 and E03 Block 2 as separately scoped work.
+Gate approval does not authorize audible acceptance. E05/E06 remain pending.
 
 **Commands:** build `Release_dev|x64` or `Release_dev_native|x64` with
 `premake5.exe vs2022` + MSBuild (env `SDL2_DIR`/`OPENAL_DIR`/`JPEG_DIR`,
@@ -126,11 +158,16 @@ tests, scripts, knowledge and CHANGELOG, and removed the tracked agent config
 pushed as `99950a7` on `origin/codex/new-engine-live-vsync`; the parent records
 the new gitlink. Both commits are pushed.
 
-Uncommitted after that checkpoint: the E02 inventory and E04 blocks (`Game/C/audiocontract.*`,
-`tests/AudioContractTests.cpp`, `scripts/fetch_fmod.ps1`,
-`knowledge/rules/fmod-integration.md`, the suite registration/README and the
-status/handoff/changelog updates). The ignored FMOD SDK is present locally at
-`src_rebuild/dependencies/fmod/core`; its local version metadata identifies 2.03.15.
+Uncommitted after that checkpoint: the E02 inventory; the E04 blocks
+(`Game/C/audiocontract.*`, `tests/AudioContractTests.cpp`, `scripts/fetch_fmod.ps1`,
+`knowledge/rules/fmod-integration.md`) and the E04 P0 seam
+(`Game/C/sounddecode.{h,c}`, `Game/C/sound.c`, `tests/AudioServiceSmoke.cpp`,
+`scripts/run_audio_service_smoke.ps1`); the E03 Block 1 decoder
+(`utils/SourceModelDecoder.{h,c}`, `tests/SourceModelDecoderTests.cpp`,
+`scripts/run_inspector_tests.ps1`, `tests/README.md`); and the suite
+registration/README plus the status/handoff/changelog updates. The ignored FMOD SDK
+is present locally at `src_rebuild/dependencies/fmod/core`; its local version
+metadata identifies 2.03.15.
 
 Note: the goal-mode auto-continue safety limit is plugin-side; adjust it in the
 plugin/runtime for longer runs.
@@ -203,12 +240,14 @@ Planning-only checks are recorded separately from E00-E03 implementation below.
 E00/E01 implementation details and bounded validation are summarized in
 [`CURRENT_STATUS.md`](CURRENT_STATUS.md) and the dated records linked there.
 E02 inventory findings and limitations are in
-[`chicago-inventory.md`](engine-migration/e02/chicago-inventory.md). E03 has no
-playable original-world native slice. E04 is gated on fix-5 remediation and
-review; do not repeat prior tests or describe historical smoke/contract results
-as accepted audible correctness. Continue only the requested implementation
-block; E05/E06 remain pending. The wall-collision replay route remains deferred
-by the user ([evidence](changes/2026-10-09/effect-timing-replay-regression/index.md)).
+[`chicago-inventory.md`](engine-migration/e02/chicago-inventory.md). E03 Block 1
+(source MODEL decoder) is done; E03 still has no playable original-world native
+slice, and Block 2 loader capture follows. E04 has the PCM decode + registration
+seam (P0); A1 is the next audio step, and neither is audible acceptance — do not
+describe historical smoke/contract results as accepted correctness. Continue only
+the requested implementation block; E05/E06 remain pending. The wall-collision
+replay route remains deferred by the user
+([evidence](changes/2026-10-09/effect-timing-replay-regression/index.md)).
 
 Night/rain follow-up: ATTRACT.401 first froze at 857 due to a static `cyclecluts`
 packet linked twice by catch-up ticks. Stack/OT reads identified the self-cycle;
