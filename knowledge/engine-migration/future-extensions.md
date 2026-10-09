@@ -12,6 +12,10 @@ These user-adopted directions are captured under the engine-migration umbrella;
 they are not implemented, scheduled blockers or permission to change gameplay.
 Create a separate lifecycle record when a concrete extension is commissioned.
 
+- **PopcornFX (optional last step):** follow [E08](stages/08-optional-popcornfx.md)
+  only after the complete game and PsyCross cutover pass E00-E07, and only upon
+  a separate explicit user request. Existing effects must already work natively.
+  No SDK acquisition or implementation is required to complete the migration.
 - **FMOD Studio:** add authored banks/events/parameters to E04's stable game
   audio contract. Validate bank versions/reload, missing events, RPM transitions,
   mission/cutscene synchronization and backward-compatible original sound IDs.

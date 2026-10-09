@@ -18,8 +18,10 @@ The old rework branch is reference-only; do not resume its unfinished R03 here.
   behavior/resources and targeted pixels. Intentional modern visuals may differ.
 - Convert original assets into versioned local packages with readable metadata;
   preserve stable IDs, dynamic bindings, mod precedence and transactional ownership.
-- The adopted stack is Diligent/DiligentFX, FMOD Core and PopcornFX. Extract only
-  required PsyCross contracts into focused project services; no renamed monolith.
+- The required stack is Diligent/DiligentFX and FMOD Core. Preserve existing
+  effects through project-owned native presentation. PopcornFX is optional E08,
+  last, only explicitly requested after E00-E07; never a cutover/completion gate.
+  Extract only required PsyCross contracts into focused services; no renamed monolith.
 - Remove each dependency after its last consumer passes. Preserve memory/error/
   synchronization/cleanup contracts and explicit loading/error states throughout.
 - Never recover a native scene by drawing the old world. Backend/platform support

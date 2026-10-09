@@ -71,3 +71,19 @@ baseline. No `src_rebuild`, `.gitmodules` or data changes exist on the new branc
 All94 newly added local links across changed documentation also PASS. No game
 build/run, GPU capture or audio/VFX test was run in this task. Baseline
 September evidence and separate rework evidence were not rerun.
+
+## Follow-up: defer optional PopcornFX
+
+The user changed the sequence: required E00-E07 now cover services/ticks,
+conversion/Diligent, FMOD Core, existing native effects/UI, full-game acceptance
+and PsyCross removal. PopcornFX moved from mandatory E05 to optional final E08,
+only upon a separate explicit request after E07. It does not block completion;
+no SDK acquisition or implementation is required now. The original planning
+summary above records the initial decision, superseded by this follow-up.
+
+Updated stage/issue/roadmap contracts, catalogs, agent guidance, status/handoff
+and changelog. Checked documentation-only scope, local links, E00-E08 ordering,
+planned stage acceptance/validation contracts, status line limits and whitespace;
+all passed. Reverified upstream release8.0 and tag baseline through GitHub API.
+No engine code, dependency, Git branch or runtime behavior was changed, and no
+build, GPU/audio/VFX runtime test was needed or claimed.

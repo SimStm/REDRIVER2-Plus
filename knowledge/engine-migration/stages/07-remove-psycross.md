@@ -39,7 +39,7 @@ authorized as a premature shortcut before consumer migration.
   scans and build/dependency reports agree with runtime observations.
 - [ ] All required platform/backend configurations and integration suites pass
   from fresh isolated outputs; unsupported targets are explicitly documented.
-- [ ] Deterministic mechanics/replays, native graphics, FMOD/PopcornFX, UI/input,
+- [ ] Deterministic mechanics/replays, native graphics/effects, FMOD Core, UI/input,
   mod/export paths and resource cleanup still pass after actual removal.
 - [ ] Ownership/provenance of extracted code and third-party dependencies is
   documented, with no SDK/game asset redistribution introduced by the migration.
@@ -51,4 +51,6 @@ authorized as a premature shortcut before consumer migration.
 Use fresh-clone or equivalent clean isolated builds, symbol/include/link scans,
 module/file traces and the E06 full integration matrix. Run a negative dependency
 test with PsyCross unavailable. Compilation alone or renaming its directory does
-not prove removal. No submodule removal is performed by this planning task.
+not prove removal. Full cutover must pass without PopcornFX; deferred E08 cannot
+justify retaining any required PsyCross consumer. No submodule removal is
+performed by this planning task.

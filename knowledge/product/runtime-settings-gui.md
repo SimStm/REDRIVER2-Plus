@@ -85,9 +85,8 @@ captures. Panel edits never write `config.ini`; a setting with no persistence in
   Confirm in the bottom-left window, then restart the application. The selected
   preference and active mode are distinct; a running mission/replay retains its
   clock, screen/aspect and sound timing. Both desktop regional builds can select
-  either mode at startup. Canonical dump headers describe the active mode;
-  legacy replay files have no regional metadata. Versioned replay integration
-  remains separate local migration work. Missing FPS
+  either mode at startup. Replay metadata/baseline headers describe the active
+  mode, with the existing explicit mismatch warning policy retained. Missing FPS
   uses the saved region's default; an explicitly saved custom cap is retained.
   Cancel/timeout discards a pending region choice. Frame-control autosaves own
   only their four keys, preserving unrelated session edits and unconfirmed

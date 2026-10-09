@@ -592,6 +592,61 @@ void LoadTextureInfo(const JsonValue& root, const std::vector<unsigned char>& bi
 		remove(tempPath);
 	}
 }
+
+// Composes the first node's placement into a column-major matrix. glTF nodes
+// are either a full `matrix` or a translation/rotation/scale triple; a node with
+// neither is the identity. The placement is retained so source geometry and its
+// transform are compared as one record.
+void ReadNodeTransform(const JsonValue& root, float out[16])
+{
+	for (int i = 0; i < 16; i++)
+		out[i] = (i % 5 == 0) ? 1.0f : 0.0f;
+
+	const JsonValue* node = GetArrayEntry(root.Find("nodes"), 0);
+	if (!node)
+		return;
+
+	const JsonValue* matrix = node->Find("matrix");
+	if (matrix && matrix->type == JsonValue::Array && matrix->array.size() == 16)
+	{
+		for (int i = 0; i < 16; i++)
+			out[i] = (float)matrix->array[i].NumberOr(0.0);
+		return;
+	}
+
+	float translation[3] = { 0.0f, 0.0f, 0.0f };
+	float rotation[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
+	float scale[3] = { 1.0f, 1.0f, 1.0f };
+	const JsonValue* t = node->Find("translation");
+	const JsonValue* r = node->Find("rotation");
+	const JsonValue* s = node->Find("scale");
+	for (int i = 0; t && t->type == JsonValue::Array && i < 3 && i < (int)t->array.size(); i++)
+		translation[i] = (float)t->array[i].NumberOr(0.0);
+	for (int i = 0; r && r->type == JsonValue::Array && i < 4 && i < (int)r->array.size(); i++)
+		rotation[i] = (float)r->array[i].NumberOr(i == 3 ? 1.0 : 0.0);
+	for (int i = 0; s && s->type == JsonValue::Array && i < 3 && i < (int)s->array.size(); i++)
+		scale[i] = (float)s->array[i].NumberOr(1.0);
+
+	const float x = rotation[0], y = rotation[1], z = rotation[2], w = rotation[3];
+	const float xx = x * x, yy = y * y, zz = z * z;
+	const float xy = x * y, xz = x * z, yz = y * z;
+	const float wx = w * x, wy = w * y, wz = w * z;
+
+	// Rotation matrix (column-major), scaled per column, translation in the
+	// last column.
+	float m[16] = {
+		1 - 2 * (yy + zz), 2 * (xy + wz),     2 * (xz - wy),     0,
+		2 * (xy - wz),     1 - 2 * (xx + zz), 2 * (yz + wx),     0,
+		2 * (xz + wy),     2 * (yz - wx),     1 - 2 * (xx + yy), 0,
+		translation[0],    translation[1],    translation[2],    1,
+	};
+	for (int col = 0; col < 3; col++)
+		for (int row = 0; row < 3; row++)
+			m[col * 4 + row] *= scale[col];
+
+	for (int i = 0; i < 16; i++)
+		out[i] = m[i];
+}
 } // namespace
 
 int Gltf_LoadFile(const char* path, GltfMeshData* out, char* error, int errorCapacity)
@@ -764,6 +819,8 @@ int Gltf_LoadFile(const char* path, GltfMeshData* out, char* error, int errorCap
 			LoadTextureInfo(root, bin, views, material->Find("emissiveTexture"), out->emissiveRGBA, out->emissiveWidth, out->emissiveHeight);
 		}
 	}
+
+	ReadNodeTransform(root, out->transform);
 
 	return 0;
 }

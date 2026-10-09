@@ -31,6 +31,13 @@ Workflow:
 2. Commit and push: `git -C src_rebuild/PsyCross push origin HEAD:master`.
 3. Record the commit in the parent: `git add .gitmodules src_rebuild/PsyCross`.
 
+On a migration branch deliberately pinned before the preserved native rework,
+`origin/master` may contain that separate rework. Do not merge it or force-push
+to publish a small compatibility fix. Publish a scoped `codex/` fork branch
+from the pinned baseline instead, and record that reachable commit and the
+reason in the parent/change record. Existing unrelated dirty fork edits must
+remain separate from the scoped commit.
+
 Do not reintroduce `patches/psycross/` or `scripts/apply_psycross_patches.ps1`;
 they were removed when the submodule moved to the fork. A patch and a live
 gitlink would both try to own the same files.

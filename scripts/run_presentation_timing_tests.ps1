@@ -8,7 +8,12 @@ $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer
 $installation = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath | Select-Object -First 1
 if (-not $installation) { throw 'Visual Studio C++ tools were not found.' }
 $vcvars = Join-Path $installation.Trim() 'VC\Auxiliary\Build\vcvars64.bat'
-$outputRoot = Join-Path $sourceRoot ('build\presentation-timing-tests\' + [guid]::NewGuid().ToString('N'))
+# Executables are built at a stable path so Windows remembers the firewall choice
+# for them; each run still gets a fresh working directory because some fixtures
+# are non-idempotent.
+$binRoot = Join-Path $sourceRoot 'build\presentation-timing-tests\bin'
+New-Item -ItemType Directory -Path $binRoot -Force | Out-Null
+$outputRoot = Join-Path $sourceRoot ('build\presentation-timing-tests\run\' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $outputRoot -Force | Out-Null
 
 # These tests substitute only the SDL counter and the stateful camera controller.
@@ -17,7 +22,7 @@ foreach ($region in @('NTSC', 'PAL'))
 {
 	$outputDirectory = Join-Path $outputRoot $region
 	New-Item -ItemType Directory -Path $outputDirectory | Out-Null
-	$executable = Join-Path $outputDirectory 'PresentationTimingTests.exe'
+	$executable = Join-Path $binRoot 'PresentationTimingTests.exe'
 	$arguments = @('/nologo', '/TP', '/EHsc', '/std:c++14', '/O2', '/DSDL_MAIN_HANDLED', "/D${region}_VERSION",
 		'/I Game', '/I PsyCross\include', '/I PsyCross\include\psx', '/I dependencies\SDL2-2.30.2\include',
 		'tests\PresentationTimingTests.cpp', 'utils\ProjectClock.cpp', 'utils\VisualSnapshot.cpp',
@@ -40,7 +45,7 @@ foreach ($region in @('NTSC', 'PAL'))
 	$testOutput | Tee-Object -FilePath (Join-Path $outputDirectory 'results.log') | Write-Host
 	if ($testCode -ne 0) { throw "$region timing tests failed (exit $testCode)." }
 
-	$settingsExecutable = Join-Path $outputDirectory 'FrameSettingsTests.exe'
+	$settingsExecutable = Join-Path $binRoot 'FrameSettingsTests.exe'
 	$settingsArguments = @('/nologo', '/TP', '/EHsc', '/std:c++14', '/O2', '/DUNICODE', '/D_UNICODE', '/DSDL_MAIN_HANDLED', "/D${region}_VERSION",
 		'/I Game', '/I PsyCross\include', '/I PsyCross\include\psx', '/I dependencies\SDL2-2.30.2\include',
 		'tests\FrameSettingsTests.cpp', 'utils\ProjectClock.cpp', 'utils\DeveloperGraphicsSettings.cpp', 'utils\DeveloperSettingsFile.cpp',
@@ -69,7 +74,7 @@ foreach ($region in @('NTSC', 'PAL'))
 	$settingsOutput | Tee-Object -FilePath (Join-Path $outputDirectory 'settings-results.log') | Write-Host
 	if ($settingsCode -ne 0) { throw "$region frame settings tests failed (exit $settingsCode)." }
 
-	$effectsExecutable = Join-Path $outputDirectory 'EffectTimingTests.exe'
+	$effectsExecutable = Join-Path $binRoot 'EffectTimingTests.exe'
 	$effectsArguments = @('/nologo', '/TP', '/EHsc', '/std:c++14', '/O2', '/Gy', '/DSDL_MAIN_HANDLED', "/D${region}_VERSION",
 		'/I Game', '/I Game\C', '/I PsyCross\include', '/I PsyCross\include\psx', '/I dependencies\SDL2-2.30.2\include',
 		'tests\EffectTimingTests.cpp', 'utils\ProjectClock.cpp',

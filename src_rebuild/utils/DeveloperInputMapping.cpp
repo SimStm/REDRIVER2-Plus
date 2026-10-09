@@ -2,6 +2,7 @@
 #include "DeveloperSettingsFile.h"
 
 #include <SDL_scancode.h>
+#include <SDL_keyboard.h>
 #include <SDL_gamecontroller.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -15,71 +16,71 @@ struct KeyboardAction
 {
 	const char* name;
 	const char* key;
-	int PsyXKeyboardMapping::*field;
+	int InputKeyboardMapping::*field;
 };
 
 // Order is the storage order the panel and the defaults table share. `key` is
 // the stable name used by developer_input.ini and must not change.
 const KeyboardAction kKeyboardActions[] =
 {
-	{ "Cross", "cross", &PsyXKeyboardMapping::kc_cross },
-	{ "Circle", "circle", &PsyXKeyboardMapping::kc_circle },
-	{ "Triangle", "triangle", &PsyXKeyboardMapping::kc_triangle },
-	{ "Square", "square", &PsyXKeyboardMapping::kc_square },
-	{ "L1", "l1", &PsyXKeyboardMapping::kc_l1 },
-	{ "L2", "l2", &PsyXKeyboardMapping::kc_l2 },
-	{ "L3", "l3", &PsyXKeyboardMapping::kc_l3 },
-	{ "R1", "r1", &PsyXKeyboardMapping::kc_r1 },
-	{ "R2", "r2", &PsyXKeyboardMapping::kc_r2 },
-	{ "R3", "r3", &PsyXKeyboardMapping::kc_r3 },
-	{ "Up", "dpadup", &PsyXKeyboardMapping::kc_dpad_up },
-	{ "Down", "dpaddown", &PsyXKeyboardMapping::kc_dpad_down },
-	{ "Left", "dpadleft", &PsyXKeyboardMapping::kc_dpad_left },
-	{ "Right", "dpadright", &PsyXKeyboardMapping::kc_dpad_right },
-	{ "Select", "select", &PsyXKeyboardMapping::kc_select },
-	{ "Start", "start", &PsyXKeyboardMapping::kc_start },
+	{ "Cross", "cross", &InputKeyboardMapping::kc_cross },
+	{ "Circle", "circle", &InputKeyboardMapping::kc_circle },
+	{ "Triangle", "triangle", &InputKeyboardMapping::kc_triangle },
+	{ "Square", "square", &InputKeyboardMapping::kc_square },
+	{ "L1", "l1", &InputKeyboardMapping::kc_l1 },
+	{ "L2", "l2", &InputKeyboardMapping::kc_l2 },
+	{ "L3", "l3", &InputKeyboardMapping::kc_l3 },
+	{ "R1", "r1", &InputKeyboardMapping::kc_r1 },
+	{ "R2", "r2", &InputKeyboardMapping::kc_r2 },
+	{ "R3", "r3", &InputKeyboardMapping::kc_r3 },
+	{ "Up", "dpadup", &InputKeyboardMapping::kc_dpad_up },
+	{ "Down", "dpaddown", &InputKeyboardMapping::kc_dpad_down },
+	{ "Left", "dpadleft", &InputKeyboardMapping::kc_dpad_left },
+	{ "Right", "dpadright", &InputKeyboardMapping::kc_dpad_right },
+	{ "Select", "select", &InputKeyboardMapping::kc_select },
+	{ "Start", "start", &InputKeyboardMapping::kc_start },
 };
 
 struct ControllerAction
 {
 	const char* name;
 	const char* key;
-	int PsyXControllerMapping::*field;
+	int InputControllerMapping::*field;
 };
 
 const ControllerAction kControllerActions[] =
 {
-	{ "Cross", "cross", &PsyXControllerMapping::gc_cross },
-	{ "Circle", "circle", &PsyXControllerMapping::gc_circle },
-	{ "Triangle", "triangle", &PsyXControllerMapping::gc_triangle },
-	{ "Square", "square", &PsyXControllerMapping::gc_square },
-	{ "L1", "l1", &PsyXControllerMapping::gc_l1 },
-	{ "L2", "l2", &PsyXControllerMapping::gc_l2 },
-	{ "L3", "l3", &PsyXControllerMapping::gc_l3 },
-	{ "R1", "r1", &PsyXControllerMapping::gc_r1 },
-	{ "R2", "r2", &PsyXControllerMapping::gc_r2 },
-	{ "R3", "r3", &PsyXControllerMapping::gc_r3 },
-	{ "Up", "dpadup", &PsyXControllerMapping::gc_dpad_up },
-	{ "Down", "dpaddown", &PsyXControllerMapping::gc_dpad_down },
-	{ "Left", "dpadleft", &PsyXControllerMapping::gc_dpad_left },
-	{ "Right", "dpadright", &PsyXControllerMapping::gc_dpad_right },
-	{ "Select", "select", &PsyXControllerMapping::gc_select },
-	{ "Start", "start", &PsyXControllerMapping::gc_start },
-	{ "Left stick X", "axisleftx", &PsyXControllerMapping::gc_axis_left_x },
-	{ "Left stick Y", "axislefty", &PsyXControllerMapping::gc_axis_left_y },
-	{ "Right stick X", "axisrightx", &PsyXControllerMapping::gc_axis_right_x },
-	{ "Right stick Y", "axisrighty", &PsyXControllerMapping::gc_axis_right_y },
+	{ "Cross", "cross", &InputControllerMapping::gc_cross },
+	{ "Circle", "circle", &InputControllerMapping::gc_circle },
+	{ "Triangle", "triangle", &InputControllerMapping::gc_triangle },
+	{ "Square", "square", &InputControllerMapping::gc_square },
+	{ "L1", "l1", &InputControllerMapping::gc_l1 },
+	{ "L2", "l2", &InputControllerMapping::gc_l2 },
+	{ "L3", "l3", &InputControllerMapping::gc_l3 },
+	{ "R1", "r1", &InputControllerMapping::gc_r1 },
+	{ "R2", "r2", &InputControllerMapping::gc_r2 },
+	{ "R3", "r3", &InputControllerMapping::gc_r3 },
+	{ "Up", "dpadup", &InputControllerMapping::gc_dpad_up },
+	{ "Down", "dpaddown", &InputControllerMapping::gc_dpad_down },
+	{ "Left", "dpadleft", &InputControllerMapping::gc_dpad_left },
+	{ "Right", "dpadright", &InputControllerMapping::gc_dpad_right },
+	{ "Select", "select", &InputControllerMapping::gc_select },
+	{ "Start", "start", &InputControllerMapping::gc_start },
+	{ "Left stick X", "axisleftx", &InputControllerMapping::gc_axis_left_x },
+	{ "Left stick Y", "axislefty", &InputControllerMapping::gc_axis_left_y },
+	{ "Right stick X", "axisrightx", &InputControllerMapping::gc_axis_right_x },
+	{ "Right stick Y", "axisrighty", &InputControllerMapping::gc_axis_right_y },
 };
 
 const int kKeyboardActionCount = (int)(sizeof(kKeyboardActions) / sizeof(kKeyboardActions[0]));
 const int kControllerActionCount = (int)(sizeof(kControllerActions) / sizeof(kControllerActions[0]));
 
-PsyXKeyboardMapping& KeyboardTable(DeveloperInputTable table)
+InputKeyboardMapping& KeyboardTable(DeveloperInputTable table)
 {
 	return table == DeveloperInputTable::Game ? g_kbGameMappings : g_kbMenuMappings;
 }
 
-PsyXControllerMapping& ControllerTable(DeveloperInputTable table)
+InputControllerMapping& ControllerTable(DeveloperInputTable table)
 {
 	return table == DeveloperInputTable::Game ? g_gcGameMappings : g_gcMenuMappings;
 }
@@ -99,10 +100,10 @@ int* ControllerField(DeveloperInputTable table, int action)
 }
 
 // The bindings the game started with, which reset restores.
-PsyXKeyboardMapping kDefaultKbGame;
-PsyXKeyboardMapping kDefaultKbMenu;
-PsyXControllerMapping kDefaultGcGame;
-PsyXControllerMapping kDefaultGcMenu;
+InputKeyboardMapping kDefaultKbGame;
+InputKeyboardMapping kDefaultKbMenu;
+InputControllerMapping kDefaultGcGame;
+InputControllerMapping kDefaultGcMenu;
 int kDefaultsCaptured = 0;
 
 DeveloperInputTable kActiveTable = DeveloperInputTable::Game;
@@ -220,11 +221,11 @@ int DeveloperInputMapping_GetDefault(DeveloperInputTable table, DeveloperInputDe
 
 	if (device == DeveloperInputDevice::Keyboard)
 	{
-		const PsyXKeyboardMapping& mapping = table == DeveloperInputTable::Game ? kDefaultKbGame : kDefaultKbMenu;
+		const InputKeyboardMapping& mapping = table == DeveloperInputTable::Game ? kDefaultKbGame : kDefaultKbMenu;
 		return mapping.*(kKeyboardActions[action].field);
 	}
 
-	const PsyXControllerMapping& mapping = table == DeveloperInputTable::Game ? kDefaultGcGame : kDefaultGcMenu;
+	const InputControllerMapping& mapping = table == DeveloperInputTable::Game ? kDefaultGcGame : kDefaultGcMenu;
 	return mapping.*(kControllerActions[action].field);
 }
 
@@ -260,10 +261,10 @@ void DeveloperInputMapping_Format(DeveloperInputDevice device, int value, char* 
 		return;
 	}
 
-	const char* inverse = (value & CONTROLLER_MAP_FLAG_INVERSE) ? "-" : "";
-	if (value & CONTROLLER_MAP_FLAG_AXIS)
+	const char* inverse = (value & INPUT_CONTROLLER_MAP_FLAG_INVERSE) ? "-" : "";
+	if (value & INPUT_CONTROLLER_MAP_FLAG_AXIS)
 	{
-		const char* name = SDL_GameControllerGetStringForAxis((SDL_GameControllerAxis)(value & ~(CONTROLLER_MAP_FLAG_AXIS | CONTROLLER_MAP_FLAG_INVERSE)));
+		const char* name = SDL_GameControllerGetStringForAxis((SDL_GameControllerAxis)(value & ~(INPUT_CONTROLLER_MAP_FLAG_AXIS | INPUT_CONTROLLER_MAP_FLAG_INVERSE)));
 		snprintf(buffer, capacity, "%s%s", inverse, (name && name[0]) ? name : "unbound");
 	}
 	else
@@ -313,13 +314,13 @@ void DeveloperInputMapping_Apply(DeveloperInputTable table)
 
 	if (table == DeveloperInputTable::Game)
 	{
-		g_cfg_keyboardMapping = g_kbGameMappings;
-		g_cfg_controllerMapping = g_gcGameMappings;
+		g_inputKeyboardMapping = g_kbGameMappings;
+		g_inputControllerMapping = g_gcGameMappings;
 	}
 	else
 	{
-		g_cfg_keyboardMapping = g_kbMenuMappings;
-		g_cfg_controllerMapping = g_gcMenuMappings;
+		g_inputKeyboardMapping = g_kbMenuMappings;
+		g_inputControllerMapping = g_gcMenuMappings;
 	}
 }
 
@@ -331,9 +332,9 @@ int DeveloperInputMapping_IsValidValue(DeveloperInputDevice device, int value)
 	if (value == SDL_CONTROLLER_BUTTON_INVALID || value == SDL_CONTROLLER_AXIS_INVALID)
 		return 1;
 
-	if (value & CONTROLLER_MAP_FLAG_AXIS)
+	if (value & INPUT_CONTROLLER_MAP_FLAG_AXIS)
 	{
-		const int axis = value & ~(CONTROLLER_MAP_FLAG_AXIS | CONTROLLER_MAP_FLAG_INVERSE);
+		const int axis = value & ~(INPUT_CONTROLLER_MAP_FLAG_AXIS | INPUT_CONTROLLER_MAP_FLAG_INVERSE);
 		return axis >= 0 && axis < SDL_CONTROLLER_AXIS_MAX;
 	}
 

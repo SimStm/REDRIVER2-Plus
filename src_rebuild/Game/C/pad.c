@@ -7,6 +7,7 @@
 #include "main.h"
 #include "players.h"
 #include "cars.h"
+#include "../utils/InputService.h"
 
 #include <libpad.h>
 
@@ -51,8 +52,12 @@ void InitControllers(void)
 	DuplicatePadData.buffer = NULL;
 	DuplicatePadData.size = 0;
 
+#ifndef PSX
+	InputService_Init((unsigned char*)padbuffer[0], (unsigned char*)padbuffer[1]);
+#else
 	PadInitDirect((unsigned char*)padbuffer[0], (unsigned char*)padbuffer[1]);
 	PadStartCom();
+#endif
 
 	for (i = 0; i < 2; i++)
 	{
@@ -86,7 +91,11 @@ void CloseControllers(void)
 {
 	int i;
 
+#ifndef PSX
+	InputService_Shutdown();
+#else
 	PadStopCom();
+#endif
 
 	i = 0;
 	do {
@@ -262,7 +271,11 @@ void HandleDualShock(void)
 			pPad->vibrate = 0;
 		}
 
+#ifndef PSX
+		state = InputService_GetPadState(port);
+#else
 		state = PadGetState(port);
+#endif
 
 		switch (state) 
 		{
@@ -291,7 +304,11 @@ void HandleDualShock(void)
 			case PadStateStable:
 				if (pPad->state != PadStateStable)
 				{
+#ifndef PSX
+					if (!InputService_IsAnalogCapable(port))
+#else
 					if (PadInfoMode(port, InfoModeIdTable, 1) != 7)
+#endif
 					{
 						pPad->dualshock = 0;
 						pPad->state = PadStateStable;
@@ -305,7 +322,11 @@ void HandleDualShock(void)
 
 					if (pPad->delay == 6)
 					{
+#ifndef PSX
+						if (InputService_InitActuators(port) != 0)
+#else
 						if (PadSetActAlign(port, align) != 0)
+#endif
 						{
 							pPad->dsactive = 1;
 							pPad->state = PadStateStable;
@@ -338,7 +359,11 @@ void HandleDualShock(void)
 				{
 					if (gVibration == 0) 
 					{
+#ifndef PSX
+						InputService_Rumble(port, dummymotors, 2);
+#else
 						PadSetAct(port, dummymotors, 2);
+#endif
 					}
 					else
 					{
@@ -348,7 +373,11 @@ void HandleDualShock(void)
 						if (pPad->motors[1] != 0)
 							dsload += 20;
 
+#ifndef PSX
+						InputService_Rumble(port, pPad->motors, 2);
+#else
 						PadSetAct(port, pPad->motors, 2);
+#endif
 					}
 				}
 
@@ -421,7 +450,11 @@ void ReadControllers(void)
 	int pad;
 
 #ifndef PSX
+	// PsyX still owns the SDL event pump (window/resize/close and its own debug
+	// keys); its pad backend is inert now that the raw buffers come from the
+	// project InputService.
 	PsyX_UpdateInput();
+	InputService_UpdateRaw();
 #endif
 
 	if (DuplicatePadData.buffer)

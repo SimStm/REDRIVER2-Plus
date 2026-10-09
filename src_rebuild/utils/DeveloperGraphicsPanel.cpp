@@ -3,6 +3,7 @@
 #include "DeveloperDebugStart.h"
 #include "DeveloperGraphicsSettings.h"
 #include "DeveloperInputMapping.h"
+#include "InputService.h"
 #include "ProjectClock.h"
 #include "DeveloperModernMesh.h"
 #include "HdTextureOverrides.h"
@@ -248,7 +249,7 @@ void UpdateOverlayInputState()
 	SDL_ShowCursor(showCursor ? SDL_ENABLE : SDL_DISABLE);
 
 	const int capture = (g_visible && g_captureGameInput) || g_bindingCapture.active || HasPendingDisplayChange();
-	PsyX_SetInputCapture(capture ? PSYX_INPUT_CAPTURE_KEYBOARD | PSYX_INPUT_CAPTURE_GAMEPAD : 0);
+	InputService_SetCapture(capture ? INPUT_CAPTURE_KEYBOARD | INPUT_CAPTURE_GAMEPAD : 0);
 }
 
 void BeginBindingCapture(DeveloperInputTable table, DeveloperInputDevice device, int action)
@@ -1395,8 +1396,11 @@ void DrawThreeDDebugTab()
 	ImGui::BeginDisabled(!hasCar || !exportSupported);
 	if (ImGui::Button("Export selected car geometry (OBJ)"))
 		Cars_ExportInspectorModel(selectedCarId, g_inspectorExportModId, g_inspectorExportStatus, sizeof(g_inspectorExportStatus));
+	ImGui::SameLine();
+	if (ImGui::Button("Convert selected car geometry (GLB)"))
+		Cars_ConvertInspectorModel(selectedCarId, g_inspectorExportModId, g_inspectorExportStatus, sizeof(g_inspectorExportStatus));
 	ImGui::EndDisabled();
-	if (!hasCar) ImGui::TextDisabled("OBJ unavailable: only labelled car bodies currently support model export.");
+	if (!hasCar) ImGui::TextDisabled("Model export unavailable for this selection.");
 	ImGui::BeginDisabled(!hasSelection);
 	char report[2048];
 	snprintf(report, sizeof(report),
@@ -2199,7 +2203,7 @@ void DeveloperGraphicsPanel_Shutdown()
 	if (!g_initialised)
 		return;
 
-	PsyX_SetInputCapture(0);
+	InputService_SetCapture(0);
 	PsyX_SetSDLEventHandler(NULL);
 	PsyX_SetRenderOverlayHandler(NULL);
 

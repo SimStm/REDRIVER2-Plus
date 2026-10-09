@@ -5,9 +5,11 @@
 On `feat/new-engine`, start at
 [`knowledge/roadmap/planned/engine-migration.md`](knowledge/roadmap/planned/engine-migration.md)
 and [`knowledge/engine-migration/`](knowledge/engine-migration/index.md).
-The user adopted Diligent Engine/DiligentFX, FMOD Core and PopcornFX, original
+The user adopted Diligent Engine/DiligentFX and FMOD Core, original
 content conversion informed by OpenDriver2Tools, project-owned simulation/services
 and eventual complete PsyCross removal. All E00-E07 stages are planned.
+PopcornFX is optional final E08, only upon explicit request after accepted E07;
+it does not block game acceptance or removal. Existing native VFX remain required.
 Implement only the issue/block subsequently requested; this roadmap is not an
 active authorization to execute every stage.
 
@@ -145,7 +147,8 @@ point math, timing, or rendering can affect compatibility.
   `src_rebuild/build/`, `src_rebuild/project_*`, and `src_rebuild/bin/`; edit
   Premake scripts or source, not generated IDE files.
 - Current desktop rendering defaults to Vulkan through PsyCross, with separately
-  selectable OpenGL; Diligent/FMOD/PopcornFX are planned replacements. SDL2
+  selectable OpenGL; Diligent/FMOD are planned replacements, PopcornFX an optional
+  final extension only on request. SDL2
   provides the window/input layer; OpenAL Soft provides audio; libjpeg is used
   by the game.
 - Supported build targets include Windows, Linux, Emscripten/web, and Android
@@ -302,8 +305,8 @@ logic or working code that is outside the task.
   For the asset catalog or the inspector export path, run
   `pwsh -NoProfile -File scripts/run_inspector_tests.ps1`, which builds and runs
   `AssetCatalogTests` and `InspectorExportTests` in fresh directories.
-  `InspectorExportTests` is not idempotent, so never run it twice in the same
-  working directory.
+  `InspectorExportTests` and `CarMeshSerializerTests` are not idempotent, so
+  never run either twice in the same working directory.
 - All new documentation and developer-facing prose must be written in English.
 - Capture durable conventions in `knowledge/rules/` at the time they are
   learned; use `knowledge/changes/` for the context of shipped changes.

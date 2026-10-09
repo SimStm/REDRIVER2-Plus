@@ -132,6 +132,20 @@ try
 {
 	Invoke-Suite -Name 'AssetCatalogTests' -Sources @('tests\AssetCatalogTests.cpp', 'Game\C\assetcatalog.c') `
 		-ExtraIncludes @() -LinkLibraries @()
+	Invoke-Suite -Name 'AssetPackageTests' -Sources @('tests\AssetPackageTests.cpp', 'Game\C\assetpackage.c') `
+		-ExtraIncludes @() -LinkLibraries @()
+	Invoke-Suite -Name 'ConversionCacheTests' -Sources @('tests\ConversionCacheTests.cpp', 'Game\C\conversioncache.c') `
+		-ExtraIncludes @() -LinkLibraries @()
+	Invoke-Suite -Name 'GltfRoundTripTests' -Sources @('tests\GltfRoundTripTests.cpp', 'utils\GltfLoader.cpp', 'utils\GltfWriter.cpp') `
+		-ExtraIncludes @() -LinkLibraries @('windowscodecs.lib', 'ole32.lib')
+	Invoke-Suite -Name 'AssetConverterTests' -Sources @('tests\AssetConverterTests.cpp', 'utils\AssetConverter.cpp', 'utils\GltfLoader.cpp', 'utils\GltfWriter.cpp', 'Game\C\conversioncache.c') `
+		-ExtraIncludes @() -LinkLibraries @('windowscodecs.lib', 'ole32.lib')
+	Invoke-Suite -Name 'CarMeshSerializerTests' -Sources @('tests\CarMeshSerializerTests.cpp', 'utils\CarMeshSerializer.cpp', 'utils\AssetConverter.cpp', 'utils\GltfWriter.cpp', 'utils\GltfLoader.cpp', 'Game\C\conversioncache.c') `
+		-ExtraIncludes @() -LinkLibraries @('windowscodecs.lib', 'ole32.lib')
+	Invoke-Suite -Name 'AssetPipelineTests' -Sources @('tests\AssetPipelineTests.cpp', 'utils\AssetConverter.cpp', 'utils\GltfLoader.cpp', 'utils\GltfWriter.cpp', 'Game\C\conversioncache.c', 'Game\C\assetpackage.c') `
+		-ExtraIncludes @() -LinkLibraries @('windowscodecs.lib', 'ole32.lib')
+	Invoke-Suite -Name 'SoundAssetTests' -Sources @('tests\SoundAssetTests.cpp', 'Game\C\soundasset.c') `
+		-ExtraIncludes @() -LinkLibraries @()
 	Invoke-Suite -Name 'InspectorExportTests' -Sources @('tests\InspectorExportTests.cpp') `
 		-ExtraIncludes @('dependencies\SDL2-2.30.2\include') -LinkLibraries @('windowscodecs.lib', 'ole32.lib')
 

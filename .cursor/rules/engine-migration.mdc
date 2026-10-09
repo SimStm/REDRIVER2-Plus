@@ -6,6 +6,8 @@ alwaysApply: true
 Follow `AGENTS.md`, `knowledge/roadmap/planned/engine-migration.md` and
 `knowledge/rules/engine-migration-boundaries.md` on `feat/new-engine`.
 All E00-E07 stages are planned; implement only the requested issue/block.
+PopcornFX is optional final E08, only explicitly requested after E07; it does not
+block full-game acceptance or PsyCross removal. Required existing VFX stay in E05.
 The previous rework is preserved on `feat/vulkan-native-rework`, not active here.
 Do not use old hybrid graphics plans as mandatory native pixel-parity gates.
 Keep fixed ticks/replays/mechanics independent of FPS and presentation snapshots.

@@ -1,4 +1,4 @@
-﻿// redriver2_psxpc.cpp
+// redriver2_psxpc.cpp
 //
 
 #include <SDL_keyboard.h>
@@ -29,10 +29,16 @@
 #include "utils/DeveloperVkFixture.h"
 #include "utils/DeterministicBaseline.h"
 #include "utils/HdTextureOverrides.h"
+#include "utils/InputService.h"
 
 #include <SDL_scancode.h>
 #include <SDL_gamecontroller.h>
 #include <SDL_messagebox.h>
+
+#ifdef _WIN32
+#include <SDL_syswm.h>
+#include "NativeRenderer.h"
+#endif
 
 #include "PsyX/PsyX_globals.h"
 
@@ -334,7 +340,7 @@ char g_SBank_buffer[0x50000];		// 0x180000
 char g_Replay_buffer[0x50000];		// 0x1fABBC
 #endif
 
-void ParseKeyboardMappings(ini_t* config, char* section, PsyXKeyboardMapping& outMapping)
+void ParseKeyboardMappings(ini_t* config, char* section, InputKeyboardMapping& outMapping)
 {
 	// since it is configured by default
 	const PsyXKeyboardMapping& defaultMapping = g_cfg_keyboardMapping;
@@ -390,7 +396,7 @@ void ParseKeyboardMappings(ini_t* config, char* section, PsyXKeyboardMapping& ou
 	outMapping.kc_start = PsyX_LookupKeyboardMapping(str, defaultMapping.kc_start);
 }
 
-void ParseControllerMappings(ini_t* config, char* section, PsyXControllerMapping& outMapping)
+void ParseControllerMappings(ini_t* config, char* section, InputControllerMapping& outMapping)
 {
 	const PsyXControllerMapping& defaultMapping = g_cfg_controllerMapping;
 
@@ -462,29 +468,156 @@ void ParseControllerMappings(ini_t* config, char* section, PsyXControllerMapping
 // disabled, restart-only option.
 int gFreeCameraConfiguration = 0;
 
-PsyXKeyboardMapping g_kbGameMappings = { 0x123 };
-PsyXKeyboardMapping g_kbMenuMappings = { 0x456 };
+InputKeyboardMapping g_kbGameMappings = { 0x123 };
+InputKeyboardMapping g_kbMenuMappings = { 0x456 };
 
-PsyXControllerMapping g_gcGameMappings = { 0x321 };
-PsyXControllerMapping g_gcMenuMappings = { 0x654 };
+InputControllerMapping g_gcGameMappings = { 0x321 };
+InputControllerMapping g_gcMenuMappings = { 0x654 };
 
 void SwitchMappings(int menu)
 {
 	if(menu)
 	{
-		g_cfg_keyboardMapping = g_kbMenuMappings;
-		g_cfg_controllerMapping = g_gcMenuMappings;
+		g_inputKeyboardMapping = g_kbMenuMappings;
+		g_inputControllerMapping = g_gcMenuMappings;
 	}
 	else
 	{
-		g_cfg_keyboardMapping = g_kbGameMappings;
-		g_cfg_controllerMapping = g_gcGameMappings;
+		g_inputKeyboardMapping = g_kbGameMappings;
+		g_inputControllerMapping = g_gcGameMappings;
 	}
 
 	// The developer panel edits these tables; it must know which one the game is
 	// using so an edit only reaches the mapping that is live.
 	DeveloperInputMapping_NotifyActive(menu ? DeveloperInputTable::Menu : DeveloperInputTable::Game);
 }
+
+#ifdef _WIN32
+// E03: with RED2_NATIVE_RENDERER set the game runs PsyCross headless (no
+// swapchain) and the native renderer owns the window's presentation. Its scene
+// is drawn from a post-frame handler with the game's own camera, so the frame
+// stays in step with the simulation. The default PsyCross path is untouched.
+// The view rotation is derived from the game's inv_camera_matrix exactly like
+// the modern-mesh path (rotation-only, 1/4096-scaled).
+static int s_nativeRendererActive = 0;
+static int s_nativeRendererFrames = 0;
+static int s_nativeRendererFailureStreak = 0;
+static int s_nativeRendererWidth = 0;
+static int s_nativeRendererHeight = 0;
+
+static void NativeRenderer_Frame()
+{
+	if (!s_nativeRendererActive)
+		return;
+
+	// Forward game-window size changes to the native swap chain. A minimized
+	// window reports a zero size; keep the last valid buffers in that case.
+	SDL_Window* window = PsyX_GetSDLWindow();
+	if (window)
+	{
+		int width = 0, height = 0;
+		SDL_GetWindowSize(window, &width, &height);
+		if (width > 0 && height > 0 &&
+			(width != s_nativeRendererWidth || height != s_nativeRendererHeight))
+		{
+			NativeRenderer_Resize(width, height);
+			s_nativeRendererWidth = width;
+			s_nativeRendererHeight = height;
+		}
+	}
+
+	const float scale = 1.0f / 4096.0f;
+	float rotation[16];
+	rotation[0] = inv_camera_matrix.m[0][0] * scale; rotation[4] = inv_camera_matrix.m[0][1] * scale; rotation[8] = inv_camera_matrix.m[0][2] * scale; rotation[12] = 0.0f;
+	rotation[1] = inv_camera_matrix.m[1][0] * scale; rotation[5] = inv_camera_matrix.m[1][1] * scale; rotation[9] = inv_camera_matrix.m[1][2] * scale; rotation[13] = 0.0f;
+	rotation[2] = inv_camera_matrix.m[2][0] * scale; rotation[6] = inv_camera_matrix.m[2][1] * scale; rotation[10] = inv_camera_matrix.m[2][2] * scale; rotation[14] = 0.0f;
+	rotation[3] = 0.0f; rotation[7] = 0.0f; rotation[11] = 0.0f; rotation[15] = 1.0f;
+
+	// Full world->camera matrix: rotation plus the camera translation, in the
+	// same raw game units the game's modern-mesh path uses.
+	float view[16];
+	for (int i = 0; i < 16; ++i)
+		view[i] = rotation[i];
+	const float px = (float)camera_position.vx;
+	const float py = (float)camera_position.vy;
+	const float pz = (float)camera_position.vz;
+	view[12] = -(rotation[0] * px + rotation[4] * py + rotation[8] * pz);
+	view[13] = -(rotation[1] * px + rotation[5] * py + rotation[9] * pz);
+	view[14] = -(rotation[2] * px + rotation[6] * py + rotation[10] * pz);
+
+	NativeRenderer_SetCamera(view, 1.0472f); // 60 degrees
+
+	char error[256];
+	if (!NativeRenderer_RenderScene(error, sizeof(error)))
+	{
+		// Edge-triggered: log the first failure of a streak only, so a
+		// persistent failure does not flood the log; recovery reports the
+		// streak length.
+		if (s_nativeRendererFailureStreak == 0)
+			PsyX_Log_Warning("native renderer scene failed: %s\n", error);
+		++s_nativeRendererFailureStreak;
+		return;
+	}
+	if (s_nativeRendererFailureStreak > 0)
+	{
+		PsyX_Log_Info("native renderer scene recovered after %d failed frames\n",
+			s_nativeRendererFailureStreak);
+		s_nativeRendererFailureStreak = 0;
+	}
+	if (s_nativeRendererFrames == 0)
+		PsyX_Log_Info("native renderer drawing the game window with the game camera\n");
+	++s_nativeRendererFrames;
+}
+
+static void NativeRenderer_AttachGameWindow()
+{
+	const char* enabled = getenv("RED2_NATIVE_RENDERER");
+	if (!enabled || !enabled[0] || enabled[0] == '0')
+		return;
+
+	SDL_Window* window = PsyX_GetSDLWindow();
+	if (!window)
+	{
+		PsyX_Log_Warning("native renderer: the game window is unavailable\n");
+		return;
+	}
+
+	SDL_SysWMinfo info;
+	SDL_VERSION(&info.version);
+	if (!SDL_GetWindowWMInfo(window, &info) || info.subsystem != SDL_SYSWM_WINDOWS)
+	{
+		PsyX_Log_Warning("native renderer: the window handle is unavailable\n");
+		return;
+	}
+
+	int width = 0, height = 0;
+	SDL_GetWindowSize(window, &width, &height);
+
+	char error[256];
+	if (!NativeRenderer_Init(info.info.win.window, width, height, error, sizeof(error)))
+	{
+		PsyX_Log_Warning("native renderer init failed: %s\n", error);
+		return;
+	}
+
+	s_nativeRendererActive = 1;
+	s_nativeRendererWidth = width;
+	s_nativeRendererHeight = height;
+	PsyX_SetPostFrameHandler(NativeRenderer_Frame);
+	PsyX_Log_Info("native renderer active on the game window (%dx%d)\n", width, height);
+
+	// Optional converted content for the scene. A load failure must not abort
+	// the native path; the placeholder scene keeps rendering instead.
+	const char* contentPath = getenv("RED2_NATIVE_CONTENT");
+	if (contentPath && contentPath[0])
+	{
+		if (NativeRenderer_LoadContent(contentPath, error, sizeof(error)))
+			PsyX_Log_Info("native renderer loaded content %s\n", contentPath);
+		else
+			PsyX_Log_Warning("native renderer content load failed: %s\n", error);
+	}
+}
+#endif
 
 int main(int argc, char** argv)
 {
@@ -695,7 +828,22 @@ int main(int argc, char** argv)
 
 #endif
 
+#ifdef _WIN32
+	// E03: with the native-renderer probe enabled PsyCross must not own the
+	// window's presentation, so it creates the window without a swapchain
+	// (Vulkan rejects a second swapchain on the same window with
+	// VK_ERROR_NATIVE_WINDOW_IN_USE_KHR).
+	const char* nativeRenderer = getenv("RED2_NATIVE_RENDERER");
+	if (nativeRenderer && nativeRenderer[0] && nativeRenderer[0] != '0')
+		PsyX_SetHeadless(1);
+#endif
+
 	PsyX_Initialise("REDRIVER2", fullScreen ? screenWidth : windowWidth, fullScreen ? screenHeight : windowHeight, fullScreen);
+
+#ifdef _WIN32
+	// E03: optional native-renderer ownership of the game's own window.
+	NativeRenderer_AttachGameWindow();
+#endif
 
 	char version_info[32];
 	GetTimeStamp(version_info);
@@ -745,6 +893,17 @@ int main(int argc, char** argv)
 	DeinitStringMng();
 	DeveloperModernMesh_Shutdown();
 	DeveloperGraphicsPanel_Shutdown();
+
+#ifdef _WIN32
+	// E03: the Diligent device and swap chain must release while the game's
+	// window still exists, so the native renderer never outlives its HWND.
+	if (s_nativeRendererActive)
+	{
+		NativeRenderer_Shutdown();
+		s_nativeRendererActive = 0;
+		s_nativeRendererFrames = 0;
+	}
+#endif
 
 	PsyX_Shutdown();
 

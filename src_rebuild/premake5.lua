@@ -26,6 +26,12 @@ JPEG_DIR = os.getenv("JPEG_DIR") or "dependencies/jpeg"
 -- scripts/compile_vk_shaders.ps1 after changing a shader.
 VULKAN_DIR = os.getenv("VULKAN_DIR") or "dependencies/vulkan"
 
+-- E03 native renderer: the Diligent Engine SDK built by scripts/fetch_diligent.ps1
+-- into the gitignored dependencies tree. Windows-only, Vulkan backend, Release.
+DILIGENT_ROOT = os.getenv("DILIGENT_DIR") or "dependencies/DiligentEngine"
+DILIGENT_CORE = DILIGENT_ROOT .. "/DiligentCore"
+DILIGENT_BUILD = DILIGENT_ROOT .. "/build_core"
+
 WEBDEMO_DIR = os.getenv("WEBDEMO_DIR") or "../../web_demo@/"	-- FIXME: make it better
 RED2_DIR = os.getenv("RED2_DIR") or "../../data@/"
 WEBSHELL_PATH = "../platform/Emscripten"	-- must be relative to makefile path (SADLY)
@@ -60,7 +66,7 @@ workspace "REDRIVER2"
 		--vscode_launch_environment {	}
 	end
 
-    configurations { "Debug", "Release", "Release_dev" }
+    configurations { "Debug", "Release", "Release_dev", "Release_dev_native" }
 	
     defines { VERSION } 
 	
@@ -190,7 +196,7 @@ workspace "REDRIVER2"
             "NDEBUG",
         }
 		
-	filter "configurations:Release_dev"
+	filter "configurations:Release_dev or Release_dev_native"
         defines {
             "NDEBUG",
         }
@@ -220,6 +226,14 @@ project "REDRIVER2"
     -- Launch the debugger from the executable folder so config.ini, mods/ and
     -- developer_debug_start.ini resolve from the expected working directory.
     debugdir(BIN_DIR)
+
+    -- Release_dev_native builds exactly like Release_dev but the debugger
+    -- launches the game with the native renderer enabled, so it can be tested
+    -- from Visual Studio without setting the variable by hand.
+    filter "configurations:Release_dev_native"
+        debugargs { "-nointro", "-nofmv" }
+        debugenvs { "RED2_NATIVE_RENDERER=1" }
+    filter {}
 
     includedirs { 
         "Game", 
@@ -288,6 +302,84 @@ project "REDRIVER2"
 			"/SAFESEH:NO", -- Image Has Safe Exception Handers: No. Because of openal-soft
         }
 
+    -- E03 native renderer (Diligent Engine, Vulkan). Windows-only and only when
+    -- the SDK is present (scripts/fetch_diligent.ps1), so a default build needs
+    -- no Diligent. The native module compiles as C++17 and links the static
+    -- libraries; Diligent is built with the v145 toolset, which is also where
+    -- the ATL library it references lives.
+    local diligentPresent = os.isfile(DILIGENT_CORE .. "/CMakeLists.txt") and
+        os.isfile(DILIGENT_BUILD .. "/Graphics/GraphicsEngineVulkan/Release/Diligent-GraphicsEngineVk-static.lib")
+    if os.target() == "windows" and diligentPresent then
+        filter "system:Windows"
+            toolset "v145"
+            files {
+                "native/**.h",
+                "native/**.cpp",
+            }
+            includedirs {
+                "native",
+                DILIGENT_CORE .. "/Graphics/GraphicsEngine/interface",
+                DILIGENT_CORE .. "/Graphics/GraphicsEngineVulkan/interface",
+                DILIGENT_CORE .. "/Graphics/GraphicsTools/interface",
+                DILIGENT_CORE .. "/Graphics/GraphicsAccessories/interface",
+                DILIGENT_CORE .. "/Common/interface",
+                DILIGENT_CORE .. "/Primitives/interface",
+                DILIGENT_CORE .. "/Platforms/interface",
+                DILIGENT_CORE .. "/ThirdParty/Vulkan-Headers/include",
+                DILIGENT_CORE .. "/ThirdParty/volk",
+            }
+            libdirs {
+                DILIGENT_BUILD .. "/Graphics/GraphicsEngineVulkan/Release",
+                DILIGENT_BUILD .. "/Graphics/GraphicsEngine/Release",
+                DILIGENT_BUILD .. "/Graphics/GraphicsEngineNextGenBase/Release",
+                DILIGENT_BUILD .. "/Graphics/GraphicsAccessories/Release",
+                DILIGENT_BUILD .. "/Graphics/ShaderTools/Release",
+                DILIGENT_BUILD .. "/Graphics/HLSL2GLSLConverterLib/Release",
+                DILIGENT_BUILD .. "/Common/Release",
+                DILIGENT_BUILD .. "/Primitives/Release",
+                DILIGENT_BUILD .. "/Platforms/Basic/Release",
+                DILIGENT_BUILD .. "/Platforms/Win32/Release",
+                DILIGENT_BUILD .. "/ThirdParty/glslang/glslang/Release",
+                DILIGENT_BUILD .. "/ThirdParty/glslang/SPIRV/Release",
+                DILIGENT_BUILD .. "/ThirdParty/SPIRV-Tools/source/Release",
+                DILIGENT_BUILD .. "/ThirdParty/SPIRV-Tools/source/opt/Release",
+                DILIGENT_BUILD .. "/ThirdParty/SPIRV-Cross/Release",
+                DILIGENT_BUILD .. "/ThirdParty/volk/Release",
+            }
+            -- Diligent's ShaderTools/Win32 objects reference ATL's static library
+            -- by name; pass it by full path so MSBuild's ATL component check is
+            -- not triggered while the library is still resolved.
+            linkoptions {
+                "\"$(VCToolsInstallDir)atlmfc/lib/x64/atls.lib\"",
+            }
+            links {
+                "Diligent-GraphicsEngineVk-static",
+                "Diligent-GraphicsEngine",
+                "Diligent-GraphicsEngineNextGenBase",
+                "Diligent-GraphicsAccessories",
+                "Diligent-ShaderTools",
+                "Diligent-HLSL2GLSLConverterLib",
+                "Diligent-Common",
+                "Diligent-Primitives",
+                "Diligent-BasicPlatform",
+                "Diligent-Win32Platform",
+                "glslang",
+                "SPIRV",
+                "SPIRV-Tools",
+                "SPIRV-Tools-opt",
+                "spirv-cross-core",
+                "volk",
+                "comdlg32",
+            }
+
+        filter { "system:Windows", "files:native/**.cpp" }
+            cppdialect "C++17"
+            -- The VS generator does not emit cppdialect for file filters here, so
+            -- pass the standard explicitly; Diligent's headers require C++17.
+            buildoptions { "/std:c++17" }
+            defines { "PLATFORM_WIN32=1" }
+    end
+
     filter "system:linux"
         includedirs {
             "/usr/include/SDL2"
@@ -312,14 +404,21 @@ project "REDRIVER2"
     filter "configurations:Release"
         optimize "Speed"
 		
-	filter "configurations:Release_dev"
-		targetsuffix "_dev"
+	filter "configurations:Release_dev or Release_dev_native"
         defines { 
             "DEBUG_OPTIONS",
             "COLLISION_DEBUG",
 			"CUTSCENE_RECORDER"
         }
         optimize "Speed"
+
+    -- Distinct suffixes so the two dev configurations never share an output
+    -- (sharing one would leave a stale incremental-link database).
+	filter "configurations:Release_dev"
+		targetsuffix "_dev"
+
+	filter "configurations:Release_dev_native"
+		targetsuffix "_native"
 
     filter { "files:**.c", "files:**.C" }
         compileas "C++"

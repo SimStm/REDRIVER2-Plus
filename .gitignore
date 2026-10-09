@@ -47,7 +47,11 @@ data/DRIVER2/*
 data/_DRIVER2/*
 # Agent configuration for this checkout, not part of the project.
 .opencode/*
+.ignore
 
 # Generated Python bytecode, not project source.
 __pycache__/
 *.py[cod]
+
+# Deepwork orchestration state, session-local.
+.slim/deepwork/

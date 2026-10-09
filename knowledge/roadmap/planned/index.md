@@ -13,9 +13,11 @@ and confirm implementation against source/product evidence.
 ## Active adopted umbrella
 
 [Engine migration](engine-migration.md) is the single execution owner for
-`feat/new-engine`: Diligent/DiligentFX, FMOD Core, PopcornFX, converted original
+`feat/new-engine`: Diligent/DiligentFX, FMOD Core, converted original
 content, project-owned fixed ticks/services and final PsyCross removal.
-All E00-E07 stages are planned; begin with E00/E01 when implementation is requested.
+All required E00-E07 stages are planned; begin with E00/E01 when requested.
+PopcornFX is optional final E08, only explicitly requested after E07; it is not
+a prerequisite of full-game acceptance, PsyCross removal or migration completion.
 Read the [stage catalog](../../engine-migration/index.md),
 [issue briefs](../../engine-migration/issue-briefs.md) and
 [validation policy](../../engine-migration/validation.md).

@@ -26,7 +26,9 @@
 #include "assetcatalog.h"
 #include "PsyX/PsyX_public.h"
 #include <string>
+#include <vector>
 #include "../../utils/InspectorExport.h"
+#include "../../utils/CarMeshSerializer.h"
 #ifdef _WIN32
 #include <windows.h>
 #ifdef LoadImage
@@ -1514,6 +1516,17 @@ static void WriteCarModelFaces(std::string& output, const CAR_POLY* polygons, in
 	}
 }
 
+static void AppendCarModelTriangleIndices(std::vector<unsigned int>& indices, const CAR_POLY* polygons, int count)
+{
+	for (int polygonIndex = 0; polygonIndex < count; ++polygonIndex)
+	{
+		const int packed = polygons[polygonIndex].vindices;
+		indices.push_back((unsigned int)(packed & 0xff));
+		indices.push_back((unsigned int)((packed >> 8) & 0xff));
+		indices.push_back((unsigned int)((packed >> 16) & 0xff));
+	}
+}
+
 bool Cars_ExportInspectorModel(int carId, const char* modId, char* status, int statusCapacity)
 {
 	if (!status || statusCapacity <= 0)
@@ -1580,6 +1593,106 @@ bool Cars_ExportInspectorModel(int carId, const char* modId, char* status, int s
 	WriteCarModelFaces(output, model.pGT3, model.numGT3);
 	WriteCarModelFaces(output, model.pB3, model.numB3);
 	return InspectorExport_WriteText(outputPath, output.c_str(), status, statusCapacity);
+#endif
+}
+
+// E02-B: converts the selected resident car model through the native GLB
+// pipeline and leaves the cached artifact under the target mod. The geometry is
+// the same one Cars_ExportInspectorModel writes as OBJ; the conversion is keyed
+// by the target mod (the only active mod) so two mods keep separate cached
+// entries. The OBJ export above is untouched.
+bool Cars_ConvertInspectorModel(int carId, const char* modId, char* status, int statusCapacity)
+{
+	if (!status || statusCapacity <= 0)
+		return false;
+	status[0] = '\0';
+	if (carId < 0 || carId >= MAX_CARS || !IsInspectorModId(modId))
+	{
+		snprintf(status, statusCapacity, "Choose a valid car selection and mod id");
+		return false;
+	}
+#ifndef _WIN32
+	snprintf(status, statusCapacity, "Model export is currently available on Windows only");
+	return false;
+#else
+	const int modelNumber = car_data[carId].ap.model;
+	if (modelNumber < 0 || modelNumber >= MAX_CAR_RESIDENT_MODELS)
+	{
+		snprintf(status, statusCapacity, "The selected car has no resident model");
+		return false;
+	}
+	CAR_MODEL model = NewCarModel[modelNumber];
+	model.vlist = gTempCarVertDump[carId];
+	if (!model.vlist)
+	{
+		snprintf(status, statusCapacity, "The selected car model is not currently available");
+		return false;
+	}
+	int maximumVertex = CarModelMaximumVertex(model.pFT3, model.numFT3);
+	const int maximumGtVertex = CarModelMaximumVertex(model.pGT3, model.numGT3);
+	const int maximumBottomVertex = CarModelMaximumVertex(model.pB3, model.numB3);
+	if (maximumGtVertex > maximumVertex) maximumVertex = maximumGtVertex;
+	if (maximumBottomVertex > maximumVertex) maximumVertex = maximumBottomVertex;
+	if (maximumVertex < 0 || maximumVertex >= MAX_DENTING_VERTS)
+	{
+		snprintf(status, statusCapacity, "The selected car model has unsupported vertex indices");
+		return false;
+	}
+
+	const DWORD modsAttributes = GetFileAttributesA("mods");
+	const DWORD parentModsAttributes = GetFileAttributesA("../mods");
+	const char* modsRoot = modsAttributes != INVALID_FILE_ATTRIBUTES && (modsAttributes & FILE_ATTRIBUTE_DIRECTORY) ? "mods" :
+		parentModsAttributes != INVALID_FILE_ATTRIBUTES && (parentModsAttributes & FILE_ATTRIBUTE_DIRECTORY) ? "../mods" : "mods";
+	char modDirectory[256];
+	char assetsDirectory[320];
+	char cacheDirectory[384];
+	snprintf(modDirectory, sizeof(modDirectory), "%s/%s", modsRoot, modId);
+	snprintf(assetsDirectory, sizeof(assetsDirectory), "%s/assets", modDirectory);
+	snprintf(cacheDirectory, sizeof(cacheDirectory), "%s/cache", assetsDirectory);
+	CreateDirectoryA(modsRoot, NULL);
+	CreateDirectoryA(modDirectory, NULL);
+	CreateDirectoryA(assetsDirectory, NULL);
+	CreateDirectoryA(cacheDirectory, NULL);
+
+	const int vertexCount = maximumVertex + 1;
+	std::vector<float> positions((size_t)vertexCount * 3);
+	for (int vertexIndex = 0; vertexIndex < vertexCount; ++vertexIndex)
+	{
+		const SVECTOR& vertex = model.vlist[vertexIndex];
+		positions[(size_t)vertexIndex * 3 + 0] = (float)vertex.vx;
+		positions[(size_t)vertexIndex * 3 + 1] = (float)vertex.vy;
+		positions[(size_t)vertexIndex * 3 + 2] = (float)vertex.vz;
+	}
+
+	std::vector<unsigned int> triangleIndices;
+	triangleIndices.reserve((size_t)(model.numFT3 + model.numGT3 + model.numB3) * 3);
+	AppendCarModelTriangleIndices(triangleIndices, model.pFT3, model.numFT3);
+	AppendCarModelTriangleIndices(triangleIndices, model.pGT3, model.numGT3);
+	AppendCarModelTriangleIndices(triangleIndices, model.pB3, model.numB3);
+	const int triangleCount = (int)(triangleIndices.size() / 3);
+
+	char sourceIdentity[64];
+	snprintf(sourceIdentity, sizeof(sourceIdentity), "car_%d_id_%d", modelNumber, carId);
+
+	// The live conversion is keyed by the target mod: the artifact lands in that
+	// mod's cache and a different mod id produces a different cache entry.
+	const char* activeMods[1] = { modId };
+
+	AssetConverterResult result;
+	char error[256];
+	const int resultCode = CarMeshSerializer_Export(cacheDirectory, sourceIdentity,
+		positions.data(), vertexCount, triangleIndices.data(), triangleCount,
+		activeMods, 1, &result, error, sizeof(error));
+	if (resultCode != ASSET_CONVERTER_OK)
+	{
+		snprintf(status, statusCapacity, "GLB conversion failed: %s",
+			error[0] ? error : AssetConverter_ErrorName(resultCode));
+		return false;
+	}
+
+	snprintf(status, statusCapacity, "Converted car GLB %s (%s): %s",
+		result.glbPath, result.converted ? "converted" : "reused", result.contentHash);
+	return true;
 #endif
 }
 #endif

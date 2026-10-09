@@ -87,7 +87,7 @@ project "PsyCross"
     filter "configurations:Release"
         optimize "Speed"
 
-	filter "configurations:Release_dev"
+	filter "configurations:Release_dev or Release_dev_native"
         optimize "Speed"
 
     --filter { "files:**.c", "files:**.C" }

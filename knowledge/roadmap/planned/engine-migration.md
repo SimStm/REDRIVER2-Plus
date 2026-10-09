@@ -39,7 +39,9 @@ Preserve Driver 2 physics, collision, AI, missions, cutscenes, camera intent,
 damage and replay semantics in a project-owned simulation. Extract required
 PsyCross services into focused project modules or verified replacement adapters.
 Use Diligent Engine/DiligentFX for presentation, FMOD Core for audio and
-PopcornFX for VFX. Remove PsyCross after its last supported consumer migrates.
+project-owned native effects for existing VFX. Remove PsyCross after its last
+supported consumer migrates. PopcornFX is an optional final extension, only when
+explicitly requested after the complete game and cutover are accepted.
 Higher display FPS and faster CPUs must not speed up game mechanics.
 
 Original installation files remain the source of truth for original content.
@@ -77,14 +79,18 @@ SDKs and original/converted game content out of public source commits.
 3. [E02 — Reproducible original-content conversion](../../engine-migration/stages/02-asset-conversion.md).
 4. [E03 — Diligent renderer and first playable slice](../../engine-migration/stages/03-diligent-playable-slice.md).
 5. [E04 — FMOD Core audio](../../engine-migration/stages/04-fmod-core.md).
-6. [E05 — PopcornFX and complete presentation consumers](../../engine-migration/stages/05-vfx-and-presentation.md).
+6. [E05 — Native effects and complete presentation consumers](../../engine-migration/stages/05-vfx-and-presentation.md).
 7. [E06 — Mechanics and full-game integration acceptance](../../engine-migration/stages/06-game-integration.md).
 8. [E07 — Remove PsyCross and validate the cutover](../../engine-migration/stages/07-remove-psycross.md).
+9. [E08 — Optional PopcornFX integration](../../engine-migration/stages/08-optional-popcornfx.md),
+   last and only upon a separate explicit user request after accepted E00-E07.
+   Do not schedule, acquire its SDK or implement it automatically.
 
 The [issue briefs](../../engine-migration/issue-briefs.md) map the user's five
 requested implementation issues onto these stages. Asset conversion is an
-explicit prerequisite of rendering; PopcornFX and all still-required UI/effects
-are explicit prerequisites of final removal. Issue names do not prove completion.
+explicit prerequisite of rendering; all still-required native UI/effects are
+prerequisites of final removal. PopcornFX is not a required migration dependency.
+Issue names do not prove completion.
 
 Deliver coherent functional blocks. E00/E01 protect the simulation; E02/E03 aim
 at a driveable converted region early. Define and pass each block's essential
@@ -98,6 +104,10 @@ The migration does not immediately change car physics, normalize PAL to NTSC,
 increase simulation frequency, rebuild every editor, infer PBR from old artwork,
 or redistribute game assets. "Converted models" means a new representation of
 the originals; higher-detail authored replacements are a separate content layer.
+
+Optional PopcornFX is deferred until after full-game acceptance and PsyCross
+removal; omitting it does not prevent migration completion. Existing VFX must
+already work through project-owned native presentation without its SDK.
 
 FMOD Studio authoring, RmlUi menus/HUD, in-game map/model/sound/mission/cutscene
 editors and a supplementary physics framework are adopted future directions.
@@ -130,8 +140,10 @@ Final removal requires a supported-target decision and no hidden PsyCross path.
   FPS, present mode and CPU speed; regional behavior and existing replays survive.
 - Converted packages retain content coverage, instance identities and source
   linkage; streamed/dynamic/destructible visuals follow game state correctly.
-- Diligent owns actual supported rendering; FMOD and PopcornFX own their adopted
-  consumers, with useful diagnostics and bounded resource lifetimes.
+- Diligent owns actual supported rendering, including required native effects;
+  FMOD Core owns required audio, with useful diagnostics and bounded lifetimes.
+- Required acceptance/build/run suites do not require PopcornFX; its optional
+  integration is gated by a separate explicit request after E07.
 - Full modes, missions, cutscenes, replays, sound, VFX, menus/HUD and loading work
   with no dependency on PsyCross in the final supported application/build.
 - Performance, memory and platform claims have executed evidence. No stage is
@@ -148,8 +160,14 @@ the same process across tool yields, with explicit progress and real failure exi
 Use debugger tools for stacks/state rather than adding long RPC-dependent loops.
 
 Each implementation updates its product note, cumulative status/handoff and
-Unreleased changelog. Keep this umbrella planned until all required stages pass;
+Unreleased changelog. Keep this umbrella planned until required E00-E07 pass;
 then publish `knowledge/product/engine-migration.md` and move this record to done.
+E08 does not block that lifecycle; when requested, create its own extension
+lifecycle record and validate its contracts separately.
 
 2026-10-08: architecture and stages adopted; source inspection and branch
 preservation completed. No engine, tick, asset, audio or VFX implementation run.
+
+2026-10-08 follow-up: the user deferred PopcornFX to optional E08, last and only
+on request. Required native effects/UI remain in E05; E00-E07 completion has no
+PopcornFX dependency.

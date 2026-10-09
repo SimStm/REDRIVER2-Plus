@@ -41,6 +41,12 @@ tags: [okf, rules]
 - [Reproduce gameplay with debug start snapshots](developer-debug-start.md):
   start a debug build directly at a known mission, vehicle, and position, and
   capture frames without input injection.
+- [Version the replay format in reserved header fields](replay-format-versioning.md):
+  add a new `.D2RP` format version instead of reinterpreting bytes, keep V1
+  tapes loadable, and diagnose version/region/checksum mismatches explicitly.
+- [Own input mapping and SDL polling in the project](input-service-ownership.md):
+  keep mapping types/tables and pad polling in `utils/InputService.*`, keep the
+  `Pads[]`/PADRAW contract, and treat PsyCross's pad system as compatibility only.
 - [Generate a coherent world for a playground or new map](world-scene-generation.md):
   replace surface, cell, collision, visibility and streaming data together when
   adding a generated scene, and avoid donor-world leakage.
@@ -50,11 +56,11 @@ tags: [okf, rules]
 - [Keep asset identity and instance identity separate](asset-identity-lifetime.md):
   resource records are shared and stable while instances and runtime slots are
   not, and retained references must detect reuse.
+- [Self-learning rules](self-learning.md): turn repeated, evidenced constraints
+  into durable project knowledge.
 - [Present cars and cameras at the same snapshot time](presentation-snapshot-time.md):
   advance original camera controls on regional ticks, restore tick globals before
   simulation, and delimit history at pauses, camera cuts and session/slot resets.
-- [Self-learning rules](self-learning.md): turn repeated, evidenced constraints
-  into durable project knowledge.
 - [Use configured MCP servers for docs, debugging, and game runs](mcp-agent-tooling.md):
   check for context7, visual-studio-ide-mcp, and desktop-control MCPs first, and
   never block on a terminal launch of the interactive game process.

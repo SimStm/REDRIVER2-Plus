@@ -43,11 +43,12 @@ Acceptance includes recorded/mixed output, loop/pitch/event and lifecycle tests.
 
 Scope: [E05](stages/05-vfx-and-presentation.md) and
 [E06](stages/06-game-integration.md), consuming accepted rendering/audio contracts.
-Integrate adopted PopcornFX; replace UI/maps/offscreen/effects consumers and finish
+Replace UI/maps/offscreen and existing effects with native consumers and finish
 dynamic/city coverage. Verify full gameplay, missions, cutscenes and replay matrix
 by canonical tick states and event timelines plus native visual/audio evidence.
 "Mechanics through Diligent" means original game mechanics feeding the renderer;
-physics and mission authority do not move into the graphics library.
+physics and mission authority do not move into the graphics library. PopcornFX
+is not part of this issue or a requirement for full-game acceptance.
 
 ## 5. Remove PsyCross from the project
 
@@ -56,6 +57,12 @@ Remove submodule/build/includes/link/vendor assumptions; retain necessary extrac
 math/service contracts with provenance. Fresh builds/runs must work without PsyCross,
 with full integration regressions and an explicit supported-target matrix.
 Do not delete still-needed menus/audio/streaming/code before their replacements.
+
+## Optional final follow-up: PopcornFX
+
+[E08](stages/08-optional-popcornfx.md) is outside the five required issues. Begin
+only after accepted E00-E07 and a separate explicit user request. It must not
+block the working game, PsyCross removal or migration completion.
 
 ## Delivery discipline
 

@@ -58,6 +58,25 @@ int main()
 	Check(LoadPngRgba(destination, &decoded, &width, &height) && width == 4 && height == 4 &&
 		decoded[0] == 255 && decoded[1] == 0 && decoded[2] == 0 && decoded[3] == 255, "exported original texture decodes to synthetic red VRAM pixels");
 	free(decoded);
+	// A canonical content hash records reproducible content: two identical
+	// conversions of the same region produce equal hashes.
+	{
+		const char* hashKeyName = "\"contentHash\": \"";
+		int hashBytes = 0;
+		char firstHash[32] = {};
+		char* hashManifest = ReadTextFile("mods/regression/manifest.json", &hashBytes);
+		const char* hashKey = hashManifest ? strstr(hashManifest, hashKeyName) : NULL;
+		if (hashKey) sscanf(hashKey + strlen(hashKeyName), "%31[^\"]", firstHash);
+		free(hashManifest);
+		Check(firstHash[0] != '\0', "manifest records a canonical content hash");
+		Check(HdTextureOverrides_ExportTexture(256, 0, 0, 0, 4, 4, "RED", 1, 1, "regression2", status, sizeof(status)), "identical export into a second mod");
+		char secondHash[32] = {};
+		hashManifest = ReadTextFile("mods/regression2/manifest.json", &hashBytes);
+		const char* hashKey2 = hashManifest ? strstr(hashManifest, hashKeyName) : NULL;
+		if (hashKey2) sscanf(hashKey2 + strlen(hashKeyName), "%31[^\"]", secondHash);
+		free(hashManifest);
+		Check(firstHash[0] != '\0' && strcmp(firstHash, secondHash) == 0, "two identical conversions produce equal content hashes");
+	}
 	char temporary[MAX_PATH];
 	Check(InspectorExport_Temporary(destination, temporary, status, sizeof(status)) &&
 		!InspectorExport_Commit(temporary, destination, status, sizeof(status)), "empty temporary export cannot replace a completed PNG");

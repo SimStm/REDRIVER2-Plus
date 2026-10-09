@@ -10,18 +10,144 @@ where release policy permits it.
 
 ### Added
 
-- Display FPS controls (15..360, defaults 30 NTSC / 25 PAL), startup regional
-  selection and live VSync beside resolution. FPS/VSync autosave their owned
-  keys; confirmed region changes apply after application restart.
-- Project-owned regional ticks, shared car/camera snapshots and optional
-  canonical gameplay/effect dumps with strict comparison and draw-mutation checks.
-- Production timing, settings and effect tests for both regional clocks.
+- Production effect-timing tests for both regional clocks, strict replay dump
+  inventory comparisons and diagnostic detection of recorded draw-time mutations.
+
+- Display FPS limit beside resolution (15..360, default 30 for NTSC / 25 for PAL)
+  and a confirmed NTSC/PAL startup preference in the developer graphics panel.
+  FPS and VSync apply live and autosave to `developer_graphics.ini`; region
+  changes take effect after application restart, preserving active replay/game
+  cadence. Either desktop executable can select the original 30/25 Hz regional
+  clock, aspect and sound timing; replay headers record the active region.
 
 - Adopted engine-migration roadmap and five implementation issue briefs covering
   project-owned fixed simulation ticks/replay compatibility, original-content
-  conversion, Diligent rendering, FMOD Core, PopcornFX and progressive PsyCross
-  removal. Native visual changes use targeted tests while mechanics retain
+  conversion, Diligent rendering, FMOD Core and progressive PsyCross removal.
+  PopcornFX is an optional last extension, only explicitly requested after full
+  game acceptance and removal; existing native effects remain required. Native visual changes use targeted tests while mechanics retain
   deterministic acceptance; no engine migration is implemented by this plan.
+
+- E00 engine-migration inventory: recorded every required PsyCross/Psy-Q
+  service contract, the NTSC/PAL tick, replay and RNG facts, and the draw-time
+  mutation sites in `knowledge/engine-migration/e00/`, backed by a reproducible
+  symbol/include scan (`scripts/engine_migration/e00_symbol_scan.py`) and a
+  baseline scenario matrix. Added a per-tick canonical state dump for
+  determinism checks (`-statedump` in `utils/DeterministicBaseline.*`, compared
+  by `scripts/engine_migration/e00_compare_state.py`) and `RED2_BUILD_DIR` /
+  `RED2_BIN_DIR` overrides to `premake5.lua` for isolated regional builds.
+  Fresh NTSC and PAL `Release_dev|x64` builds, a Vulkan smoke run and four
+  replay/mission dump pairs (0 mismatches between runs) are recorded in the
+  inventory. No engine behaviour changed.
+
+- E01 fixed simulation ticks: the desktop tick is now owned by a project clock
+  (`utils/ProjectClock.*`, 30 Hz NTSC / 25 Hz PAL) with bounded catch-up and a
+  pause API instead of the emulated vblank gate, and gameplay reads of the draw
+  counter `FrameCnt` moved to the simulation tick. Authoritative state is
+  unchanged versus the pre-E01 baselines (0 mismatches on all shared ticks), and
+  presentation now draws every frame: vsync (~30 FPS) and uncapped (~250 FPS)
+  runs produced identical authoritative tick state on NTSC replay/mission and
+  PAL replay. Smooth interpolated high-FPS presentation (previous/current
+  snapshot blend) is still pending.
+
+- E01 versioned replay contract: new replay tapes are written with an explicit
+  format version, region, tick rate and period plus a content checksum in the
+  header's previously unused reserved fields (on-disk size unchanged), while
+  legacy tapes still load. Unknown magic, unsupported version, region/rate
+  mismatch and checksum mismatch are now diagnosed explicitly instead of being
+  silently accepted or silently resampled to the build cadence. A
+  `-savereplay`/`-saveat` developer fixture records a tape without the pause
+  menu; NTSC/PAL round trips, the four diagnostics and the legacy replay
+  regression were verified.
+
+- E01 presentation interpolation: a project-owned visual snapshot seam
+  (`utils/VisualSnapshot.*`) publishes each car's previous and current tick pose,
+  and cars are rendered between them using the fixed clock's interpolation
+  factor, so high display FPS produces smooth motion instead of repeated tick
+  poses. The seam only reads authoritative state; attract replay and mission
+  baselines remain identical (0 mismatches). Subsequent complementary fixes share
+  car/camera rotation and effect snapshot time; full presentation acceptance
+  remains migration work.
+
+- E01 input service: SDL2 keyboard/game-controller polling and the input mapping
+  now live in the project (`utils/InputService.*`) instead of PsyCross; the game
+  reads pads through it while keeping the `Pads[]` and per-tick sampling
+  contract. PsyCross's own pad backend is disabled in the project fork so there
+  is a single controller owner. Verified with live keyboard drive tests and
+  unchanged NTSC/PAL replay baselines.
+
+- E02 reproducible conversion: exported texture manifest entries now record a
+  canonical 64-bit FNV-1a `contentHash` over the converted pixels, so two
+  identical conversions produce equal entries. A new pure-data package manifest
+  module (`Game/C/assetpackage.*`) parses, validates and canonically serializes a
+  readable JSON package with named diagnostics (schema version, missing fields,
+  duplicate ids, unknown dependencies, trailing data) and no PsyCross/GPU/game
+  dependency. A conversion cache contract (`Game/C/conversioncache.*`) keys a
+  conversion by source hash, converter, schema version, options and active mods
+  with staleness reasons and deterministic cache paths. A bounded GLB writer
+  (`utils/GltfWriter.*`) and the importer now round-trip geometry, UVs, the node
+  transform and material flags and write byte-identical GLB for identical
+  input. A transactional converter (`utils/AssetConverter.*`) turns a mesh record
+  into a cached native GLB keyed by source/converter/schema/options/mods, reusing
+  fresh artifacts and rebuilding stale ones, and the package manifest can be
+  assembled from the converted hashes (`AssetPackage_AddEntry`). A sound asset
+  record (`Game/C/soundasset.*`) carries sample rate, channels, bit depth, frame
+  count, loop points, pitch reference, bank/voice ids and music metadata with
+  validation and canonical serialization. Verified by new
+  `InspectorExportTests` checks (107 passed), `AssetCatalogTests` (145 pass) and
+  the new `AssetPackageTests` (39), `ConversionCacheTests` (38),
+  `GltfRoundTripTests` (28), `AssetConverterTests` (28), `AssetPipelineTests`
+  (25) and `SoundAssetTests` (32) suites.
+
+- E02 real-source conversion: `utils/CarMeshSerializer.*` turns game-side car
+  geometry into a deterministic cached GLB through the conversion pipeline
+  (source/converter/schema/options/mods key, read-back verify, temp+rename
+  publish, content hash), and the developer 3D debug tab can convert the
+  selected car model (`Cars_ConvertInspectorModel`) beside the existing OBJ
+  export. Covered by the new `CarMeshSerializerTests` (57 checks); all nine
+  inspector suites pass.
+
+- E03 SDK pin/build: DiligentEngine is pinned at `v2.5.6` (DiligentCore commit
+  `b036337d`) and built Vulkan-only as a static Release library through the new
+  `scripts/fetch_diligent.ps1`. The SDK stays in the gitignored
+  `dependencies/` tree; new native renderer modules use C++17.
+- E03 native renderer owner: `native/NativeRenderer.*` owns one Diligent
+  device/context/swap chain for a single native window handle (Diligent-free C
+  ABI) with clear-and-present, resize and shutdown, uploads converted mesh
+  geometry into immutable Diligent buffers, renders overlapping triangles through
+  a depth-tested graphics pipeline, and samples a base-colour texture on a quad
+  transformed by a constant-buffer MVP, all pixel-verified. Verified by
+  `scripts/run_native_renderer_smoke.ps1` (15 checks). On Windows the native
+  renderer and Diligent are linked into the game when the SDK is present, behind
+  a gated `RED2_NATIVE_RENDERER` probe over the game's own window. PsyCross can
+  now initialize headless (window only, no swap chain or present), so the native
+  renderer owns the window's presentation and the probe reports `native renderer
+  active on the game window`. A generic post-frame handler then lets the game
+  feed its own camera to `NativeRenderer_SetCamera`/`NativeRenderer_RenderScene`,
+  which draws a depth-tested, textured scene every frame (`native renderer
+  drawing the game window with the game camera`). A `Release_dev_native` build
+  configuration launches the game with the native renderer enabled, so it can be
+  tested from Visual Studio. The Diligent SDK was upgraded to the official
+  repository's master (`API256019`).
+
+- E03 converted content: the native renderer loads a converted GLB through
+  `utils/GltfLoader` and draws it in place of the placeholder scene with the
+  game camera (`NativeRenderer_LoadContent`/`ClearContent`/`HasContent`/
+  `GetContentStats`); the node transform places the mesh and the base-colour
+  factor/texture shade it unlit. `NativeRenderer_RenderSceneToRGBA` runs the
+  same draw offscreen for pixel checks, and `RED2_NATIVE_CONTENT` loads a
+  converted GLB into the in-game native path without aborting on failure. The
+  in-game path now releases the Diligent device before the game window is
+  destroyed, forwards window resizes to the swap chain and logs scene
+  failure/recovery transitions. Verified by `scripts/run_native_renderer_smoke.ps1`
+  (38 checks, 0 failures) and an in-game probe (content loaded and drawn, resize
+  applied, clean exit).
+
+- E01 bounded backlog policy: the fixed clock caps catch-up at four ticks per
+  frame and counts the excess; the game loop now logs the dropped ticks
+  (rate-limited) so a stall never silently discards simulation ticks. Pause
+  resume and the first presented frame re-base the clock so load/pause intervals
+  are not replayed as a burst, and a `RED2_CLOCKJUMP_MS` fixture exercises the
+  bounded path.
 
 - The opt-in performance log (`PSYX_PERF_LOG=1`) now reports `submit_ms`, the
   mean CPU time of the frame-submission path (`GR_SwapWindow` plus the OpenGL

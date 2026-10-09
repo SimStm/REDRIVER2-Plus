@@ -1,25 +1,27 @@
 ---
 type: Plan
-title: E05 - PopcornFX and complete presentation consumers
+title: E05 - Native effects and complete presentation consumers
 status: planned
 created: 2026-10-08
-tags: [engine, popcornfx, vfx, ui]
+tags: [engine, diligent, vfx, ui]
 ---
 
-# E05 - PopcornFX and complete presentation consumers
+# E05 - Native effects and complete presentation consumers
 
 ## Objective and dependencies
 
-After E03's device/material/depth contracts, integrate PopcornFX and migrate every
-remaining graphical consumer needed for supported modes. E01 snapshots/events
-remain authoritative; E04 audio enables combined effect/event verification.
-The user confirms PopcornFX permitted use; pin SDK/bake/tool versions explicitly.
+After E03's device/material/depth contracts and E04 audio, migrate every remaining
+graphical consumer needed for supported modes through project-owned native
+presentation and Diligent. E01 snapshots/events remain authoritative. PopcornFX
+is deferred to optional E08 after E07 and only on explicit request; it is not a
+dependency of existing effect preservation, full-game acceptance or removal.
 
 ## Implementation blocks
 
-- Establish effect authoring/baking and packaged dependencies with reproducible
-  manifests. Integrate render helpers into Diligent passes/material/resource
-  ownership, rather than introducing a competing graphics context/swapchain.
+- Replace required existing effect producers with focused project-owned native
+  implementations using Diligent passes/material/resource ownership. Preserve
+  original effect coverage without requiring a new authoring system or PopcornFX
+  SDK, and without introducing a competing graphics context/swapchain.
 - Publish tire smoke, sparks, explosions, rain/weather and other inventoried
   effects from game events/poses. Map lifetime/intensity and seed semantics;
   isolate visual RNG from gameplay. Cosmetic simulation can use its own clock
@@ -35,7 +37,7 @@ The user confirms PopcornFX permitted use; pin SDK/bake/tool versions explicitly
 
 ## Acceptance criteria
 
-- [ ] Adopted VFX categories render through PopcornFX/Diligent with correct depth,
+- [ ] Required existing VFX categories render through native Diligent with correct depth,
   sorting and world transforms; expected visual changes have specified references.
 - [ ] Effects, audio and gameplay events correlate once per tick across frame
   schedules; particle updates do not consume gameplay RNG or alter physics.
@@ -52,4 +54,6 @@ Use controlled effect scenes with foreground/background/cutout/transparent
 geometry, pause/replay routes, rain/night and relevant original-city cases.
 Inspect actual Diligent draws/attachments and resource retirement. Full coverage
 must be recorded, not inferred from one explosion or a visible menu. Dedicated
-authoring editors and RmlUi are not required for these basic native consumers.
+authoring editors, RmlUi and PopcornFX are not required for these basic native
+consumers. Verify this stage without any PopcornFX SDK/build/runtime dependency;
+its deferral cannot leave a required PsyCross effect consumer behind.

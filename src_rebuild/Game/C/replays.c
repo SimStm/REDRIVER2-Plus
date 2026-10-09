@@ -119,10 +119,30 @@ int SaveReplayToBuffer(char *buffer)
 	header = (REPLAY_SAVE_HEADER*)pt;
 	pt += sizeof(REPLAY_SAVE_HEADER);
 
-	header->magic = DRIVER2_REPLAY_MAGIC;
+	header->magic = DRIVER2_REPLAY_MAGIC_V2;
 	header->GameLevel = GameLevel;
 	header->GameType = GameType;
 	header->MissionNumber = gCurrentMissionNumber;
+
+	// Versioned contract (E01): region, cadence and a payload checksum so a tape
+	// records the cadence it was captured at and can be validated on load.
+	header->reserved1 = REPLAY_FORMAT_VERSION;
+#ifndef PSX
+	header->reserved2[0] = ProjectClock_GetVideoMode() == PROJECT_VIDEO_PAL ? REPLAY_REGION_PAL : REPLAY_REGION_NTSC;
+	header->reserved2[1] = ProjectClock_GetTickRate();
+	header->reserved2[2] = 1000000 / ProjectClock_GetTickRate();
+#elif defined(PAL_VERSION)
+	header->reserved2[0] = REPLAY_REGION_PAL;
+	header->reserved2[1] = 25;
+	header->reserved2[2] = 40000;
+#else
+	header->reserved2[0] = REPLAY_REGION_NTSC;
+	header->reserved2[1] = 30;
+	header->reserved2[2] = 33333;
+#endif
+	header->reserved2[3] = 0; /* content checksum, filled after all blocks */
+	header->reserved2[4] = 0;
+	header->reserved2[5] = 0;
 
 	header->NumReplayStreams = NumReplayStreams - NumCutsceneStreams; 
 	header->NumPlayers = NumPlayers;
@@ -170,6 +190,23 @@ int SaveReplayToBuffer(char *buffer)
 	memcpy((u_char*)pt, (u_char*)PingBuffer, sizeof(PING_PACKET) * MAX_REPLAY_PINGS);
 	pt += sizeof(PING_PACKET) * MAX_REPLAY_PINGS;
 
+	// V2 content checksum over everything after the header: stream data,
+	// parameter block, waypoints, cameras and pings. Written into the header
+	// reserved field so a truncated or edited tape is detected on load.
+	{
+		const u_char* content = (const u_char*)(header + 1);
+		const int contentLength = (int)(pt - (char*)content);
+		u_int contentChecksum = 2166136261u;
+
+		for (int b = 0; b < contentLength; ++b)
+		{
+			contentChecksum ^= content[b];
+			contentChecksum *= 16777619u;
+		}
+
+		header->reserved2[3] = (int)contentChecksum;
+	}
+
 	// [A] is that ever valid?
 	if (gHaveStoredData)
 	{
@@ -194,8 +231,52 @@ int LoadReplayFromBuffer(char *buffer)
 
 	header = (REPLAY_SAVE_HEADER*)pt;
 
-	if (header->magic != DRIVER2_REPLAY_MAGIC)
+	const int isVersioned = (header->magic == DRIVER2_REPLAY_MAGIC_V2);
+
+	if (header->magic != DRIVER2_REPLAY_MAGIC && !isVersioned)
+	{
+		printWarning("replay: unknown format magic 0x%08X, not a Driver 2 replay\n", header->magic);
 		return 0;
+	}
+
+	if (isVersioned)
+	{
+		if (header->reserved1 != REPLAY_FORMAT_VERSION)
+		{
+			printWarning("replay: unsupported replay format version %d (expected %d)\n",
+				header->reserved1, REPLAY_FORMAT_VERSION);
+			return 0;
+		}
+
+		const int tapeRegion = header->reserved2[0];
+		const int tapeRateHz = header->reserved2[1];
+		const int tapePeriodUs = header->reserved2[2];
+
+#ifndef PSX
+		const int buildRegion = ProjectClock_GetVideoMode() == PROJECT_VIDEO_PAL ? REPLAY_REGION_PAL : REPLAY_REGION_NTSC;
+		const int buildRateHz = ProjectClock_GetTickRate();
+#elif defined(PAL_VERSION)
+		const int buildRegion = REPLAY_REGION_PAL;
+		const int buildRateHz = 25;
+#else
+		const int buildRegion = REPLAY_REGION_NTSC;
+		const int buildRateHz = 30;
+#endif
+
+		if (tapeRegion != buildRegion || tapeRateHz != buildRateHz)
+		{
+			// Do not silently resample a tape to a different cadence: the fixed
+			// clock will run it at the active cadence, so say so explicitly.
+			printWarning("replay: region/rate mismatch (tape region %d %dHz, active region %d %dHz); "
+				"tape will run at the active cadence; select the matching video mode and restart for original timing\n",
+				tapeRegion, tapeRateHz, buildRegion, buildRateHz);
+		}
+		else
+		{
+			printInfo("replay: format v%d region %d rate %dHz period %dus\n",
+				header->reserved1, tapeRegion, tapeRateHz, tapePeriodUs);
+		}
+	}
 
 	ReplayStart = replayptr = (char*)_replay_buffer;
 
@@ -219,6 +300,7 @@ int LoadReplayFromBuffer(char *buffer)
 	pt = (char*)(header+1);
 
 	int maxLength = 0;
+
 	for (int i = 0; i < NumReplayStreams; i++)
 	{
 		sheader = (REPLAY_STREAM_HEADER *)pt;
@@ -266,6 +348,25 @@ int LoadReplayFromBuffer(char *buffer)
 	PingBuffer = (PING_PACKET *)(PlaybackCamera + MAX_REPLAY_CAMERAS);
 	memcpy((u_char*)PingBuffer, (u_char*)pt, sizeof(PING_PACKET) * MAX_REPLAY_PINGS);
 	pt += sizeof(PING_PACKET) * MAX_REPLAY_PINGS;
+
+	if (isVersioned)
+	{
+		const u_char* content = (const u_char*)(header + 1);
+		const int contentLength = (int)(pt - (char*)content);
+		u_int contentChecksum = 2166136261u;
+
+		for (int b = 0; b < contentLength; ++b)
+		{
+			contentChecksum ^= content[b];
+			contentChecksum *= 16777619u;
+		}
+
+		if ((u_int)header->reserved2[3] != contentChecksum)
+		{
+			printWarning("replay: content checksum mismatch (tape 0x%08X, computed 0x%08X); tape may be corrupt\n",
+				header->reserved2[3], contentChecksum);
+		}
+	}
 
 	replayptr = (char*)(PingBuffer + MAX_REPLAY_PINGS);
 

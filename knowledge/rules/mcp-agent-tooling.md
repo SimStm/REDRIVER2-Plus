@@ -95,3 +95,23 @@ unavoidable:
   then checking the resulting line count. A pattern-matched line range once
   deleted 220 lines of a panel file because the end-of-block heuristic matched a
   later closing brace; the removal has to be verified, not assumed.
+
+## Keep uvx-launched MCP servers working (dependency pinning)
+
+`uvx` re-resolves unpinned transitive dependencies to the newest allowed
+versions, so an MCP server can start failing after a dependency release with no
+local change.
+
+- `pydantic 2.14.0` removed `eval_type_backport` from
+  `pydantic._internal._typing_extra`; `mcp <= 1.21.0` imports it in
+  `mcp/server/fastmcp/utilities/func_metadata.py`, so the server exits with
+  `ImportError: cannot import name 'eval_type_backport'` (fixed in `mcp 1.21.1`).
+- `computer-control-mcp==0.3.13` pins `mcp[cli]==1.13.0`, so its OpenCode entry
+  constrains pydantic in the `uvx` invocation
+  (`~/.config/opencode/opencode.json`):
+  `"command": ["uvx", "--with", "pydantic<2.14", "computer-control-mcp"]`.
+  Verified: the server starts without the `ImportError` (pydantic 2.13.5).
+- When a `uvx`-launched MCP server dies with an import/traceback at startup,
+  inspect its cached resolution under `%LOCALAPPDATA%\uv\cache\archive-v0\`
+  (compare the `pydantic`/`mcp` dist-info versions) and pin the offending
+  dependency in the config instead of relying on the global cache.

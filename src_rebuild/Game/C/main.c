@@ -85,6 +85,14 @@ int levelstartpos[8][4] = {
 XZPAIR gStartPos = { 0 };
 int gStartDir = -1;
 
+#ifdef DEBUG_OPTIONS
+// Developer replay fixture (E01): save the in-progress recording to a file once
+// the simulation reaches a given tick, so the versioned replay contract can be
+// exercised without driving the pause menu.
+static char gSaveReplayPath[260] = { 0 };
+static int gSaveReplayAtTick = -1;
+#endif
+
 enum LevLumpType
 {
 	// known lumps indexes
@@ -1702,6 +1710,18 @@ void State_GameLoop(void* param)
 	}
 #endif
 
+#if defined(DEBUG_OPTIONS) && !defined(PSX)
+	if (gSaveReplayPath[0] && gSaveReplayAtTick >= 0 && CameraCnt >= gSaveReplayAtTick)
+	{
+		if (SaveReplayToFile(gSaveReplayPath))
+			printInfo("saved replay '%s' at tick %d\n", gSaveReplayPath, CameraCnt);
+		else
+			printError("failed to save replay '%s'\n", gSaveReplayPath);
+
+		gSaveReplayPath[0] = 0; // save once
+	}
+#endif
+
 #ifndef PSX
 	DeterministicBaseline_BeginPresentation();
 #endif
@@ -1847,6 +1867,8 @@ void PrintCommandLineArguments()
 		"  -mission <number> : starts specified mission\n"
 		"  -gametype <number> : override the game type set by -mission\n"
 		"  -level <number> : select the city/level for the started session\n"
+		"  -savereplay <file> : save the in-progress replay recording to <file>\n"
+		"  -saveat <tick> : tick at which -savereplay writes the file\n"
 #endif // DEBUG_OPTIONS
 		"  -replay <filename.d2rp> : starts replay from file\n"
 #ifdef CUTSCENE_RECORDER
@@ -2201,6 +2223,34 @@ int redriver2_main(int argc, char** argv)
 
 			SetState(STATE_GAMELAUNCH);
 			launchedFromCommandLine = 1;
+		}
+		else if (!strcmp(argv[i], "-savereplay"))
+		{
+			if (argc - i < 2)
+			{
+				printError("-savereplay missing argument!");
+				return -1;
+			}
+
+			strncpy(gSaveReplayPath, argv[i + 1], sizeof(gSaveReplayPath) - 1);
+
+			// Save at a default tick when -saveat is not also given, so the
+			// fixture is usable with just -savereplay <file>.
+			if (gSaveReplayAtTick < 0)
+				gSaveReplayAtTick = 300;
+
+			i++;
+		}
+		else if (!strcmp(argv[i], "-saveat"))
+		{
+			if (argc - i < 2)
+			{
+				printError("-saveat missing number argument!");
+				return -1;
+			}
+
+			gSaveReplayAtTick = atoi(argv[i + 1]);
+			i++;
 		}
 #endif // _DEBUG_OPTIONS
 		else if (!strcmp(argv[i], "-replay"))

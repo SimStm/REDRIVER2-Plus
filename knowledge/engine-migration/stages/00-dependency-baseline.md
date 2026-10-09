@@ -21,8 +21,9 @@ This is the first stage of [engine migration](../../roadmap/planned/engine-migra
   ImGui/platform hooks, diagnostics and vendored libraries/build dependencies.
 - Classify each as project extraction, modern adapter, temporary compatibility
   consumer or unused code. Record lifetime/thread/callback guarantees and callers.
-- Pin Diligent/DiligentFX, FMOD and PopcornFX SDK/build requirements, compiler
+- Pin required Diligent/DiligentFX and FMOD SDK/build requirements, compiler
   standard and a tested-target plan. Inspect actual integration interfaces.
+  PopcornFX SDK acquisition/integration is deferred to optional E08, only on request.
 - Record NTSC/PAL replay/timer/arithmetic contracts, input sampling and draw-time
   mutation/RNG sites. Do not infer runtime behavior from folder boundaries.
 - Repeatable input/tick scenarios for driving, collision/damage, police/traffic,

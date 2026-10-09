@@ -1,15 +1,15 @@
 #ifndef DEVELOPER_INPUT_MAPPING_H
 #define DEVELOPER_INPUT_MAPPING_H
 
-#include "PsyX/PsyX_public.h"
+#include "InputService.h"
 
 // The four binding tables the game applies through SwitchMappings(). They are
 // defined next to the config.ini parser in redriver2_psxpc.cpp, which stays the
 // single source of truth; the developer panel edits them here.
-extern PsyXKeyboardMapping g_kbGameMappings;
-extern PsyXKeyboardMapping g_kbMenuMappings;
-extern PsyXControllerMapping g_gcGameMappings;
-extern PsyXControllerMapping g_gcMenuMappings;
+extern InputKeyboardMapping g_kbGameMappings;
+extern InputKeyboardMapping g_kbMenuMappings;
+extern InputControllerMapping g_gcGameMappings;
+extern InputControllerMapping g_gcMenuMappings;
 
 enum class DeveloperInputTable { Game, Menu };
 enum class DeveloperInputDevice { Keyboard, Controller };

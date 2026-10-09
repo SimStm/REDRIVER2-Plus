@@ -25,8 +25,9 @@ Cross-links between documents are encouraged. Do not put secrets here.
 
 Start at [engine migration](roadmap/planned/engine-migration.md) and
 [its stage/validation catalog](engine-migration/index.md). Diligent, FMOD Core,
-PopcornFX, converted original content and independent simulation ticks are
-planned; current source still depends on PsyCross. Earlier hybrid graphics and
+converted original content and independent simulation ticks are planned;
+PopcornFX is optional final E08, only explicitly requested after E07. Current
+source still depends on PsyCross. Earlier hybrid graphics and
 timing plans are retained as superseded references, not the execution sequence.
 The separate native Vulkan rework is preserved on `feat/vulkan-native-rework`.
 See [current branch status](CURRENT_STATUS.md) before making implementation claims.

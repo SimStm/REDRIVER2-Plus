@@ -1145,9 +1145,23 @@ std::string RewriteManifestEntry(const char* text, int byteCount, const Manifest
 	return result;
 }
 
+// 64-bit FNV-1a over the converted pixel data. Two identical conversions of the
+// same region produce the same value, so the manifest records reproducible
+// content independently of the image encoder.
+static void ComputeContentHash(const unsigned char* data, size_t length, char* out, int capacity)
+{
+	unsigned long long hash = 1469598103934665603ULL;
+	for (size_t i = 0; i < length; ++i)
+	{
+		hash ^= data[i];
+		hash *= 1099511628211ULL;
+	}
+	snprintf(out, capacity, "%016llx", hash);
+}
+
 std::string BuildManifestEntry(const std::string& escapedTextureName, int texturePage, int textureIndex,
 	const char* relativePrefix, const char* fileName, const std::string& modelReferencesJson,
-	const char* objectType, const char* levelName, int clut, bool hasClut)
+	const char* objectType, const char* levelName, int clut, bool hasClut, const char* contentHash)
 {
 	char numbers[160];
 	snprintf(numbers, sizeof(numbers), "\", \"texturePage\": %d, \"textureIndex\": %d, \"file\": \"assets/inspector/%s",
@@ -1178,6 +1192,15 @@ std::string BuildManifestEntry(const std::string& escapedTextureName, int textur
 	{
 		entry += ", \"level\": \"";
 		entry += levelName;
+		entry += "\"";
+	}
+
+	// Reproducible content identity: the hash of the converted pixels, so two
+	// identical conversions produce equal entries.
+	if (contentHash && contentHash[0])
+	{
+		entry += ", \"contentHash\": \"";
+		entry += contentHash;
 		entry += "\"";
 	}
 
@@ -2007,6 +2030,9 @@ static bool ExportTextureCore(unsigned short tpage, unsigned short clut,
 	{
 		free(vram); free(rgba); free(existingText); return false;
 	}
+	char contentHash[24] = {};
+	ComputeContentHash(rgba, (size_t)width * height * 4, contentHash, sizeof(contentHash));
+
 	const bool wroteImage = SavePngRgba(temporary, rgba, width, height);
 	free(vram);
 	free(rgba);
@@ -2091,7 +2117,7 @@ static bool ExportTextureCore(unsigned short tpage, unsigned short clut,
 	const std::string escapedTextureName = BuildJsonString(textureName);
 	const std::string entry = BuildManifestEntry(escapedTextureName, texturePage, textureIndex, relativePrefix,
 		fileName, referencesJson, typeToken, levelToken,
-		hasPaletteVariant ? (int)paletteClut : 0, hasPaletteVariant);
+		hasPaletteVariant ? (int)paletteClut : 0, hasPaletteVariant, contentHash);
 
 	if (existingText)
 	{

@@ -37,6 +37,114 @@ build\AssetCatalogTests.exe
 It prints a check/failure count and exits non-zero on failure. It creates no
 files, so any working directory is safe.
 
+## Asset package tests
+
+`AssetPackageTests.cpp` tests the E02 native asset package manifest
+(`Game/C/assetpackage.*`) in isolation: schema/id/entry parsing, dependency
+resolution, canonical serialization reproducibility (two identical packages and
+a serialized→reloaded round trip produce identical bytes), and explicit
+diagnostics for syntax errors, unsupported schema versions, missing fields,
+duplicate ids, unknown dependencies and trailing data. It is pure data and needs
+no game assets, PsyCross or a GPU context. Because the manifest is a `.c` file
+the project compiles as C++, pass `/TP` when building it by hand:
+
+```bat
+cl.exe /nologo /TP /EHsc /std:c++14 /O2 /Gy tests\AssetPackageTests.cpp Game\C\assetpackage.c /Fo:build\ /Fe:build\AssetPackageTests.exe /link /OPT:REF
+build\AssetPackageTests.exe
+```
+
+## Conversion cache tests
+
+`ConversionCacheTests.cpp` tests the E02 conversion cache contract
+(`Game/C/conversioncache.*`) in isolation: FNV-1a hashing, canonical key
+formatting and parsing (with malformed-key diagnostics), the staleness reasons
+(schema, source, converter, options, active mods) and deterministic cache paths.
+It is pure data and needs no game assets, PsyCross or a GPU context.
+
+```bat
+cl.exe /nologo /TP /EHsc /std:c++14 /O2 /Gy tests\ConversionCacheTests.cpp Game\C\conversioncache.c /Fo:build\ /Fe:build\ConversionCacheTests.exe /link /OPT:REF
+build\ConversionCacheTests.exe
+```
+
+## glTF/GLB mesh record tests
+
+`GltfRoundTripTests.cpp` tests the E02 native mesh record: the project-owned
+`Gltf_WriteFile` writer (`utils/GltfWriter.*`) and `Gltf_LoadFile` importer
+(`utils/GltfLoader.*`) must agree on positions, normals, UVs, indices, material
+factors and the node transform, and identical input must produce byte-identical
+GLB. It also checks that a non-GLB and a truncated GLB are rejected with a
+diagnostic. The importer's WIC image path is not exercised, so no game assets or
+GPU context are needed. The importer links Windows Imaging Component:
+
+```bat
+cl.exe /nologo /TP /EHsc /std:c++14 /O2 /Gy tests\GltfRoundTripTests.cpp utils\GltfLoader.cpp utils\GltfWriter.cpp /Fo:build\ /Fe:build\GltfRoundTripTests.exe /link /OPT:REF windowscodecs.lib ole32.lib
+```
+
+## Asset converter tests
+
+`AssetConverterTests.cpp` tests the E02 converter (`utils/AssetConverter.*`) that
+turns a source mesh into a cached native GLB: it keys output by source
+hash/converter/schema/options/mods, reuses a fresh cached GLB, rebuilds a stale
+one at a new path, verifies the written GLB by reading it back, returns the
+content hash of the published bytes, and rejects an empty mesh with a
+diagnostic. It writes into a local `cache*` directory and needs no game assets
+or GPU context. The importer links Windows Imaging Component:
+
+```bat
+cl.exe /nologo /TP /EHsc /std:c++14 /O2 /Gy tests\AssetConverterTests.cpp utils\AssetConverter.cpp utils\GltfLoader.cpp utils\GltfWriter.cpp Game\C\conversioncache.c /Fo:build\ /Fe:build\AssetConverterTests.exe /link /OPT:REF windowscodecs.lib ole32.lib
+```
+
+## Car mesh serializer tests
+
+`CarMeshSerializerTests.cpp` tests the E02-B car mesh serializer
+(`utils/CarMeshSerializer.*`) that adapts raw car geometry and an active-mods
+list to the conversion pipeline: identical inputs reuse one cached GLB, changed
+positions rebuild it, the cache key and path are sensitive to the mods list, the
+documented canonical key derivation is pinned, and invalid arguments or a missing
+cache directory report named diagnostics while leaving a zeroed result. A valid
+conversion also succeeds when the caller supplies no diagnostic buffer. It writes
+into a local `cache` directory and needs no game assets or GPU context. The
+importer links Windows Imaging Component:
+
+```bat
+cl.exe /nologo /TP /EHsc /std:c++14 /O2 /Gy tests\CarMeshSerializerTests.cpp utils\CarMeshSerializer.cpp utils\AssetConverter.cpp utils\GltfWriter.cpp utils\GltfLoader.cpp Game\C\conversioncache.c /Fo:build\ /Fe:build\CarMeshSerializerTests.exe /link /OPT:REF windowscodecs.lib ole32.lib
+```
+
+It asserts a first conversion, so it is not idempotent: run it in a fresh working
+directory, the way `scripts/run_inspector_tests.ps1` gives each suite its own.
+Re-running it in the same directory would find the earlier artifacts and is not
+supported.
+
+## Asset pipeline tests
+
+`AssetPipelineTests.cpp` tests the E02 conversion → package pipeline: source
+meshes are converted to cached native GLBs and their published content hashes
+become package manifest entries (`AssetPackage_SetId`/`AssetPackage_AddEntry`),
+one entry depending on another. The assembled package must round-trip through
+canonical serialization and the parser with its hashes and dependencies intact,
+two identical builds must produce identical bytes, and a package whose
+dependency was never added must fail to load. It writes into a local `cache`
+directory and needs no game assets or GPU context. The importer links Windows
+Imaging Component:
+
+```bat
+cl.exe /nologo /TP /EHsc /std:c++14 /O2 /Gy tests\AssetPipelineTests.cpp utils\AssetConverter.cpp utils\GltfLoader.cpp utils\GltfWriter.cpp Game\C\conversioncache.c Game\C\assetpackage.c /Fo:build\ /Fe:build\AssetPipelineTests.exe /link /OPT:REF windowscodecs.lib ole32.lib
+```
+
+## Sound asset tests
+
+`SoundAssetTests.cpp` tests the E02 sound asset record (`Game/C/soundasset.*`):
+explicit defaults, id handling, field validation (sample rate, channels, bit
+depth, frames, pitch reference), loop range handling, music bank/program/sequence
+completeness and canonical serialization. It is pure data and needs no game
+assets, PsyCross or a GPU context. Because the record is a `.c` file the project
+compiles as C++, pass `/TP` when building it by hand:
+
+```bat
+cl.exe /nologo /TP /EHsc /std:c++14 /O2 /Gy tests\SoundAssetTests.cpp Game\C\soundasset.c /Fo:build\ /Fe:build\SoundAssetTests.exe /link /OPT:REF
+build\SoundAssetTests.exe
+```
+
 ## Presentation timing and snapshots
 
 `PresentationTimingTests.cpp` compiles the production `ProjectClock.cpp` and
@@ -81,6 +189,24 @@ Use `e00_compare_state.py --strict a.txt b.txt` for complete same-format replay
 runs: it requires equal tick/entity/field inventories as well as equal values.
 Without `--strict`, older formats can be compared on shared fields. An empty
 shared tick set or a recorded presentation mutation always fails comparison.
+
+## Native renderer smoke
+
+`NativeRendererSmoke.cpp` exercises the E03 `native/NativeRenderer.*` service:
+it creates a hidden Win32 window, creates the Diligent Vulkan device and swap
+chain on it, clears and presents three frames, loads a converted GLB and checks
+its vertex positions and indices round-trip through immutable Diligent buffers
+and a staging readback, renders two overlapping triangles through a
+depth-tested graphics pipeline into an offscreen target and checks the nearer
+one wins the centre pixel, samples a base-colour texture on a textured quad and
+checks a translated constant-buffer MVP moves it off the centre pixel, resizes
+the swap chain, presents again and shuts down.
+It needs the Diligent libraries from `scripts/fetch_diligent.ps1`, a
+Vulkan-capable GPU/driver, and no game assets. Run it with:
+
+```powershell
+pwsh -NoProfile -File scripts/run_native_renderer_smoke.ps1
+```
 
 Manual in-game verification:
 

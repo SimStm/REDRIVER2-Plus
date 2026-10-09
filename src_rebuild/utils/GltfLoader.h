@@ -44,6 +44,11 @@ struct GltfMeshData
 	float metallicFactor;
 	float roughnessFactor;
 
+	// Node transform of the first node that references the mesh, column-major
+	// (identity when the node has none). Retained so a source placement is not
+	// lost when geometry and its transform are compared as one record.
+	float transform[16];
+
 	int vertexCount;
 	int triangleCount;
 
@@ -57,6 +62,8 @@ struct GltfMeshData
 	{
 		baseColorFactor[0] = baseColorFactor[1] = baseColorFactor[2] = baseColorFactor[3] = 1.0f;
 		emissiveFactor[0] = emissiveFactor[1] = emissiveFactor[2] = 0.0f;
+		for (int i = 0; i < 16; i++)
+			transform[i] = (i % 5 == 0) ? 1.0f : 0.0f;
 	}
 };
 

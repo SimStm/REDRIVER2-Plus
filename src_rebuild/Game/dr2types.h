@@ -1042,8 +1042,16 @@ struct CHEATS
 //---------------------------------------------------------------------------------------
 // TODO: REPLAYS.H
 
-#define DRIVER2_REPLAY_MAGIC		0x14793209
+#define DRIVER2_REPLAY_MAGIC		0x14793209	/* legacy V1 tapes, no version fields */
+#define DRIVER2_REPLAY_MAGIC_V2		0x1479320A	/* versioned contract (E01) */
 #define REDRIVER2_CHASE_MAGIC		(('D' << 24) | ('2' << 16) | ('C' << 8) | 'R' )
+
+/* Versioned replay contract (E01). The values live in the previously unused
+   REPLAY_SAVE_HEADER.reserved fields, so the on-disk header size is unchanged.
+   Legacy V1 tapes keep DRIVER2_REPLAY_MAGIC and carry none of these fields. */
+#define REPLAY_FORMAT_VERSION		2
+#define REPLAY_REGION_NTSC		0
+#define REPLAY_REGION_PAL		1
 
 struct REPLAY_PARAMETER_BLOCK
 {
