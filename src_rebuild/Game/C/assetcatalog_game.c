@@ -49,6 +49,15 @@ static bool s_nativeDrawRequested = false;
 static int s_nativeDrawSlot = -1;
 static int s_nativeDrawCount = 0; // 0 -> the default bound
 
+// Developer flag: full-region native draw of every resident placement once
+// after SpoolSYNC. Never interrupts the game on failure.
+static bool s_regionDrawRequested = false;
+
+// Monotonic level generation, bumped in AssetCatalogGame_BeginLevel. The native
+// bridge reads it to detect a level change even when the resource registry is
+// already repopulated by the same frame's preparation.
+static unsigned int s_levelGeneration = 0;
+
 #define ASSET_CATALOG_GAME_DEFAULT_DRAW_COUNT 32
 
 void AssetCatalogGame_ConfigureFromCommandLine(int argc, char** argv)
@@ -83,6 +92,10 @@ void AssetCatalogGame_ConfigureFromCommandLine(int argc, char** argv)
 					i++;
 				}
 			}
+		}
+		else if (strcmp(argv[i], "-drawregion") == 0)
+		{
+			s_regionDrawRequested = true;
 		}
 	}
 }
@@ -122,6 +135,16 @@ int AssetCatalogGame_NativeDrawCount(void)
 	return s_nativeDrawCount > 0 ? s_nativeDrawCount : ASSET_CATALOG_GAME_DEFAULT_DRAW_COUNT;
 }
 
+bool AssetCatalogGame_RegionDrawRequested(void)
+{
+	return s_regionDrawRequested;
+}
+
+unsigned int AssetCatalogGame_LevelGeneration(void)
+{
+	return s_levelGeneration;
+}
+
 namespace
 {
 // Bounded slot->published-resource registry and the last collected placements.
@@ -132,6 +155,16 @@ int s_modelResourceCount = 0;
 
 AssetCatalogGameDrawPlacement s_drawPlacements[ASSET_CATALOG_GAME_MAX_DRAW_PLACEMENTS];
 int s_drawPlacementCount = 0;
+
+// Full-region placement store and its capacity diagnostics. Populated once by
+// AssetCatalogGame_PrepareRegionDraw and read by the native-draw bridge; the
+// store is sized to the renderer's instance bound so it never overflows.
+AssetCatalogGameDrawPlacement s_regionPlacements[ASSET_CATALOG_GAME_MAX_REGION_PLACEMENTS];
+int s_regionPlacementCount = 0;
+bool s_regionPlacementsTruncated = false;
+bool s_regionResourcesTruncated = false;
+int s_regionConvertedSlotCount = 0;
+int s_regionFailedSlotCount = 0;
 
 // Per-slot probe record. The loader reports each model once at its size-live
 // site; a reused slot replaces its record in place.
@@ -202,6 +235,12 @@ void AssetCatalogGame_BeginLevel(void)
 {
 	AssetCatalog_BeginContext(GameLevel, (int)GetCityType(), gMultiplayerLevels);
 
+	// A new level starts a fresh generation. The bridge compares this to detect
+	// a level change independently of the registry contents, because BeginLevel
+	// and the post-SpoolSYNC preparation can run in the same frame, so the
+	// registry may already be repopulated when the bridge frame handler runs.
+	s_levelGeneration++;
+
 	// A new level starts a fresh probe: discard the previous level's per-slot
 	// records so a multi-level session reports only the current level. This is
 	// always safe and never interrupts the game; the probe itself stays
@@ -212,6 +251,11 @@ void AssetCatalogGame_BeginLevel(void)
 	// previous level; a level change must not serve them to the native draw.
 	s_modelResourceCount = 0;
 	s_drawPlacementCount = 0;
+	s_regionPlacementCount = 0;
+	s_regionPlacementsTruncated = false;
+	s_regionResourcesTruncated = false;
+	s_regionConvertedSlotCount = 0;
+	s_regionFailedSlotCount = 0;
 }
 
 void AssetCatalogGame_RegisterModel(int modelIndex)
@@ -1271,6 +1315,201 @@ bool AssetCatalogGame_PrepareNativeDraw(char* status, int statusCapacity)
 	return true;
 }
 
+// Full-region native draw preparation. It reuses the level inventory walker
+// without the report path (the same walker the bounded `-drawmodel` collector
+// uses), derives the distinct referenced model slots, converts each once through
+// the shared ConvertModelSlot path (which registers its published resource), and
+// copies every resident placement into the bounded region store. A slot whose
+// conversion fails is a named warning and is skipped while the rest continue;
+// capacity overflow of placements or resources is a named truncation. No source
+// model is decoded here beyond the conversion itself, so the draw never
+// re-decodes.
+bool AssetCatalogGame_PrepareRegionDraw(char* status, int statusCapacity)
+{
+	if (status == NULL || statusCapacity <= 0)
+		return false;
+
+	status[0] = '\0';
+
+	if (!s_regionDrawRequested)
+	{
+		snprintf(status, statusCapacity, "region draw not requested");
+		return false;
+	}
+
+	s_regionPlacementCount = 0;
+	s_regionPlacementsTruncated = false;
+	s_regionResourcesTruncated = false;
+	s_regionConvertedSlotCount = 0;
+	s_regionFailedSlotCount = 0;
+
+	if (!AssetCatalog_IsValid())
+	{
+		snprintf(status, statusCapacity, "region draw: no level catalog context; load a level first");
+		return false;
+	}
+
+	if (cell_objects == NULL || cell_ptrs == NULL || cells == NULL || cell_objects_add[4] <= 0)
+	{
+		snprintf(status, statusCapacity, "region draw: no map region data is resident");
+		return false;
+	}
+
+	if (MAP_REGION_SIZE != 32 || MAP_CELL_SIZE <= 0 || regions_across <= 0 ||
+		num_straddlers < 0 || num_straddlers > ASSET_CATALOG_MAX_PLACEMENTS ||
+		cell_objects_add[4] > ASSET_CATALOG_MAX_PLACEMENTS - num_straddlers)
+	{
+		snprintf(status, statusCapacity, "region draw: invalid map dimensions or object capacity");
+		return false;
+	}
+
+	const int totalSlots = num_straddlers + cell_objects_add[4];
+	const int placementCapacity = totalSlots < ASSET_CATALOG_MAX_PLACEMENTS ? totalSlots : ASSET_CATALOG_MAX_PLACEMENTS;
+
+	AssetCatalogPlacement* placements = (AssetCatalogPlacement*)malloc((size_t)placementCapacity * sizeof(AssetCatalogPlacement));
+	unsigned char* visited = (unsigned char*)calloc(ASSET_CATALOG_MAX_PLACEMENTS, 1);
+
+	if (placements == NULL || visited == NULL)
+	{
+		free(placements);
+		free(visited);
+		snprintf(status, statusCapacity, "region draw: placement allocation failed");
+		return false;
+	}
+
+	LevelPlacementWalk walk = {};
+	walk.placements = placements;
+	walk.capacity = placementCapacity;
+	walk.totalSlots = totalSlots;
+	walk.visited = visited;
+
+	for (int barrel = 0; barrel < 4; barrel++)
+		CollectBarrelPlacements(walk, barrel);
+
+	if (walk.eligible == 0)
+	{
+		free(placements);
+		free(visited);
+		snprintf(status, statusCapacity, "region draw: no eligible resident barrel data");
+		return false;
+	}
+
+	// Distinct referenced slots, bounded by the resource registry capacity. A
+	// full list is a named truncation: the extra slots are not converted.
+	int distinctSlots[ASSET_CATALOG_GAME_MAX_MODEL_RESOURCES];
+	int distinctCount = 0;
+
+	for (int i = 0; i < walk.count; i++)
+	{
+		const int modelSlot = walk.placements[i].modelNumber;
+		if (modelSlot < 0 || modelSlot >= MAX_MODEL_SLOTS)
+			continue;
+
+		bool seen = false;
+		for (int s = 0; s < distinctCount; s++)
+			if (distinctSlots[s] == modelSlot)
+			{
+				seen = true;
+				break;
+			}
+		if (seen)
+			continue;
+
+		if (distinctCount >= ASSET_CATALOG_GAME_MAX_MODEL_RESOURCES)
+		{
+			s_regionResourcesTruncated = true;
+			continue;
+		}
+
+		distinctSlots[distinctCount++] = modelSlot;
+	}
+
+	// Convert each distinct slot once; a failed slot is a named warning and is
+	// skipped while the rest continue. A failed slot keeps no resource, so the
+	// bridge submits its instances with an empty key and the renderer counts
+	// them as skippedUnresolved rather than falling back to a placeholder.
+	for (int s = 0; s < distinctCount; s++)
+	{
+		char convertStatus[512];
+
+		if (ConvertModelSlot(distinctSlots[s], convertStatus, sizeof(convertStatus)))
+			s_regionConvertedSlotCount++;
+		else
+		{
+			s_regionFailedSlotCount++;
+			printWarning("AssetCatalog: region draw: %s\n", convertStatus);
+		}
+	}
+
+	// Resolve each distinct slot's revision once for the placement store; the
+	// renderer only ever sees the resource key, so this is staleness provenance.
+	unsigned int revisions[ASSET_CATALOG_GAME_MAX_MODEL_RESOURCES];
+
+	for (int s = 0; s < distinctCount; s++)
+	{
+		const int record = AssetCatalog_FindModel(distinctSlots[s]);
+		revisions[s] = record >= 0 ? AssetCatalog_GetModelHandle(record).revision : 0;
+	}
+
+	// Copy every resident placement into the bounded store. The store bound is
+	// the native instance bound; a full store is a named truncation.
+	int copied = 0;
+
+	for (int i = 0; i < walk.count; i++)
+	{
+		const AssetCatalogPlacement& source = walk.placements[i];
+		if (source.modelNumber < 0 || source.modelNumber >= MAX_MODEL_SLOTS)
+			continue;
+
+		if (copied >= ASSET_CATALOG_GAME_MAX_REGION_PLACEMENTS)
+		{
+			s_regionPlacementsTruncated = true;
+			break;
+		}
+
+		unsigned int revision = 0;
+		for (int s = 0; s < distinctCount; s++)
+			if (distinctSlots[s] == source.modelNumber)
+			{
+				revision = revisions[s];
+				break;
+			}
+
+		AssetCatalogGameDrawPlacement& placement = s_regionPlacements[copied++];
+		placement.x = source.x;
+		placement.y = source.y;
+		placement.z = source.z;
+		placement.rotation = source.rotation;
+		placement.sourceObjectIndex = source.sourceObjectIndex;
+		placement.modelSlot = source.modelNumber;
+		placement.modelRevision = revision;
+	}
+
+	// The walker's own object bound is a placement truncation too: placements
+	// beyond it were never seen, so the drawn region is incomplete either way.
+	if (walk.capacityExceeded)
+		s_regionPlacementsTruncated = true;
+
+	s_regionPlacementCount = copied;
+
+	free(placements);
+	free(visited);
+
+	if (copied == 0)
+	{
+		snprintf(status, statusCapacity, "region draw: no resident placements");
+		return false;
+	}
+
+	snprintf(status, statusCapacity,
+		"region draw: %d placements%s, %d distinct slots, %d converted, %d failed%s; %s",
+		copied, s_regionPlacementsTruncated ? " (placement-truncated)" : "",
+		distinctCount, s_regionConvertedSlotCount, s_regionFailedSlotCount,
+		s_regionResourcesTruncated ? " (resource-truncated)" : "",
+		walk.capacityExceeded ? "walker object bound reached" : "walker complete");
+	return true;
+}
+
 #else // !_WIN32
 
 bool AssetCatalogGame_ReconcileLevel(char* status, int statusCapacity)
@@ -1317,6 +1556,14 @@ bool AssetCatalogGame_PrepareNativeDraw(char* status, int statusCapacity)
 	return false;
 }
 
+bool AssetCatalogGame_PrepareRegionDraw(char* status, int statusCapacity)
+{
+	if (status != NULL && statusCapacity > 0)
+		snprintf(status, statusCapacity, "Region draw preparation is currently available on Windows only");
+
+	return false;
+}
+
 #endif // _WIN32
 
 // Reads the bounded placement store on every non-PSX platform; it is only
@@ -1359,6 +1606,55 @@ bool AssetCatalogGame_GetModelResource(int modelSlot,
 	}
 
 	return false;
+}
+
+// Region-draw accessors read on every non-PSX platform; the region store is
+// only populated by the Windows-only preparation path.
+int AssetCatalogGame_GetRegionDrawPlacementCount(void)
+{
+	return s_regionPlacementCount;
+}
+
+bool AssetCatalogGame_GetRegionDrawPlacement(int index, AssetCatalogGameDrawPlacement* out)
+{
+	if (out == NULL || index < 0 || index >= s_regionPlacementCount)
+		return false;
+
+	*out = s_regionPlacements[index];
+	return true;
+}
+
+int AssetCatalogGame_GetModelResourceCount(void)
+{
+	return s_modelResourceCount;
+}
+
+bool AssetCatalogGame_GetModelResourceAt(int index,
+	char* resourceKey, int resourceKeyCapacity,
+	char* glbPath, int glbPathCapacity,
+	int* modelSlot)
+{
+	if (index < 0 || index >= s_modelResourceCount)
+		return false;
+
+	const AssetCatalogGameModelResource& entry = s_modelResources[index];
+	if (resourceKey && resourceKeyCapacity > 0)
+		snprintf(resourceKey, resourceKeyCapacity, "%s", entry.resourceKey);
+	if (glbPath && glbPathCapacity > 0)
+		snprintf(glbPath, glbPathCapacity, "%s", entry.glbPath);
+	if (modelSlot)
+		*modelSlot = entry.modelSlot;
+	return true;
+}
+
+bool AssetCatalogGame_RegionDrawPlacementsTruncated(void)
+{
+	return s_regionPlacementsTruncated;
+}
+
+bool AssetCatalogGame_RegionDrawResourcesTruncated(void)
+{
+	return s_regionResourcesTruncated;
 }
 
 #else
@@ -1459,6 +1755,67 @@ int AssetCatalogGame_GetDrawPlacements(AssetCatalogGameDrawPlacement* out, int c
 	(void)capacity;
 
 	return 0;
+}
+
+bool AssetCatalogGame_RegionDrawRequested(void)
+{
+	return false;
+}
+
+unsigned int AssetCatalogGame_LevelGeneration(void)
+{
+	return 0;
+}
+
+bool AssetCatalogGame_PrepareRegionDraw(char* status, int statusCapacity)
+{
+	if (status != NULL && statusCapacity > 0)
+		status[0] = '\0';
+
+	return false;
+}
+
+int AssetCatalogGame_GetRegionDrawPlacementCount(void)
+{
+	return 0;
+}
+
+bool AssetCatalogGame_GetRegionDrawPlacement(int index, AssetCatalogGameDrawPlacement* out)
+{
+	(void)index;
+	(void)out;
+
+	return false;
+}
+
+int AssetCatalogGame_GetModelResourceCount(void)
+{
+	return 0;
+}
+
+bool AssetCatalogGame_GetModelResourceAt(int index,
+	char* resourceKey, int resourceKeyCapacity,
+	char* glbPath, int glbPathCapacity,
+	int* modelSlot)
+{
+	(void)index;
+	(void)resourceKey;
+	(void)resourceKeyCapacity;
+	(void)glbPath;
+	(void)glbPathCapacity;
+	(void)modelSlot;
+
+	return false;
+}
+
+bool AssetCatalogGame_RegionDrawPlacementsTruncated(void)
+{
+	return false;
+}
+
+bool AssetCatalogGame_RegionDrawResourcesTruncated(void)
+{
+	return false;
 }
 
 void AssetCatalogGame_RecordModelSpan(int modelIndex, const unsigned char* modelBegin, int spanBytes)

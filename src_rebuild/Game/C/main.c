@@ -709,6 +709,20 @@ void State_GameInit(void* param)
 			printWarning("AssetCatalog: %s\n", drawStatus);
 	}
 
+	// E03 region draw: the -drawregion developer flag converts every distinct
+	// model slot referenced by the resident placements through the existing
+	// path and collects the full placement list for the native bridge to submit
+	// as instances. Warn-only: a failure must never interrupt the game.
+	if (AssetCatalogGame_RegionDrawRequested())
+	{
+		char regionStatus[512];
+
+		if (AssetCatalogGame_PrepareRegionDraw(regionStatus, sizeof(regionStatus)))
+			printInfo("AssetCatalog: %s\n", regionStatus);
+		else
+			printWarning("AssetCatalog: %s\n", regionStatus);
+	}
+
 	// The playground replaces the loaded world with a generated, resident
 	// fixture while reusing the donor level's car, texture and sound data.
 	if (NewLevel)
@@ -1927,6 +1941,7 @@ void PrintCommandLineArguments()
 		"  -modelptypes : write a model polygon-type report after loading\n"
 		"  -convertmodel <slot> : convert one resident model slot to a native GLB\n"
 		"  -drawmodel <slot> [count] : native per-instance draw of one converted model slot\n"
+		"  -drawregion : native draw of the full converted resident region\n"
 #endif // DEBUG_OPTIONS
 		"  -replay <filename.d2rp> : starts replay from file\n"
 #ifdef CUTSCENE_RECORDER
@@ -2188,6 +2203,12 @@ int redriver2_main(int argc, char** argv)
 				if (argc - i >= 2 && argv[i + 1][0] != '-')
 					i++; // optional count
 			}
+		}
+		else if (!strcmp(argv[i], "-drawregion"))
+		{
+			// Consumed by AssetCatalogGame_ConfigureFromCommandLine in the
+			// platform entry point; accepted here only to avoid the command
+			// line helper popup.
 		}
 #ifdef DEBUG_OPTIONS
 		else if (!strcmp(argv[i], "-exportxasubtitles"))

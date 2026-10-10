@@ -139,74 +139,80 @@ accepted.
 - CPU texture decode (block 2.4): `utils/TextureDecode.{h,c}` is a pure decoder of indexed 4/8-bit pages + CLUT
   bytes and 16-bit direct pages into RGBA8 (row stride; tight loader pages and 1024-halfword VRAM stride; BGR555
   `E5TO8`, `0000h` transparent, STP->128, no texture window); `TextureDecodeTests` 136.
-- World mesh build + multi-primitive GLB (block 2 item 3, follow-up A+B): `utils/WorldMeshBuilder.{h,cpp}` builds
-  a `GltfMeshData` from `SourceMesh` (flat per-triangle normals, winding-normalized with degenerate `(0,0,1)`
-  fallback; 3 dedicated vertices per triangle; base colour = mean of the stored face colours or neutral opaque
-  white for PL records; identity node transform; deterministic; full bounds validation with named errors and zero
-  partial output). The single builder keeps `MULTIPLE_SUBMESHES_UNSUPPORTED`; `WorldMeshBuilder_BuildMulti` maps
-  each submesh to one `GltfPrimitiveData` and validates a contiguous, ordered, complete partition of the index
-  list (named errors, zero partial output); the game call site uses `BuildMulti`.
-  `utils/GltfWriter.*`/`utils/GltfLoader.*` add `GltfPrimitiveData`/`GltfMultiMeshData` and
-  `Gltf_WriteFileMulti`/`Gltf_LoadFileMulti`: deterministic layout (one shared BIN buffer; per primitive POSITION,
-  then NORMAL/TEXCOORD_0 when present, then the index list; material i = primitive i; accessors in order) and
-  strict pre-write validation (no positions, partial triangle, out-of-range index -> named errors, partial file
-  removed). The single-primitive writer API is unchanged and byte-identical by construction (deterministic `%.9g`
-  floats), empirically verified (pre-change writer compiled and bytes compared) and covered by a dedicated
-  byte-identity test; the single loader keeps its historical tolerant, image-retaining contract and reads
-  primitive 0 of a multi file, while the multi loader is strict and rejects texture references with a named error.
-  `native/NativeRenderer.*` represents a multi-primitive resource (`ScenePrimitive` with its own vertex/index
-  buffers, window+offscreen SRBs and base colour; one shared white texel per item) and an instance draws every
-  primitive (UpdateBuffer -> Commit -> Draw per primitive); `drawn` still counts instances and
-  placeholder/content/no-fallback semantics are unchanged. `Game/C/assetcatalog_game.c` `ConvertModelSlot` builds
-  with `BuildMulti` and publishes via a local transactional `PublishMultiMesh` (reuse/tmp/verify/rename mirroring
-  `AssetConverter`; same error codes; log line and diagnostics unchanged). Capacity change:
-  `LoadContent`/`RegisterResource` now go through `Gltf_LoadFileMulti`, which rejects texture references, so a
-  single-record GLB with an embedded base-colour image is no longer accepted by the renderer (named error); the
-  E02 writer never embeds images, so the world-mesh pipeline is unaffected (boundary check added to the smoke).
-  Recorded follow-ups: promote `PublishMultiMesh` into `AssetConverter` (duplicates ~80 lines; its multi verify
-  checks only the primitive count); `MaterialReferencesTexture` does not cover texture references via
-  `extensions`. Evidence: inspector suites green (`GltfRoundTripTests` 116; `WorldMeshBuilderTests` 211;
-  others unchanged); smoke 154, 0 failures;
-  `Release_dev`/`Release_dev_native` builds exit 0. Real runs: slot 195 (largest, span 2044 B) now converts as
-  multi-submesh (previously failed `multiple-submeshes-unsupported`) but is unreferenced; slot 1150 (referenced)
-  published a GLB with 3 primitives / 3 materials, 22 placements, submitted 22 / drawn 22 / skippedUnresolved 0 /
-  residentResources 1, offscreen 640x360 with 42 non-clear pixels; the model is a ~0.3 m sign (bounds 916x1265x56
-  raw) and the pack is modular (max span 2044 B) with no large single building meshes. The run proves the
-  multi-primitive pipeline end-to-end (conversion, publication, registration, all three primitives drawn, 22/22
-  instances, one resident resource) with the game camera; per-primitive correctness is from the offscreen suite;
-  it does not prove visual fidelity or a large visible building, and there is no texture/lighting parity. Limits:
-  no textures/embedded images (follow-up: per-face `texture_id`/CLUT + `TEXINF` sub-rect recovery + writer
-  extension); flat normals only; one material = mean face colour.
+- World mesh build + multi-primitive GLB (block 2 item 3, follow-up A+B): `utils/WorldMeshBuilder.{h,cpp}`
+  builds a `GltfMeshData` from `SourceMesh` (flat per-triangle normals, winding-normalized with degenerate
+  `(0,0,1)` fallback; 3 dedicated vertices per triangle; base colour = mean stored face colours or neutral
+  opaque white for PL records; identity node transform; deterministic; named-error bounds validation, zero
+  partial output); `WorldMeshBuilder_BuildMulti` maps each submesh to one `GltfPrimitiveData` and validates a
+  contiguous, ordered, complete index partition (the single builder keeps `MULTIPLE_SUBMESHES_UNSUPPORTED`; the
+  game call site uses `BuildMulti`). `utils/GltfWriter.*`/`utils/GltfLoader.*` add
+  `GltfPrimitiveData`/`GltfMultiMeshData` and `Gltf_WriteFileMulti`/`Gltf_LoadFileMulti` with a deterministic
+  layout (one shared BIN buffer; per primitive POSITION, then NORMAL/TEXCOORD_0 when present, then indices;
+  material i = primitive i) and strict pre-write validation (partial file removed); the single-primitive writer
+  is byte-identical by construction and by a dedicated test, the single loader keeps its tolerant
+  image-retaining contract and reads primitive 0, and the multi loader is strict and rejects texture references.
+  `native/NativeRenderer.*` represents a multi-primitive resource (`ScenePrimitive` with its own buffers,
+  window+offscreen SRBs and base colour; one shared white texel per item) and an instance draws every primitive
+  (UpdateBuffer -> Commit -> Draw); `drawn` still counts instances and placeholder/content/no-fallback semantics
+  are unchanged. `Game/C/assetcatalog_game.c` `ConvertModelSlot` builds with `BuildMulti` and publishes via a
+  local transactional `PublishMultiMesh` (reuse/tmp/verify/rename mirroring `AssetConverter`). Capacity change:
+  `LoadContent`/`RegisterResource` go through `Gltf_LoadFileMulti`, which rejects texture references, so a
+  single-record GLB with an embedded base-colour image is no longer accepted (named error); the E02 writer never
+  embeds images, so the pipeline is unaffected. Follow-ups: promote `PublishMultiMesh` into `AssetConverter`
+  (duplicates ~80 lines; its multi verify checks only the primitive count); `MaterialReferencesTexture` does not
+  cover `extensions` references; instanced-model decode (region block below). Evidence: inspector suites green
+  (`GltfRoundTripTests` 116; `WorldMeshBuilderTests` 211; others unchanged); smoke 154, 0 failures;
+  `Release_dev`/`Release_dev_native` exit 0; slot 195 (largest, span 2044 B) converts as multi-submesh but is
+  unreferenced; slot 1150 (referenced) published 3 primitives / 3 materials, 22 placements, submitted/drawn 22,
+  residentResources 1, offscreen 640x360 with 42 non-clear pixels (~0.3 m sign, pack modular, no large single
+  building meshes). Limits: no textures/embedded images (follow-up: per-face `texture_id`/CLUT + `TEXINF`
+  sub-rect recovery + writer extension); flat normals only; one material = mean face colour.
 - Per-instance draw + game camera (block 2 item 4): `native/NativeRenderer.*` adds bounded resources
-  (`NATIVE_MAX_RESOURCES` 16) and instances (`NATIVE_MAX_INSTANCES` 256); `NativeInstance` (resourceKey[160],
+  (`NATIVE_MAX_RESOURCES`, raised to 64 for the region path) and instances (`NATIVE_MAX_INSTANCES`, raised to 4096); `NativeInstance` (resourceKey[160],
   column-major transform[16], level/variant/sourceObjectIndex/modelSlot/modelRevision); residency API
   (`RegisterResource`/`UnregisterResource`/`ClearResources`/`ResourceResident`, idempotent, capacity = named
-  error, no eviction); `SetInstances`/`ClearInstances` (copied; unresolved keys skipped with a counter + first-key
+  error, no eviction); `SetInstances`/`ClearInstances` (copied; unresolved keys skipped with counter + first-key
   diagnostic); `SetClipPlanes`; `GetInstanceStats`; `GetFirstInstanceDiagnostic`; no-fallback rule (instances set
-  -> only instances; all-unresolved -> clear + diagnostic; modes placeholder|content|instances explicit;
-  `LoadContent` N=1 compat). Projection is +Z-forward [0,1] depth (`out[10]=F/(F-N)`, `out[11]=+1`,
-  `out[14]=-N*F/(F-N)`) and +Y-down; the F-A fix negates camera-space Y (`out[5]=-f`) since the game camera is
-  +Y-down (GTE `SY=OFY+IR2*h/sz`) while Diligent is +Y-up; the reflection is cancelled by
+  -> only instances; all-unresolved -> clear + diagnostic; modes explicit; `LoadContent` N=1 compat). Projection
+  is +Z-forward [0,1] depth and +Y-down; the F-A fix negates camera-space Y (`out[5]=-f`) since the game camera
+  is +Y-down (GTE `SY=OFY+IR2*h/sz`) while Diligent is +Y-up; the reflection is cancelled by
   `CULL_MODE_BACK`+`FrontCounterClockwise=False`, pinned by smoke `TestVerticalConvention` and the re-pinned
-  winding fixture (`frontArea<0/backArea>0`). New pure `utils/NativeInstanceTransform.*` (392 checks) and
-  `utils/NativeCameraView.*` (9 checks); `redriver2_psxpc.cpp` feeds the real camera
-  (`inv_camera_matrix`+`camera_position`) via `NativeCameraView_Compose` with raw clip planes 100/125000, a gated
-  one-shot report/dump and nearest-K submission; a registry miss clears/resets (F-C).
-  `Game/C/assetcatalog_game.{h,c}` has a slot->{key,glbPath,contentHash} registry and bounded placements
-  collector; `-drawmodel <slot> [count]`. Evidence: smoke 130/0; inspector suites pass; builds exit 0; run
-  `-drawmodel 169 32` (slot 169, 18 placements, 18/18 drawn, camera-position 17387,-1050,142670, camera-z
-  10824.0/-1481.9/77735.4, inFrustum 14/18, laterallyVisible 10/18, offscreen rgba-hash `241175f1491c392b`, 4
-  non-clear pixels at y[286..307] = 360-y) proves the pipeline executes with the game camera, not shape/ region
-  (micro-prop 134x130x68 raw ~3.2 cm). Limits: one slot + bounded K; FOV 1.0472 vs 0.9265 deferred; GLB node
-  transform ignored; no textures/LOD/streaming/cars/animation/performance. Gate: commit-conditional on F-A;
-  F-A/F-C/F-D remediated; this update resolves F-B.
-- Not yet done: the native scene accepts converted fixtures, not the game's world/materials/lighting and player,
-  so E03 has no playable original-world native slice. Debug configs are not wired (only Release Diligent libraries
-  exist). Headless native mode does not run the F11 ImGui overlay; a possible PAL double-aspect in the camera seam
-  needs a PAL probe. Must not claim: no "region/building renders correctly" (the bounded run is not visual
-  acceptance); the renderer no longer accepts embedded-image GLBs (capacity change above); no all-model/all-slot
-  coverage; no LOD/streaming/cars/animation/performance; single-vs-multi byte identity is by construction plus
-  empirical verification and the dedicated test. Next: E04 remaining consumer slices; E05/E06 pending.
+  winding fixture. New pure `utils/NativeInstanceTransform.*` (392 checks) and `utils/NativeCameraView.*`
+  (9 checks); `redriver2_psxpc.cpp` feeds the real camera (`inv_camera_matrix`+`camera_position`) via
+  `NativeCameraView_Compose` with raw clip planes 100/125000 and a gated one-shot report/dump; a registry miss
+  clears/resets (F-C). `Game/C/assetcatalog_game.{h,c}` has a slot->{key,glbPath,contentHash} registry and
+  bounded placements collector; `-drawmodel <slot> [count]`. Evidence: smoke 130/0; inspector suites pass;
+  builds exit 0; run `-drawmodel 169 32` (18/18 drawn, inFrustum 14/18, laterallyVisible 10/18, offscreen
+  rgba-hash `241175f1491c392b`, 4 non-clear pixels at y[286..307] = 360-y) proves the pipeline executes with the
+  game camera, not shape/region (micro-prop 134x130x68 raw ~3.2 cm). Limits: one slot + bounded K; FOV 1.0472 vs
+  0.9265 deferred; GLB node transform ignored. Gate: commit-conditional on F-A; F-A/F-C/F-D remediated.
+- Full-region native draw (block 2 item 5, 2026-10-10; full detail/evidence in CHANGELOG): capacities raised for the region path
+  (`NATIVE_MAX_RESOURCES` 64, `NATIVE_MAX_INSTANCES` 4096, `ASSET_CATALOG_GAME_MAX_MODEL_RESOURCES` 64, new
+  `ASSET_CATALOG_GAME_MAX_REGION_PLACEMENTS` 4096). `Game/C/assetcatalog_game.{h,c}` prepares once after `SpoolSYNC`: the walker
+  collects all resident placements (bounded 4096, truncation flagged), derives the distinct referenced slots (bounded 64,
+  truncation flagged) and converts each once via `ConvertModelSlot` (a failed slot is a named warning, skipped while the rest
+  continue), exposing bounded accessors; cleared at `BeginLevel`; non-Windows/PSX stubs. `redriver2_psxpc.cpp` registers every
+  converted resource (logs R/T), builds the full instance list in a static `NativeInstance[4096]` buffer (~1 MB BSS;
+  `static_assert <= NATIVE_MAX_INSTANCES`, never on the stack), calls `SetInstances` once and reuses the camera-validity gate and
+  one-shot report + `native_region_draw.rgba` 640x360 dump with the real game camera; a level change resets state; no per-frame
+  re-collection, no re-decode at draw time, no placeholder fallback when instances are set; the bounded `-drawmodel` path is
+  unchanged. `main.c` accepts `-drawregion` plus help line and a warn-only post-SpoolSYNC hook. Evidence: inspector suites green; smoke 202, 0 failures;
+  `Release_dev`/`Release_dev_native` builds exit 0; real mission-1 run prepared `4096 placements (placement-truncated), 64
+  distinct slots, 46 converted, 18 failed (resource-truncated)`, 18 failures named `decode failed: instance (instanced models
+  cannot be decoded from a single span)`, `registered 46/46 resources`, report `submitted 4096, drawn 2913, skippedUnresolved
+  1183, residentResources 46, inFrustum 2588/4096, laterallyVisible 1919/4096`; offscreen 640x360 with 64174 non-clear pixels
+  (~28%), full-frame bbox, 8 distinct colours. Proves the bounded region snapshot is drawn with the real game camera (2913
+  instances, 46 resident resources); untextured (base colours only), caps truncate the level's full content (E02 counted 6740
+  unique placements) and 18 referenced slots are instanced models the single-span decoder rejects (follow-up: base-instance
+  vertex resolution); no LOD/streaming, no texture/lighting parity; a dev run is not visual acceptance.
+- Not yet done: the native scene draws the converted region (block 2 item 5) but not the game's
+  textures/materials/lighting, player, LOD or streaming, so E03 still has no visually accepted or playable
+  original-world native slice. Debug configs are not wired (only Release Diligent libraries exist). Headless
+  native mode does not run the F11 ImGui overlay; a possible PAL double-aspect in the camera seam needs a PAL
+  probe. Must not claim: no "region renders correctly" (the region dev run is not visual acceptance); the
+  renderer no longer accepts embedded-image GLBs (capacity change above); no all-model/all-slot coverage; no
+  LOD/streaming/cars/animation/performance; single-vs-multi byte identity is by construction plus empirical
+  verification and the dedicated test. Next: E04 remaining consumer slices; E05/E06 pending.
 
 ## Engine migration E04 (in progress)
 

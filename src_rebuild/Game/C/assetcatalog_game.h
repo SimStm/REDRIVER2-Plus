@@ -104,7 +104,7 @@ bool AssetCatalogGame_ReconcileLevel(char* status, int statusCapacity);
    registry is populated by a successful one-model conversion and read by the
    native-draw bridge; the collector reuses the level inventory walker without
    the report path and never re-decodes a model. */
-#define ASSET_CATALOG_GAME_MAX_MODEL_RESOURCES 16
+#define ASSET_CATALOG_GAME_MAX_MODEL_RESOURCES 64
 #define ASSET_CATALOG_GAME_MAX_DRAW_PLACEMENTS 64
 
 /* One published model resource. `resourceKey` is the canonical
@@ -170,5 +170,66 @@ bool AssetCatalogGame_GetModelResource(int modelSlot,
 /* Copies up to `capacity` of the collected placements. Returns the number
    copied (0 when none were collected or the native-draw flag is off). */
 int AssetCatalogGame_GetDrawPlacements(AssetCatalogGameDrawPlacement* out, int capacity);
+
+/* --- E03 region draw (full converted resident region) --------------------- */
+
+/* Bounded full-region placement store. It is sized to the native renderer's
+   instance bound (NATIVE_MAX_INSTANCES); the bridge asserts the relation so a
+   change to either limit fails loudly instead of truncating silently. Reaching
+   the bound is a named truncation diagnostic, never an overflow. */
+#define ASSET_CATALOG_GAME_MAX_REGION_PLACEMENTS 4096
+
+/* True when the developer `-drawregion` flag requested the full resident
+   region's native draw. The flag takes no value. */
+bool AssetCatalogGame_RegionDrawRequested(void);
+
+/* Converts every distinct model slot referenced by the current level's resident
+   placements (bounded by ASSET_CATALOG_GAME_MAX_MODEL_RESOURCES) through the
+   existing one-model conversion path, which registers each published resource,
+   then collects the full placement list (bounded by
+   ASSET_CATALOG_GAME_MAX_REGION_PLACEMENTS). A slot whose conversion fails is a
+   named warning and is skipped while the rest continue; a placement or resource
+   capacity overflow is a named truncation diagnostic. Reuses the level
+   inventory walker without the report path and never re-decodes a source model
+   at draw time. Warn-only: a failure leaves a named diagnostic in `status` and
+   never interrupts the game. Windows-only like the other developer reports. */
+bool AssetCatalogGame_PrepareRegionDraw(char* status, int statusCapacity);
+
+/* Number of placements collected by AssetCatalogGame_PrepareRegionDraw (0 when
+   none were collected or the flag is off). */
+int AssetCatalogGame_GetRegionDrawPlacementCount(void);
+
+/* Reads one collected region placement by index. Returns true when `index` is
+   in range and `out` is non-NULL. */
+bool AssetCatalogGame_GetRegionDrawPlacement(int index, AssetCatalogGameDrawPlacement* out);
+
+/* Number of published resources currently registered. The `-drawmodel` and
+   `-drawregion` conversions share this registry; it is cleared on level start. */
+int AssetCatalogGame_GetModelResourceCount(void);
+
+/* Reads the published resource at `index` in registration order. Returns true
+   and fills the requested outputs when `index` is in range; `resourceKey` and
+   `glbPath` may be NULL, and `modelSlot` may be NULL. */
+bool AssetCatalogGame_GetModelResourceAt(int index,
+	char* resourceKey, int resourceKeyCapacity,
+	char* glbPath, int glbPathCapacity,
+	int* modelSlot);
+
+/* True when the region placement store reached its capacity during preparation
+   (including the inventory walker's own object bound). */
+bool AssetCatalogGame_RegionDrawPlacementsTruncated(void);
+
+/* True when more distinct model slots were referenced than the resource
+   registry can hold, so the extra slots were not converted. */
+bool AssetCatalogGame_RegionDrawResourcesTruncated(void);
+
+/* Monotonic per-level generation, bumped in AssetCatalogGame_BeginLevel (the
+   level boundary that also clears the resource registry and the collected
+   stores). The native bridge compares it each frame and resets its per-mode
+   registration/instance/report state when it changes, so a level change is
+   detected even when the registry is already repopulated by the same frame's
+   preparation (LoadGameLevel -> SpoolSYNC -> Prepare*). Starts at 0 before the
+   first level. */
+unsigned int AssetCatalogGame_LevelGeneration(void);
 
 #endif /* ASSET_CATALOG_GAME_H */

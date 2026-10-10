@@ -528,6 +528,30 @@ static int s_nativeDrawReported = 0;
 static int s_nativeDrawWaitingLogged = 0;
 static int s_nativeDrawValidFrames = 0;
 
+// Full-region native draw driven by `-drawregion`: every converted resource is
+// registered once and every resident placement is submitted as one instance with
+// the game camera. The instance buffer is sized to the renderer's bound and is
+// static because 4096 NativeInstance would overflow the stack.
+static_assert(ASSET_CATALOG_GAME_MAX_REGION_PLACEMENTS <= NATIVE_MAX_INSTANCES,
+	"the region placement store must fit the native instance bound");
+
+static int s_regionDrawRegistered = 0;
+static int s_regionDrawRegisteredCount = 0;
+static char s_regionDrawRegisteredKeys[ASSET_CATALOG_GAME_MAX_MODEL_RESOURCES][CONVERSION_CACHE_KEY_CAPACITY];
+static int s_regionDrawInstancesSet = 0;
+static int s_regionDrawReported = 0;
+static int s_regionDrawWaitingLogged = 0;
+static int s_regionDrawValidFrames = 0;
+static int s_regionDrawSubmittedCount = 0;
+static NativeInstance s_regionDrawInstances[NATIVE_MAX_INSTANCES];
+
+// Last level generation each dev-draw mode observed. The registry can be
+// repopulated in the same frame as the level boundary (BeginLevel ->
+// SpoolSYNC -> Prepare*), so the bridge resets on a generation change rather
+// than relying on the registry being transiently empty.
+static unsigned int s_regionDrawGeneration = 0;
+static unsigned int s_nativeDrawGeneration = 0;
+
 // Raw clip planes shared by SetClipPlanes and the visibility selection.
 static const float kNativeDrawClipNear = 100.0f;
 static const float kNativeDrawClipFar = 125000.0f;
@@ -553,6 +577,47 @@ static float s_nativeDrawMinZ = 0.0f;
 static float s_nativeDrawMaxZ = 0.0f;
 static int s_nativeDrawInFrustum = 0;
 static int s_nativeDrawLaterallyVisible = 0;
+
+// Drops the full-region draw's GPU registrations and per-mode report state so a
+// new level re-registers and re-reports. Instance transforms are world-space,
+// so the previous level's list is cleared before it can be drawn under the new
+// camera.
+static void NativeRenderer_ResetRegionDrawState(void)
+{
+	if (s_regionDrawInstancesSet)
+	{
+		NativeRenderer_ClearInstances();
+		s_regionDrawInstancesSet = 0;
+	}
+	for (int i = 0; i < s_regionDrawRegisteredCount; ++i)
+		NativeRenderer_UnregisterResource(s_regionDrawRegisteredKeys[i]);
+	s_regionDrawRegistered = 0;
+	s_regionDrawRegisteredCount = 0;
+	s_regionDrawReported = 0;
+	s_regionDrawWaitingLogged = 0;
+	s_regionDrawValidFrames = 0;
+	s_regionDrawSubmittedCount = 0;
+}
+
+// Drops the bounded `-drawmodel` draw's registration and per-mode report state.
+static void NativeRenderer_ResetNativeDrawState(void)
+{
+	if (s_nativeDrawInstancesSet)
+	{
+		NativeRenderer_ClearInstances();
+		s_nativeDrawInstancesSet = 0;
+	}
+	if (s_nativeDrawRegistered)
+	{
+		NativeRenderer_UnregisterResource(s_nativeDrawRegisteredKey);
+		s_nativeDrawRegistered = 0;
+		s_nativeDrawRegisteredKey[0] = '\0';
+	}
+	s_nativeDrawReported = 0;
+	s_nativeDrawWaitingLogged = 0;
+	s_nativeDrawValidFrames = 0;
+	s_nativeDrawSubmittedCount = 0;
+}
 
 // Raw camera-space position of a placement under the composed view, using the
 // same inputs the bridge feeds the camera (view = [R | -R*cam]).
@@ -666,10 +731,130 @@ static int RankPlacements(const AssetCatalogGameDrawPlacement* placements, int c
 	return submitCount;
 }
 
+// Full-region submit: register every converted resource once, build the full
+// instance list once from the prepared region placements, and set it once. The
+// placements are camera-independent world transforms, so they are never
+// re-collected or re-set per frame; a level-change generation bump drops the
+// stale list and registrations.
+static int NativeRenderer_DevRegionDrawSubmit(const float view[16])
+{
+	(void)view;
+
+	// A level change bumps the generation. Reset before re-registering so the
+	// previous level's instances and resources never draw under the new camera,
+	// even though the registry is already repopulated by the same frame's
+	// preparation. The registry-empty guard stays as a fallback for a failed
+	// preparation.
+	const unsigned int generation = AssetCatalogGame_LevelGeneration();
+	if (generation != s_regionDrawGeneration)
+	{
+		NativeRenderer_ResetRegionDrawState();
+		s_regionDrawGeneration = generation;
+	}
+
+	if (AssetCatalogGame_GetModelResourceCount() <= 0)
+	{
+		NativeRenderer_ResetRegionDrawState();
+		return 0;
+	}
+
+	if (!s_regionDrawRegistered)
+	{
+		const int resourceCount = AssetCatalogGame_GetModelResourceCount();
+		char error[256];
+
+		for (int i = 0; i < resourceCount; ++i)
+		{
+			char key[CONVERSION_CACHE_KEY_CAPACITY];
+			char glbPath[CONVERSION_CACHE_PATH_CAPACITY];
+			int slot = -1;
+
+			if (!AssetCatalogGame_GetModelResourceAt(i, key, sizeof(key), glbPath, sizeof(glbPath), &slot))
+				continue;
+
+			if (!NativeRenderer_RegisterResource(key, glbPath, error, sizeof(error)))
+			{
+				PsyX_Log_Warning("native region draw: register resource for slot %d failed: %s\n", slot, error);
+				continue;
+			}
+
+			if (s_regionDrawRegisteredCount < ASSET_CATALOG_GAME_MAX_MODEL_RESOURCES)
+				snprintf(s_regionDrawRegisteredKeys[s_regionDrawRegisteredCount++],
+					CONVERSION_CACHE_KEY_CAPACITY, "%s", key);
+		}
+
+		s_regionDrawRegistered = 1;
+		PsyX_Log_Info("native region draw: registered %d/%d resources\n",
+			s_regionDrawRegisteredCount, resourceCount);
+	}
+
+	if (s_regionDrawInstancesSet)
+		return s_regionDrawSubmittedCount;
+
+	const int placementCount = AssetCatalogGame_GetRegionDrawPlacementCount();
+	if (placementCount <= 0)
+		return 0;
+
+	const int count = placementCount < NATIVE_MAX_INSTANCES ? placementCount : NATIVE_MAX_INSTANCES;
+
+	for (int i = 0; i < count; ++i)
+	{
+		AssetCatalogGameDrawPlacement placement;
+
+		if (!AssetCatalogGame_GetRegionDrawPlacement(i, &placement))
+			continue;
+
+		NativeInstance& instance = s_regionDrawInstances[i];
+		memset(&instance, 0, sizeof(instance));
+
+		// The renderer resolves the slot's resource key. A slot whose conversion
+		// failed keeps an empty key and is counted as skippedUnresolved rather
+		// than falling back to a placeholder.
+		AssetCatalogGame_GetModelResource(placement.modelSlot, instance.resourceKey,
+			sizeof(instance.resourceKey), NULL, 0, NULL, 0, NULL);
+
+		const int pos[3] = { placement.x, placement.y, placement.z };
+		NativeInstance_ComposeTransform(pos, (unsigned int)placement.rotation, instance.transform);
+
+		instance.level = GameLevel;
+		instance.variant = (int)GetCityType();
+		instance.sourceObjectIndex = placement.sourceObjectIndex;
+		instance.modelSlot = placement.modelSlot;
+		instance.modelRevision = (int)placement.modelRevision;
+	}
+
+	char error[256];
+	if (!NativeRenderer_SetInstances(s_regionDrawInstances, count, error, sizeof(error)))
+	{
+		PsyX_Log_Warning("native region draw: set instances failed: %s\n", error);
+		s_regionDrawInstancesSet = 1; // do not retry every frame
+		s_regionDrawSubmittedCount = 0;
+		return 0;
+	}
+
+	s_regionDrawInstancesSet = 1;
+	s_regionDrawSubmittedCount = count;
+	return count;
+}
+
 static int NativeRenderer_DevDrawSubmit(const float view[16])
 {
+	if (AssetCatalogGame_RegionDrawRequested())
+		return NativeRenderer_DevRegionDrawSubmit(view);
+
 	if (!AssetCatalogGame_NativeDrawRequested())
 		return 0;
+
+	// A level change bumps the generation. Reset before re-registering so the
+	// previous level's instance/resource state never leaks into the new level,
+	// even though the registry is already repopulated by the same frame's
+	// preparation. The registry-miss guard below stays as a fallback.
+	const unsigned int generation = AssetCatalogGame_LevelGeneration();
+	if (generation != s_nativeDrawGeneration)
+	{
+		NativeRenderer_ResetNativeDrawState();
+		s_nativeDrawGeneration = generation;
+	}
 
 	const int slot = AssetCatalogGame_NativeDrawSlot();
 	char key[CONVERSION_CACHE_KEY_CAPACITY];
@@ -678,25 +863,9 @@ static int NativeRenderer_DevDrawSubmit(const float view[16])
 	if (!AssetCatalogGame_GetModelResource(slot, key, sizeof(key), glbPath, sizeof(glbPath),
 		NULL, 0, NULL))
 	{
-		// The registry miss (for example after a level change clears it) must
-		// not leave the previous level's instances drawn under the new camera.
-		// Drop them, release the stale resource and reset the dev-draw state so
-		// the new level re-registers and its one-shot report can fire.
-		if (s_nativeDrawInstancesSet)
-		{
-			NativeRenderer_ClearInstances();
-			s_nativeDrawInstancesSet = 0;
-		}
-		if (s_nativeDrawRegistered)
-		{
-			NativeRenderer_UnregisterResource(s_nativeDrawRegisteredKey);
-			s_nativeDrawRegistered = 0;
-			s_nativeDrawRegisteredKey[0] = '\0';
-		}
-		s_nativeDrawReported = 0;
-		s_nativeDrawWaitingLogged = 0;
-		s_nativeDrawValidFrames = 0;
-		s_nativeDrawSubmittedCount = 0;
+		// The registry miss (for example after a failed preparation) must not
+		// leave the previous level's instances drawn under the new camera.
+		NativeRenderer_ResetNativeDrawState();
 		return 0;
 	}
 
@@ -789,9 +958,9 @@ static unsigned long long HashBytes(const unsigned char* bytes, int length)
 	return hash;
 }
 
-// One-shot offscreen frame for the bounded dev draw: the same instance scene
-// through the public readback path, written next to the log with a content hash.
-static void NativeRenderer_DevDrawCaptureFrame(int slot)
+// One-shot offscreen frame for a dev draw: the same instance scene through the
+// public readback path, written to `path` next to the log with a content hash.
+static void NativeRenderer_DevDrawCaptureFrame(const char* path)
 {
 	// Dump at the window aspect (16:9), not square, so a placement ranked as
 	// on-screen is inside the dumped frame's horizontal field of view.
@@ -807,8 +976,6 @@ static void NativeRenderer_DevDrawCaptureFrame(int slot)
 	}
 
 	const unsigned long long hash = HashBytes(rgba, (int)sizeof(rgba));
-	char path[96];
-	snprintf(path, sizeof(path), "native_draw_slot_%d.rgba", slot);
 
 	FILE* file = fopen(path, "wb");
 	if (!file)
@@ -839,12 +1006,126 @@ static int CameraValid(const float view[16], const int cameraPosition[3])
 	return rotationNonZero && cameraNonZero;
 }
 
+// One line per run for the full-region draw: resource/instance stats, the
+// capacity truncation flags and camera-space evidence over the submitted
+// placements. Gated on a valid game camera like the bounded dev draw, and never
+// repeats. The evidence is computed at report time so the gate and the reported
+// numbers describe the same camera.
+static void NativeRenderer_DevRegionDrawReport(int submitted, const float view[16],
+	const int cameraPosition[3])
+{
+	if (submitted <= 0 || s_regionDrawReported)
+		return;
+
+	if (!CameraValid(view, cameraPosition))
+	{
+		s_regionDrawValidFrames = 0;
+		if (!s_regionDrawWaitingLogged)
+		{
+			PsyX_Log_Info("native region draw: report waiting for a valid game camera\n");
+			s_regionDrawWaitingLogged = 1;
+		}
+		return;
+	}
+
+	if (++s_regionDrawValidFrames < kNativeDrawReportDelayFrames)
+		return;
+
+	s_regionDrawReported = 1;
+
+	int statsSubmitted = 0, drawn = 0, skipped = 0, resident = 0;
+	NativeRenderer_GetInstanceStats(&statsSubmitted, &drawn, &skipped, &resident);
+
+	char diagnostic[256];
+	const int hasDiagnostic = NativeRenderer_GetFirstInstanceDiagnostic(diagnostic, sizeof(diagnostic));
+
+	// Camera-space evidence over the submitted placements, with the same
+	// raw-unit view the camera uses.
+	const int placementCount = AssetCatalogGame_GetRegionDrawPlacementCount();
+	float zFirst = 0.0f, zMin = 0.0f, zMax = 0.0f;
+	int inFrustum = 0, onScreen = 0, sampled = 0;
+
+	for (int i = 0; i < placementCount && i < NATIVE_MAX_INSTANCES; ++i)
+	{
+		AssetCatalogGameDrawPlacement placement;
+
+		if (!AssetCatalogGame_GetRegionDrawPlacement(i, &placement))
+			continue;
+
+		float cam[3];
+		CameraSpace(view, placement.x, placement.y, placement.z, cam);
+
+		if (sampled == 0)
+			zFirst = zMin = zMax = cam[2];
+		else
+		{
+			if (cam[2] < zMin) zMin = cam[2];
+			if (cam[2] > zMax) zMax = cam[2];
+		}
+		sampled++;
+
+		int zInRange = 0;
+		if (PlacementOnScreen(cam, &zInRange))
+			onScreen++;
+		if (zInRange)
+			inFrustum++;
+	}
+
+	char diagText[288];
+	diagText[0] = '\0';
+
+	// Identify the first unresolved submitted instance from the bridge's own
+	// list so the report names the slot and source object, not just a key; fall
+	// back to the renderer's key diagnostic when it found one the bridge scan
+	// did not (for example an all-missing submission).
+	int unresolvedIndex = -1;
+	for (int i = 0; i < s_regionDrawSubmittedCount && i < NATIVE_MAX_INSTANCES; ++i)
+	{
+		if (!NativeRenderer_ResourceResident(s_regionDrawInstances[i].resourceKey))
+		{
+			unresolvedIndex = i;
+			break;
+		}
+	}
+
+	if (unresolvedIndex >= 0)
+	{
+		const NativeInstance& instance = s_regionDrawInstances[unresolvedIndex];
+		snprintf(diagText, sizeof(diagText), "; diag: unresolved instance slot %d src %d key %s",
+			instance.modelSlot, instance.sourceObjectIndex, instance.resourceKey);
+	}
+	else if (hasDiagnostic)
+	{
+		snprintf(diagText, sizeof(diagText), "; diag: %s", diagnostic);
+	}
+
+	PsyX_Log_Info("native region draw: resources registered %d/%d, instances submitted %d, drawn %d, "
+		"skippedUnresolved %d, residentResources %d, placements %d, placement-truncated %d, "
+		"resource-truncated %d, camera-position %d,%d,%d, view diag %.5f/%.5f/%.5f, "
+		"camera-z first %.1f, min %.1f, max %.1f, inFrustum %d/%d, laterallyVisible %d/%d, "
+		"level %d variant %d level-generation %u%s\n",
+		s_regionDrawRegisteredCount, AssetCatalogGame_GetModelResourceCount(),
+		statsSubmitted, drawn, skipped, resident, placementCount,
+		AssetCatalogGame_RegionDrawPlacementsTruncated(), AssetCatalogGame_RegionDrawResourcesTruncated(),
+		cameraPosition[0], cameraPosition[1], cameraPosition[2], view[0], view[5], view[10],
+		zFirst, zMin, zMax, inFrustum, statsSubmitted, onScreen, statsSubmitted,
+		GameLevel, (int)GetCityType(), AssetCatalogGame_LevelGeneration(), diagText);
+
+	NativeRenderer_DevDrawCaptureFrame("native_region_draw.rgba");
+}
+
 // One line per run with the instance stats, the resource identity and a few
 // submitted instance identities. Never repeats. Gated on a valid game camera so
 // an early degenerate frame cannot produce a meaningless report or dump.
 static void NativeRenderer_DevDrawReport(int submitted, const float view[16],
 	const int cameraPosition[3])
 {
+	if (AssetCatalogGame_RegionDrawRequested())
+	{
+		NativeRenderer_DevRegionDrawReport(submitted, view, cameraPosition);
+		return;
+	}
+
 	if (submitted <= 0 || s_nativeDrawReported)
 		return;
 
@@ -914,7 +1195,9 @@ static void NativeRenderer_DevDrawReport(int submitted, const float view[16],
 		s_nativeDrawLaterallyVisible, statsSubmitted,
 		sourceHash, contentHash, GameLevel, (int)GetCityType(), key, sample, diagText);
 
-	NativeRenderer_DevDrawCaptureFrame(slot);
+	char dumpPath[96];
+	snprintf(dumpPath, sizeof(dumpPath), "native_draw_slot_%d.rgba", slot);
+	NativeRenderer_DevDrawCaptureFrame(dumpPath);
 }
 
 static void NativeRenderer_Frame()

@@ -129,8 +129,7 @@ where release policy permits it.
   unsupported in this block.
 
 - E03 Block 2 item 4 (per-instance draw + game camera): `native/NativeRenderer.*`
-  gains a bounded resource/instance API. `NATIVE_MAX_RESOURCES` is 16 and
-  `NATIVE_MAX_INSTANCES` 256; `NativeInstance` carries `resourceKey[160]`, a
+  gains a bounded resource/instance API (`NATIVE_MAX_RESOURCES`/`NATIVE_MAX_INSTANCES`, raised to 64/4096 for the region path in the item-5 entry); `NativeInstance` carries `resourceKey[160]`, a
   column-major `transform[16]`, and level/variant/sourceObjectIndex/modelSlot/
   modelRevision diagnostics. `RegisterResource`/`UnregisterResource`/`ClearResources`/
   `ResourceResident` are idempotent (capacity is a named error, no eviction);
@@ -246,6 +245,44 @@ where release policy permits it.
   all-slot coverage; no LOD/streaming/cars/animation/performance; single-vs-multi byte
   identity is by construction plus empirical verification and the dedicated test; dev runs
   are not visual acceptance.
+
+- E03 region native draw (`-drawregion`): the native scene draws a bounded snapshot of the
+  converted region (all resident placements up to the caps) with the real game camera instead of a single slot. The region path
+  raises the bounded capacities: `NATIVE_MAX_RESOURCES` 64, `NATIVE_MAX_INSTANCES` 4096,
+  `ASSET_CATALOG_GAME_MAX_MODEL_RESOURCES` 64 and the new
+  `ASSET_CATALOG_GAME_MAX_REGION_PLACEMENTS` 4096. `Game/C/assetcatalog_game.{h,c}` prepares
+  once after `SpoolSYNC`: the level walker collects all resident placements (bounded at 4096,
+  placement truncation flagged), derives the distinct referenced model slots (bounded at 64,
+  resource truncation flagged), converts each slot once through `ConvertModelSlot` (a failed
+  slot is a named warning and is skipped while the rest continue) and exposes bounded
+  accessors for the bridge; state is cleared at `BeginLevel`; non-Windows/PSX stubs.
+  `redriver2_psxpc.cpp` registers every converted resource (logs R/T), builds the full
+  instance list in a static `NativeInstance[4096]` buffer (~1 MB BSS; `static_assert <=
+  NATIVE_MAX_INSTANCES`, never on the stack), calls `SetInstances` once, and reuses the
+  camera-validity gate and the one-shot report plus `native_region_draw.rgba` 640x360 dump
+  with the real game camera; a level change resets the state; there is no per-frame
+  re-collection, no re-decode at draw time and no placeholder fallback when instances are
+  set. The bounded `-drawmodel <slot> [count]` path is unchanged. `main.c` accepts
+  `-drawregion` in the arg loop, adds the help line and a warn-only post-SpoolSYNC hook.
+  Evidence: all inspector suites green; `Release_dev` and `Release_dev_native` builds exit 0.
+  Real mission-1 run (Release_dev, `RED2_NATIVE_RENDERER=1 -nointro -nofmv -mission 1
+  -drawregion`): prepare log `4096 placements (placement-truncated), 64 distinct slots, 46
+  converted, 18 failed (resource-truncated); walker complete`; the 18 failures are named
+  `decode failed: instance (instanced models cannot be decoded from a single span)`;
+  `registered 46/46 resources`; report `submitted 4096, drawn 2913, skippedUnresolved 1183,
+  residentResources 46, placements 4096, placement-truncated 1, resource-truncated 1,
+  camera-position 17387,-1050,142670, camera-z first 14956.2, min -49875.2, max 80857.4,
+  inFrustum 2588/4096, laterallyVisible 1919/4096`; offscreen frame 640x360 with 64174
+  non-clear pixels (~28% of the frame), full-frame bbox, 8 distinct colours. Honest wording:
+  this proves the full converted region is drawn by the native renderer with the real game
+  camera (2913 instances drawn, 46 resident resources); it is untextured (base colours
+  only), the placement/resource caps truncate the level's full content (the E02 inventory
+  counted 6740 unique placements), and 18 referenced slots are instanced models the
+  single-span decoder rejects (recorded follow-up: base-instance vertex resolution). No
+  LOD/streaming, no texture/lighting parity; a dev run is not visual acceptance. Recorded
+  follow-ups: instanced-model decode (base-instance vertex resolution) so those slots
+  convert; the placement/resource caps remain bounded dev limits; promote `PublishMultiMesh`
+  into `AssetConverter` (from the previous block).
 
 - ODT-to-GLB tooling spike (bounded, external, temp-only; no repository
   integration): OpenDriver2Tools master @

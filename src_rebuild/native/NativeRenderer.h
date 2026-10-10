@@ -65,8 +65,8 @@
 
 /* Bounded residency and per-frame submission limits. Reaching a limit is a
    named error; the renderer never evicts a resource or an instance silently. */
-#define NATIVE_MAX_RESOURCES 16
-#define NATIVE_MAX_INSTANCES 256
+#define NATIVE_MAX_RESOURCES 64
+#define NATIVE_MAX_INSTANCES 4096
 #define NATIVE_RESOURCE_KEY_CAPACITY 160
 #define NATIVE_INSTANCE_DIAGNOSTIC_CAPACITY 256
 
