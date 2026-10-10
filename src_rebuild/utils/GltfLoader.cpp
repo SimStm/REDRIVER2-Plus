@@ -768,6 +768,78 @@ bool ReadAccessorIndices(const JsonValue& root, const std::vector<unsigned char>
 	return true;
 }
 
+// Reads an optional COLOR_0 accessor into RGBA8 (4 bytes per vertex). Only
+// unsigned-byte components (5121) with VEC3 or VEC4 are accepted, matching the
+// writer's normalised ubyte VEC4; a VEC3 expands with alpha 255. Any other
+// component type or type is a named error, never a silent drop.
+bool ReadAccessorColors(const JsonValue& root, const std::vector<unsigned char>& bin,
+	const std::vector<BufferView>& views, int accessorIndex, std::vector<unsigned char>& out,
+	int& count, char* error, int errorCapacity)
+{
+	const JsonValue* accessors = root.Find("accessors");
+	if (!accessors || accessors->type != JsonValue::Array || accessorIndex < 0 || (size_t)accessorIndex >= accessors->array.size())
+	{
+		snprintf(error, errorCapacity, "colour accessor %d is missing", accessorIndex);
+		return false;
+	}
+	const JsonValue& accessor = accessors->array[accessorIndex];
+	const JsonValue* viewIndex = accessor.Find("bufferView");
+	const JsonValue* componentType = accessor.Find("componentType");
+	const JsonValue* type = accessor.Find("type");
+	if (!viewIndex || !componentType || !type)
+	{
+		snprintf(error, errorCapacity, "colour accessor %d is not a readable buffer view", accessorIndex);
+		return false;
+	}
+	if ((int)componentType->NumberOr(-1) != 5121)
+	{
+		snprintf(error, errorCapacity, "colour accessor %d is not unsigned-byte data", accessorIndex);
+		return false;
+	}
+
+	int components = 0;
+	if (type->str == "VEC3") components = 3;
+	else if (type->str == "VEC4") components = 4;
+	else
+	{
+		snprintf(error, errorCapacity, "colour accessor %d has unsupported type", accessorIndex);
+		return false;
+	}
+
+	const int view = (int)viewIndex->NumberOr(-1);
+	if (view < 0 || (size_t)view >= views.size())
+	{
+		snprintf(error, errorCapacity, "colour accessor %d points to a missing bufferView", accessorIndex);
+		return false;
+	}
+
+	count = (int)NumberField(&accessor, "count", 0);
+	if (count < 0)
+	{
+		snprintf(error, errorCapacity, "colour accessor %d has a negative count", accessorIndex);
+		return false;
+	}
+	const size_t offset = views[view].byteOffset + (size_t)NumberField(&accessor, "byteOffset", 0);
+	const size_t elementSize = (size_t)components;
+	const size_t stride = views[view].byteStride ? views[view].byteStride : elementSize;
+
+	out.resize((size_t)count * 4u);
+	for (int i = 0; i < count; i++)
+	{
+		const size_t base = offset + stride * (size_t)i;
+		if (base + elementSize > bin.size())
+		{
+			snprintf(error, errorCapacity, "colour accessor %d reads outside the binary chunk", accessorIndex);
+			return false;
+		}
+		out[(size_t)i * 4 + 0] = bin[base + 0];
+		out[(size_t)i * 4 + 1] = bin[base + 1];
+		out[(size_t)i * 4 + 2] = bin[base + 2];
+		out[(size_t)i * 4 + 3] = components == 4 ? bin[base + 3] : 255;
+	}
+	return true;
+}
+
 const JsonValue* GetArrayEntry(const JsonValue* array, int index)
 {
 	if (!array || array->type != JsonValue::Array || index < 0 || (size_t)index >= array->array.size())
@@ -1171,6 +1243,23 @@ bool LoadPrimitiveCore(const JsonValue& root, const std::vector<unsigned char>& 
 		}
 	}
 
+	const JsonValue* colorAccessor = attributes->Find("COLOR_0");
+	if (colorAccessor && colorAccessor->type == JsonValue::Number)
+	{
+		int colorCount = 0;
+		if (!ReadAccessorColors(root, bin, views, (int)colorAccessor->number,
+				out.colors, colorCount, detail, sizeof(detail)))
+		{
+			snprintf(error, errorCapacity, "primitive %d: %s", primitiveIndex, detail);
+			return false;
+		}
+		if (strict && colorCount != out.vertexCount)
+		{
+			snprintf(error, errorCapacity, "primitive %d has a COLOR_0 count that disagrees with POSITION", primitiveIndex);
+			return false;
+		}
+	}
+
 	const JsonValue* indices = primitive.Find("indices");
 	if (indices && indices->type == JsonValue::Number)
 	{
@@ -1285,6 +1374,7 @@ int Gltf_LoadFile(const char* path, GltfMeshData* out, char* error, int errorCap
 	out->positions.swap(core.positions);
 	out->normals.swap(core.normals);
 	out->uvs.swap(core.uvs);
+	out->colors.swap(core.colors);
 	out->indices.swap(core.indices);
 	for (int i = 0; i < 4; i++)
 		out->baseColorFactor[i] = core.baseColorFactor[i];

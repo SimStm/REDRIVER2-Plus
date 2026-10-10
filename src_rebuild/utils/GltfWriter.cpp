@@ -19,6 +19,13 @@ void AppendU32s(std::vector<unsigned char>& bin, const unsigned int* values, siz
 	bin.insert(bin.end(), p, p + count * sizeof(unsigned int));
 }
 
+void AppendBytes(std::vector<unsigned char>& bin, const unsigned char* values, size_t count)
+{
+	if (count == 0)
+		return;
+	bin.insert(bin.end(), values, values + count);
+}
+
 std::string FloatText(float value)
 {
 	char buffer[32];
@@ -190,10 +197,12 @@ struct PrimitivePlan
 	int vertexCount;
 	bool hasNormals;
 	bool hasUvs;
+	bool hasColors;
 	bool hasIndices;
 	const float* positions;
 	const float* normals;
 	const float* uvs;
+	const unsigned char* colors;
 	const unsigned int* indices;
 	size_t indexCount;
 	float baseColorFactor[4];
@@ -226,6 +235,21 @@ bool PlanPrimitive(const GltfPrimitiveData& primitive, size_t index, PrimitivePl
 	plan->normals = plan->hasNormals ? primitive.normals.data() : NULL;
 	plan->hasUvs = primitive.uvs.size() >= (size_t)vertexCount * 2;
 	plan->uvs = plan->hasUvs ? primitive.uvs.data() : NULL;
+	// Optional per-vertex colour: RGBA8, exactly one colour per vertex when
+	// present. A partially filled array is a named rejection, never a silent
+	// truncation.
+	plan->hasColors = false;
+	plan->colors = NULL;
+	if (!primitive.colors.empty())
+	{
+		if (primitive.colors.size() != (size_t)vertexCount * 4)
+		{
+			snprintf(error, errorCapacity, "primitive %u has a colour count that disagrees with POSITION", (unsigned)index);
+			return false;
+		}
+		plan->hasColors = true;
+		plan->colors = primitive.colors.data();
+	}
 	plan->hasIndices = !primitive.indices.empty();
 	plan->indices = plan->hasIndices ? primitive.indices.data() : NULL;
 	plan->indexCount = primitive.indices.size();
@@ -343,6 +367,7 @@ int Gltf_WriteFileMulti(const char* path, const GltfMultiMeshData& mesh, char* e
 		int position;
 		int normal;
 		int uv;
+		int color;
 		int index;
 		int image;
 	};
@@ -373,6 +398,15 @@ int Gltf_WriteFileMulti(const char* path, const GltfMultiMeshData& mesh, char* e
 			view.uv = (int)viewOffsets.size();
 			viewOffsets.push_back((int)bin.size());
 			AppendFloats(bin, plan.uvs, (size_t)plan.vertexCount * 2);
+			viewLengths.push_back((int)bin.size() - viewOffsets.back());
+		}
+
+		view.color = -1;
+		if (plan.hasColors)
+		{
+			view.color = (int)viewOffsets.size();
+			viewOffsets.push_back((int)bin.size());
+			AppendBytes(bin, plan.colors, (size_t)plan.vertexCount * 4);
 			viewLengths.push_back((int)bin.size() - viewOffsets.back());
 		}
 
@@ -415,6 +449,7 @@ int Gltf_WriteFileMulti(const char* path, const GltfMultiMeshData& mesh, char* e
 		int position;
 		int normal;
 		int uv;
+		int color;
 		int index;
 	};
 	std::vector<PrimitiveAccessors> primitiveAccessors(plans.size());
@@ -426,6 +461,7 @@ int Gltf_WriteFileMulti(const char* path, const GltfMultiMeshData& mesh, char* e
 		accessor.position = nextAccessor++;
 		accessor.normal = plan.hasNormals ? nextAccessor++ : -1;
 		accessor.uv = plan.hasUvs ? nextAccessor++ : -1;
+		accessor.color = plan.hasColors ? nextAccessor++ : -1;
 		accessor.index = plan.hasIndices ? nextAccessor++ : -1;
 	}
 
@@ -450,6 +486,7 @@ int Gltf_WriteFileMulti(const char* path, const GltfMultiMeshData& mesh, char* e
 		json += std::to_string(accessor.position);
 		if (plan.hasNormals) { json += ",\"NORMAL\":"; json += std::to_string(accessor.normal); }
 		if (plan.hasUvs) { json += ",\"TEXCOORD_0\":"; json += std::to_string(accessor.uv); }
+		if (plan.hasColors) { json += ",\"COLOR_0\":"; json += std::to_string(accessor.color); }
 		json += "}";
 		if (plan.hasIndices) { json += ",\"indices\":"; json += std::to_string(accessor.index); }
 		json += ",\"material\":";
@@ -531,6 +568,8 @@ int Gltf_WriteFileMulti(const char* path, const GltfMultiMeshData& mesh, char* e
 			json += ",{\"bufferView\":" + std::to_string(view.normal) + ",\"componentType\":5126,\"count\":" + std::to_string(plan.vertexCount) + ",\"type\":\"VEC3\"}";
 		if (plan.hasUvs)
 			json += ",{\"bufferView\":" + std::to_string(view.uv) + ",\"componentType\":5126,\"count\":" + std::to_string(plan.vertexCount) + ",\"type\":\"VEC2\"}";
+		if (plan.hasColors)
+			json += ",{\"bufferView\":" + std::to_string(view.color) + ",\"componentType\":5121,\"count\":" + std::to_string(plan.vertexCount) + ",\"type\":\"VEC4\",\"normalized\":true}";
 		if (plan.hasIndices)
 			json += ",{\"bufferView\":" + std::to_string(view.index) + ",\"componentType\":5125,\"count\":" + std::to_string(plan.indexCount) + ",\"type\":\"SCALAR\"}";
 	}
@@ -605,6 +644,7 @@ int Gltf_WriteFile(const char* path, const GltfMeshData& mesh, char* error, int 
 	primitive.positions = mesh.positions;
 	primitive.normals = mesh.normals;
 	primitive.uvs = mesh.uvs;
+	primitive.colors = mesh.colors;
 	primitive.indices = mesh.indices;
 	for (int i = 0; i < 4; i++)
 		primitive.baseColorFactor[i] = mesh.baseColorFactor[i];

@@ -167,6 +167,169 @@ static void TestRotationIsUnit()
 		Near(view[11], 0.0f, 1e-6f) && Near(view[15], 1.0f, 1e-6f), "affine bottom row is 0,0,0,1");
 }
 
+// Projects a raw camera-space point through the projection to NDC, matching the
+// native shader: column-major mul, then the perspective divide.
+static void ProjectNdc(const float projection[16], const float cam[3], float ndc[2])
+{
+	const float x = projection[0] * cam[0] + projection[4] * cam[1] + projection[8] * cam[2] + projection[12];
+	const float y = projection[1] * cam[0] + projection[5] * cam[1] + projection[9] * cam[2] + projection[13];
+	const float w = projection[3] * cam[0] + projection[7] * cam[1] + projection[11] * cam[2] + projection[15];
+	ndc[0] = x / w;
+	ndc[1] = y / w;
+}
+
+// The native projection must reproduce the legacy GTE screen mapping from the
+// live screen distance h: x_screen = 160 + x*h/z, y_screen = 120 + y*h/z, then
+// the PSX display maps to NDC. The shader negates camera-space y, so the native
+// NDC.y is the negative of the GTE y-down NDC. At the PSX display aspect the two
+// agree exactly.
+static void TestGteProjectionParity()
+{
+	const float dispW = NATIVE_PSX_DISPLAY_WIDTH;
+	const float dispH = NATIVE_PSX_DISPLAY_HEIGHT;
+	const float aspect = dispW / dispH;
+	const float nearPlane = 100.0f;
+	const float farPlane = 125000.0f;
+
+	const float h = 320.0f; // representative live scr_z
+	const float points[3][3] =
+	{
+		{ 4096.0f, 0.0f, 16384.0f },
+		{ 0.0f, 4096.0f, 16384.0f },
+		{ -2048.0f, -3072.0f, 65536.0f },
+	};
+	const char* names[3] =
+	{
+		"a camera-space +x point",
+		"a camera-space +y point (game down)",
+		"an off-axis point",
+	};
+
+	float projection[16];
+	NativeCameraView_BuildProjection(h, dispW, dispH, dispW * 0.5f, dispH * 0.5f,
+		aspect, nearPlane, farPlane, projection);
+
+	for (int i = 0; i < 3; ++i)
+	{
+		float ndc[2];
+		ProjectNdc(projection, points[i], ndc);
+
+		const float xScreen = dispW * 0.5f + points[i][0] * h / points[i][2];
+		const float yScreen = dispH * 0.5f + points[i][1] * h / points[i][2];
+		const float expectX = 2.0f * xScreen / dispW - 1.0f;
+		const float expectY = -(2.0f * yScreen / dispH - 1.0f);
+
+		char description[96];
+		snprintf(description, sizeof(description), "h=320: %s projects to the GTE NDC", names[i]);
+		CHECK(Near(ndc[0], expectX, 1e-3f) && Near(ndc[1], expectY, 1e-3f), description);
+	}
+
+	// The vertical focal is 2h/dispH, independent of the target aspect: a point
+	// at camera y == z lands at NDC.y = -(2h/dispH) for any aspect.
+	const float verticalPoint[3] = { 0.0f, 1000.0f, 1000.0f };
+	float projSquare[16], projWide[16];
+	NativeCameraView_BuildProjection(h, dispW, dispH, dispW * 0.5f, dispH * 0.5f,
+		1.0f, nearPlane, farPlane, projSquare);
+	NativeCameraView_BuildProjection(h, dispW, dispH, dispW * 0.5f, dispH * 0.5f,
+		16.0f / 9.0f, nearPlane, farPlane, projWide);
+	float ndcSquare[2], ndcWide[2];
+	ProjectNdc(projSquare, verticalPoint, ndcSquare);
+	ProjectNdc(projWide, verticalPoint, ndcWide);
+	CHECK(Near(ndcSquare[1], -(2.0f * h / dispH), 1e-3f) &&
+		Near(ndcWide[1], ndcSquare[1], 1e-6f),
+		"the vertical focal is 2h/dispH and does not depend on the target aspect");
+
+	// The horizontal scale is f/aspect: widening the target shrinks ndc.x for a
+	// fixed point, so the legacy window mapping keeps square pixels.
+	const float horizontalPoint[3] = { 1000.0f, 0.0f, 1000.0f };
+	ProjectNdc(projSquare, horizontalPoint, ndcSquare);
+	ProjectNdc(projWide, horizontalPoint, ndcWide);
+	CHECK(Near(ndcWide[0], ndcSquare[0] / (16.0f / 9.0f), 1e-4f),
+		"the horizontal scale follows the target aspect (square pixels)");
+
+	// +Z-forward, [0,1] depth: out[11] = +1 keeps clip.w = +z and out[5] is
+	// negative so camera-space +y maps to the lower half (game +Y-down).
+	CHECK(projection[11] == 1.0f && projection[5] < 0.0f,
+		"the projection is +Z-forward and negates camera-space y");
+
+	// The field of view follows the live h: doubling h doubles the projected NDC
+	// of a fixed camera-space point.
+	float projDouble[16];
+	NativeCameraView_BuildProjection(2.0f * h, dispW, dispH, dispW * 0.5f, dispH * 0.5f,
+		aspect, nearPlane, farPlane, projDouble);
+	ProjectNdc(projDouble, points[0], ndcWide);
+	ProjectNdc(projection, points[0], ndcSquare);
+	CHECK(Near(ndcWide[0], 2.0f * ndcSquare[0], 1e-4f) &&
+		Near(ndcWide[1], 2.0f * ndcSquare[1], 1e-4f),
+		"doubling h doubles the projected NDC (the live FOV follows scr_z)");
+}
+
+// The GTE screen offset (SetGeomOffset) is a constant NDC translation. The
+// legacy maps x_screen = ofx + x*h/z and y_screen = ofy + y*h/z and adds the
+// projection offset in clip space (psx.vert:43-47, ofsMat), so after the
+// perspective divide it is a constant added to NDC, independent of the point:
+//
+//   ndc.x += 2*ofx/dispW - 1
+//   ndc.y += 1 - 2*ofy/dispH
+//
+// The PSX display centre (ofx=160, ofy=120) is neutral; the game's live
+// ofy=128 moves the image down by 8 PSX lines (24px at 720p).
+static void TestGteScreenOffsetParity()
+{
+	const float dispW = NATIVE_PSX_DISPLAY_WIDTH;
+	const float dispH = NATIVE_PSX_DISPLAY_HEIGHT;
+	const float aspect = dispW / dispH;
+	const float nearPlane = 100.0f;
+	const float farPlane = 125000.0f;
+	const float h = 320.0f;
+
+	float centred[16], live[16];
+	NativeCameraView_BuildProjection(h, dispW, dispH, dispW * 0.5f, dispH * 0.5f,
+		aspect, nearPlane, farPlane, centred);
+	NativeCameraView_BuildProjection(h, dispW, dispH, 160.0f, 128.0f,
+		aspect, nearPlane, farPlane, live);
+
+	// ofx=160 is neutral horizontally; ofy=128 gives 1 - 2*128/240 = -0.0666667.
+	const float expectedY = 1.0f - 2.0f * 128.0f / dispH;
+	CHECK(Near(live[8], 0.0f, 1e-6f), "ofx=160 gives a zero horizontal translation");
+	CHECK(Near(live[9], expectedY, 1e-6f), "ofy=128 gives 1 - 2*128/dispH vertical translation");
+	CHECK(Near(expectedY, -0.0666667f, 1e-6f), "ofy=128 vs the centred 120 is -0.0666667 NDC (24px at 720p)");
+
+	// The translation is constant: the live projection is the centred one plus
+	// (0, expectedY) for every camera-space point.
+	const float points[2][3] =
+	{
+		{ 0.0f, 0.0f, 16384.0f },
+		{ -2048.0f, -3072.0f, 65536.0f },
+	};
+	for (int i = 0; i < 2; ++i)
+	{
+		float nc[2], nl[2];
+		ProjectNdc(centred, points[i], nc);
+		ProjectNdc(live, points[i], nl);
+		CHECK(Near(nl[0], nc[0], 1e-4f) && Near(nl[1], nc[1] + expectedY, 1e-4f),
+			"the screen offset is a constant NDC.y translation for any camera point");
+	}
+
+	// A non-centred ofx shifts horizontally by 2*dOfx/dispW (aspect-independent,
+	// like the legacy ofsMat) and ofy by -2*dOfy/dispH.
+	float shifted[16];
+	NativeCameraView_BuildProjection(h, dispW, dispH, 200.0f, 100.0f,
+		aspect, nearPlane, farPlane, shifted);
+	CHECK(Near(shifted[8], 2.0f * 200.0f / dispW - 1.0f, 1e-6f) &&
+		Near(shifted[9], 1.0f - 2.0f * 100.0f / dispH, 1e-6f),
+		"a non-centred offset gives the expected NDC translation");
+
+	// The horizontal translation does not depend on the target aspect, matching
+	// the legacy constant clip-space offset; the point-dependent term still
+	// follows the aspect.
+	float shiftedWide[16];
+	NativeCameraView_BuildProjection(h, dispW, dispH, 200.0f, 100.0f,
+		16.0f / 9.0f, nearPlane, farPlane, shiftedWide);
+	CHECK(Near(shiftedWide[8], shifted[8], 1e-6f),
+		"the horizontal screen offset is aspect-independent (legacy ofsMat)");
+}
+
 int main()
 {
 	TestIdentityAtOrigin();
@@ -174,6 +337,8 @@ int main()
 	TestYawRotation();
 	TestAgainstAnalytic();
 	TestRotationIsUnit();
+	TestGteProjectionParity();
+	TestGteScreenOffsetParity();
 
 	printf("%d checks, %d failures\n", g_checks, g_failures);
 	return g_failures == 0 ? 0 : 1;

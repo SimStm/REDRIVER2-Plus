@@ -103,8 +103,13 @@ bool AssetCatalogGame_ReconcileLevel(char* status, int statusCapacity);
 /* Bounded slot->resource registry and bounded placement collector. The
    registry is populated by a successful one-model conversion and read by the
    native-draw bridge; the collector reuses the level inventory walker without
-   the report path and never re-decodes a model. */
-#define ASSET_CATALOG_GAME_MAX_MODEL_RESOURCES 64
+   the report path and never re-decodes a model.
+   The resource bound covers every model slot the level's ptypes probe can
+   record (516) with headroom, so a full resident region no longer truncates its
+   distinct referenced slots (E03 visual-parity P4). The `-drawmodel` placement
+   collector keeps its small fixed bound; only the full-region store below is
+   sized to the world. */
+#define ASSET_CATALOG_GAME_MAX_MODEL_RESOURCES 1024
 #define ASSET_CATALOG_GAME_MAX_DRAW_PLACEMENTS 64
 
 /* One published model resource. `resourceKey` is the canonical
@@ -121,7 +126,23 @@ typedef struct AssetCatalogGameModelResource
 
 /* One bounded resident placement of the native-draw target model slot. The
    model handle {modelSlot, modelRevision} is carried for staleness diagnostics;
-   the renderer only ever sees the resource key. */
+   the renderer only ever sees the resource key.
+
+   E03 visual-parity P9 LOD tier: the legacy world draw swaps to the low-detail
+   model `pLodModels[slot]` (a different model slot) beyond DRAW_LOD_DIST_LOW
+   (draw.c:1041, tile.c:304). `lodModelSlot` is the LOD variant's slot when the
+   placement has a distinct, converted one, or -1 when it draws the detail model
+   at every distance (no declared link, a non-resident variant, or a failed LOD
+   conversion). `lodModelRevision` is its staleness provenance.
+
+   E03 visual-parity P10a near-tile high-detail tier: the legacy tile path swaps
+   a close tile's model number up through Low2HighDetailTable (tile.c:290-295),
+   because the cell data references the low-detail tile. `highDetailModelSlot` is
+   that high-detail sibling's slot when the placement is a TILE-classified model
+   with a distinct, converted sibling, or -1 otherwise (non-tile model, no
+   declared link, a non-resident sibling, or a failed conversion).
+   `highDetailModelRevision` is its staleness provenance. Buildings never use
+   this swap. */
 typedef struct AssetCatalogGameDrawPlacement
 {
 	int x;
@@ -131,6 +152,10 @@ typedef struct AssetCatalogGameDrawPlacement
 	int sourceObjectIndex;	/* 14-bit cell object index, provenance only */
 	int modelSlot;
 	unsigned int modelRevision;
+	int lodModelSlot;		/* LOD variant slot, or -1 for detail-only */
+	unsigned int lodModelRevision;
+	int highDetailModelSlot;	/* near-tile high-detail sibling slot, or -1 */
+	unsigned int highDetailModelRevision;
 } AssetCatalogGameDrawPlacement;
 
 /* True when the developer `-drawmodel <slot> [count]` flag requested a bounded
@@ -176,23 +201,30 @@ int AssetCatalogGame_GetDrawPlacements(AssetCatalogGameDrawPlacement* out, int c
 /* Bounded full-region placement store. It is sized to the native renderer's
    instance bound (NATIVE_MAX_INSTANCES); the bridge asserts the relation so a
    change to either limit fails loudly instead of truncating silently. Reaching
-   the bound is a named truncation diagnostic, never an overflow. */
-#define ASSET_CATALOG_GAME_MAX_REGION_PLACEMENTS 4096
+   the bound is a named truncation diagnostic, never an overflow. Sized to the
+   whole resident region (E03 visual-parity P4): the E02 inventory counts 6740
+   unique placements, so 8192 covers them with headroom. */
+#define ASSET_CATALOG_GAME_MAX_REGION_PLACEMENTS 8192
 
 /* True when the developer `-drawregion` flag requested the full resident
    region's native draw. The flag takes no value. */
 bool AssetCatalogGame_RegionDrawRequested(void);
 
 /* Converts every distinct model slot referenced by the current level's resident
-   placements (bounded by ASSET_CATALOG_GAME_MAX_MODEL_RESOURCES) through the
-   existing one-model conversion path, which registers each published resource,
-   then collects the full placement list (bounded by
-   ASSET_CATALOG_GAME_MAX_REGION_PLACEMENTS). A slot whose conversion fails is a
-   named warning and is skipped while the rest continue; a placement or resource
-   capacity overflow is a named truncation diagnostic. Reuses the level
-   inventory walker without the report path and never re-decodes a source model
-   at draw time. Warn-only: a failure leaves a named diagnostic in `status` and
-   never interrupts the game. Windows-only like the other developer reports. */
+   placements (bounded by ASSET_CATALOG_GAME_MAX_MODEL_RESOURCES), plus each
+   distinct LOD variant those slots declare (pLodModels, E03 visual-parity P9)
+   and each distinct high-detail sibling the TILE-classified slots declare
+   (Low2HighDetailTable, E03 visual-parity P10a), through the existing one-model
+   conversion path, which registers each published resource, then collects the
+   full placement list (bounded by ASSET_CATALOG_GAME_MAX_REGION_PLACEMENTS). A
+   slot whose conversion fails is a named warning and is skipped while the rest
+   continue; a placement or resource capacity overflow is a named truncation
+   diagnostic. A declared LOD variant or high-detail sibling that is not
+   resident, or whose conversion fails, falls back to its placement's detail key
+   with a named (once) diagnostic. Reuses the level inventory walker without the
+   report path and never re-decodes a source model at draw time. Warn-only: a
+   failure leaves a named diagnostic in `status` and never interrupts the game.
+   Windows-only like the other developer reports. */
 bool AssetCatalogGame_PrepareRegionDraw(char* status, int statusCapacity);
 
 /* Number of placements collected by AssetCatalogGame_PrepareRegionDraw (0 when
@@ -222,6 +254,17 @@ bool AssetCatalogGame_RegionDrawPlacementsTruncated(void);
 /* True when more distinct model slots were referenced than the resource
    registry can hold, so the extra slots were not converted. */
 bool AssetCatalogGame_RegionDrawResourcesTruncated(void);
+
+/* Number of distinct LOD variant slots converted by the last
+   AssetCatalogGame_PrepareRegionDraw in addition to the detail slots. 0 when the
+   level has no distinct LOD variants (or the flag is off). */
+int AssetCatalogGame_RegionDrawLodSlotCount(void);
+
+/* Number of distinct high-detail sibling slots (Low2HighDetailTable, E03
+   visual-parity P10a) converted by the last AssetCatalogGame_PrepareRegionDraw
+   in addition to the detail and LOD slots. 0 when the level has no distinct
+   tile high-detail siblings (or the flag is off). */
+int AssetCatalogGame_RegionDrawHighDetailSlotCount(void);
 
 /* Monotonic per-level generation, bumped in AssetCatalogGame_BeginLevel (the
    level boundary that also clears the resource registry and the collected

@@ -55,6 +55,12 @@ int DeveloperDebugStart_ShouldSkipIntro(void);
    SCREENSHOT.BMP once. Zero disables it. */
 void DeveloperDebugStart_ConfigureCapture(int seconds);
 
+/* Tick-anchored capture for visual parity: after the given number of simulation
+   ticks following the first presented frame, freeze the clock and save
+   SCREENSHOT.BMP once. Resets capture state; when greater than zero it also
+   disables the wall-clock trigger so it cannot fire early. */
+void DeveloperDebugStart_ConfigureCaptureTicks(int ticks);
+
 /* Called once per rendered game frame. Cheap when capture is disabled. */
 void DeveloperDebugStart_Tick(void);
 

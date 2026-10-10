@@ -46,6 +46,8 @@
 #include <SDL_scancode.h>
 #include <SDL_gamecontroller.h>
 #include <SDL_messagebox.h>
+#include <SDL_surface.h>
+#include <SDL_timer.h>
 
 #ifdef _WIN32
 #include <SDL_syswm.h>
@@ -53,6 +55,12 @@
 #endif
 
 #include "PsyX/PsyX_globals.h"
+
+// The live GTE control registers (OFX/OFY), so the native projection can apply
+// the game's SetGeomOffset exactly like the legacy GTE screen mapping. PsyCross
+// exposes them as the `gteRegs` control-register block; the game headers do not
+// pull it in, so the bridge includes it directly.
+#include "psx/gtereg.h"
 
 
 int(*GPU_printf)(const char *fmt, ...);
@@ -531,7 +539,8 @@ static int s_nativeDrawValidFrames = 0;
 // Full-region native draw driven by `-drawregion`: every converted resource is
 // registered once and every resident placement is submitted as one instance with
 // the game camera. The instance buffer is sized to the renderer's bound and is
-// static because 4096 NativeInstance would overflow the stack.
+// static (BSS) because a full 8192-entry NativeInstance buffer (~1.9 MB) would
+// overflow the stack; the per-frame copies stay on the stack.
 static_assert(ASSET_CATALOG_GAME_MAX_REGION_PLACEMENTS <= NATIVE_MAX_INSTANCES,
 	"the region placement store must fit the native instance bound");
 
@@ -545,6 +554,30 @@ static int s_regionDrawValidFrames = 0;
 static int s_regionDrawSubmittedCount = 0;
 static NativeInstance s_regionDrawInstances[NATIVE_MAX_INSTANCES];
 
+// E03 visual-parity P9 LOD tier: both resource keys per instance (the detail
+// model and its distinct LOD variant, when the placement has one) plus the last
+// per-instance selection. The instance transforms are built once, because they
+// are camera-independent world placements; only the selected resourceKey
+// changes, and only when the per-frame camera-space Z crosses DRAW_LOD_DIST_LOW
+// for at least one placement. The selection is the legacy world-draw rule
+// (draw.c:1041 buildings, tile.c:304 tiles).
+//
+// E03 visual-parity P10a high-detail tier: a TILE-classified placement also
+// carries its high-detail sibling key (Low2HighDetailTable, tile.c:290-295) and
+// selects it while camera-space Z <= DRAW_LOD_DIST_HIGH. Buildings never use
+// this tier, so their high-detail key is never built.
+static char s_regionDrawDetailKeys[NATIVE_MAX_INSTANCES][NATIVE_RESOURCE_KEY_CAPACITY];
+static char s_regionDrawLodKeys[NATIVE_MAX_INSTANCES][NATIVE_RESOURCE_KEY_CAPACITY];
+static char s_regionDrawHighDetailKeys[NATIVE_MAX_INSTANCES][NATIVE_RESOURCE_KEY_CAPACITY];
+static unsigned char s_regionDrawHasLod[NATIVE_MAX_INSTANCES];
+static unsigned char s_regionDrawHasHighDetail[NATIVE_MAX_INSTANCES];
+static unsigned char s_regionDrawLodSelected[NATIVE_MAX_INSTANCES];
+static unsigned char s_regionDrawHighDetailSelected[NATIVE_MAX_INSTANCES];
+static int s_regionDrawKeysBuilt = 0;
+static int s_regionDrawSelectionValid = 0;
+static int s_regionDrawLodSelectedCount = 0;
+static int s_regionDrawHighDetailSelectedCount = 0;
+
 // Last level generation each dev-draw mode observed. The registry can be
 // repopulated in the same frame as the level boundary (BeginLevel ->
 // SpoolSYNC -> Prepare*), so the bridge resets on a generation change rather
@@ -552,14 +585,61 @@ static NativeInstance s_regionDrawInstances[NATIVE_MAX_INSTANCES];
 static unsigned int s_regionDrawGeneration = 0;
 static unsigned int s_nativeDrawGeneration = 0;
 
+// E1 diagnosis: RED2_NATIVE_REGION_DELAY_MS defers the region prepare out of
+// SpoolSYNC (main.c skips it) and runs it here once, that many milliseconds
+// after the bridge's first post-frame callback. The clock starts on the first
+// callback, the same frame the captureAfterSeconds timer starts, so a delay
+// just below the capture delay bakes the region shortly before the capture.
+// Absent/0 keeps the immediate SpoolSYNC prepare and changes nothing.
+static int s_regionDrawDelayMs = -1; // -1 until parsed
+static int s_regionDrawDelayArmed = 0;
+static int s_regionDrawDelayPrepared = 0;
+static unsigned int s_regionDrawDelayStartTicks = 0;
+static unsigned int s_regionDrawDelayGeneration = 0;
+
 // Raw clip planes shared by SetClipPlanes and the visibility selection.
 static const float kNativeDrawClipNear = 100.0f;
 static const float kNativeDrawClipFar = 125000.0f;
 
-// Vertical field of view the bridge sets, and the offscreen dump size. The
-// visibility ranking uses the dump's aspect so a placement ranked as visible is
-// actually inside the dumped frame (a square dump narrows the horizontal FOV).
-static const float kNativeDrawFovY = 1.0472f;
+// The live GTE screen distance h the native camera uses (SetGeomScreen(scr_z),
+// camera.c). `scr_z` is `extern int scr_z` (Game/C/main.h:23, defined
+// `int scr_z = 0` in main.c:148); the camera/director update it each frame, but
+// it can still be 0 before the first scene build, so fall back to
+// gCameraDefaultScrZ (`extern short`, Game/C/camera.h:31, default 256).
+static float NativeDrawScreenDistance(void)
+{
+	const int live = scr_z;
+	return live > 0 ? (float)live : (float)gCameraDefaultScrZ;
+}
+
+// The documented game default SetGeomOffset(160,128) (Game/C/main.c:2084), used
+// only while the live GTE registers are still at the InitGeom() zero state,
+// i.e. before the game's SetGeomOffset has run.
+static const float kNativeDrawDefaultOffsetX = 160.0f;
+static const float kNativeDrawDefaultOffsetY = 128.0f;
+
+// The live GTE screen offset in PSX 320x240 pixels, the same OFX/OFY the legacy
+// GTE screen mapping uses (x_screen = ofx + x*h/z). SetGeomOffset stores them as
+// 16.16 fixed point (C2_OFX = ofx << 16, LIBGTE.C:53-57), so the integer screen
+// offset is the register shifted right by 16. The game sets (160,128) at init
+// (main.c:2084) and fmvplay does too, motion_c temporarily uses (32,60) then
+// restores it, and system.c uses (320/2, height/2) only for split-screen, so the
+// live registers are the single source of truth. InitGeom() zeroes both
+// (LIBGTE.C:49-50); that exact pre-SetGeomOffset state is treated as the
+// documented default rather than an offset of (0,0), which would shift the whole
+// image off-centre.
+static void NativeDrawScreenOffset(float* offsetX, float* offsetY)
+{
+	const int ofx = gteRegs.CP2C.n.ofx >> 16;
+	const int ofy = gteRegs.CP2C.n.ofy >> 16;
+	const int unset = (ofx == 0 && ofy == 0);
+	*offsetX = unset ? kNativeDrawDefaultOffsetX : (float)ofx;
+	*offsetY = unset ? kNativeDrawDefaultOffsetY : (float)ofy;
+}
+
+// The offscreen dump size. The visibility ranking uses the dump's aspect: the
+// native horizontal scale follows the render target aspect, so a square dump
+// narrows the horizontal field of view relative to the dump's vertical one.
 static const int kNativeDrawDumpWidth = 640;
 static const int kNativeDrawDumpHeight = 360;
 static const float kNativeDrawDumpAspect = (float)kNativeDrawDumpWidth / (float)kNativeDrawDumpHeight;
@@ -597,6 +677,10 @@ static void NativeRenderer_ResetRegionDrawState(void)
 	s_regionDrawWaitingLogged = 0;
 	s_regionDrawValidFrames = 0;
 	s_regionDrawSubmittedCount = 0;
+	s_regionDrawKeysBuilt = 0;
+	s_regionDrawSelectionValid = 0;
+	s_regionDrawLodSelectedCount = 0;
+	s_regionDrawHighDetailSelectedCount = 0;
 }
 
 // Drops the bounded `-drawmodel` draw's registration and per-mode report state.
@@ -629,10 +713,34 @@ static void CameraSpace(const float view[16], int x, int y, int z, float out[3])
 	out[2] = view[2] * fx + view[6] * fy + view[10] * fz + view[14];
 }
 
+// Integer camera-space Z exactly as the legacy world draw computes it for the
+// LOD threshold (Game/ASM/rndrasm.c Apply_InvCameraMatrixSetTrans):
+//   local = (short)(pos - camera_position)
+//   vec   = FIXED(inv_camera_matrix * local)
+//   Z     = vec.vx >> 1 < 0 ? vec.vz - vec.vx : vec.vz + vec.vx
+// The matrix and camera position are the same globals the live view is composed
+// from (NativeRenderer_ComposeLiveView), so the LOD selection and the drawn
+// camera always agree. The legacy uses this Z at draw.c:1041 (buildings) and
+// tile.c:304 (tiles) to choose pLodModels over modelpointers.
+static int LegacyPlacementZ(const AssetCatalogGameDrawPlacement& placement)
+{
+	const MATRIX& lc = inv_camera_matrix;
+	const short lx = (short)(placement.x - camera_position.vx);
+	const short ly = (short)(placement.y - camera_position.vy);
+	const short lz = (short)(placement.z - camera_position.vz);
+
+	const int vx = FIXED(lc.m[0][0] * lx + lc.m[0][1] * ly + lc.m[0][2] * lz);
+	const int vz = FIXED(lc.m[2][0] * lx + lc.m[2][1] * ly + lc.m[2][2] * lz);
+
+	return (vx >> 1 < 0) ? vz - vx : vz + vx;
+}
+
 // True when a camera-space point is inside the dumped frame: in front of the
 // camera, within the clip range and inside the vertical/horizontal field of
 // view for the dump aspect. `zInRange` optionally reports the depth-range test
 // alone, so the log can separate "in depth range" from "actually on screen".
+// The native vertical focal is 2h/NATIVE_PSX_DISPLAY_HEIGHT, so tanHalfY is
+// NATIVE_PSX_DISPLAY_HEIGHT/(2h); the horizontal follows the dump aspect.
 static int PlacementOnScreen(const float cam[3], int* zInRange)
 {
 	const int inRange = cam[2] >= kNativeDrawClipNear && cam[2] <= kNativeDrawClipFar;
@@ -642,7 +750,8 @@ static int PlacementOnScreen(const float cam[3], int* zInRange)
 	if (!inRange)
 		return 0;
 
-	const float tanHalfY = tanf(kNativeDrawFovY * 0.5f);
+	const float h = NativeDrawScreenDistance();
+	const float tanHalfY = NATIVE_PSX_DISPLAY_HEIGHT / (2.0f * h);
 	const float tanHalfX = tanHalfY * kNativeDrawDumpAspect;
 	return fabsf(cam[0]) <= tanHalfX * cam[2] && fabsf(cam[1]) <= tanHalfY * cam[2];
 }
@@ -731,14 +840,95 @@ static int RankPlacements(const AssetCatalogGameDrawPlacement* placements, int c
 	return submitCount;
 }
 
+// E1 diagnosis: parses RED2_NATIVE_REGION_DELAY_MS once. A non-positive or
+// malformed value is 0, which selects the immediate SpoolSYNC prepare, so a
+// normal run is unchanged.
+static int NativeRenderer_RegionDrawDelayMs(void)
+{
+	if (s_regionDrawDelayMs < 0)
+	{
+		const char* value = getenv("RED2_NATIVE_REGION_DELAY_MS");
+		int parsed = 0;
+
+		if (value && value[0])
+		{
+			parsed = atoi(value);
+			if (parsed < 0)
+				parsed = 0;
+		}
+
+		s_regionDrawDelayMs = parsed;
+	}
+
+	return s_regionDrawDelayMs;
+}
+
+// E1 diagnosis: runs the deferred region prepare once the configured delay has
+// elapsed since the bridge's first frame. Returns 1 while the caller must not
+// submit (the prepare is still pending, or it just ran this frame and the next
+// frame will register the fresh resources) and 0 when the immediate-prepare
+// path applies (no delay configured). Warn-only: a failed prepare leaves a
+// named diagnostic and never interrupts the game.
+static int NativeRenderer_RegionDrawPrepareDeferred(void)
+{
+	const int delayMs = NativeRenderer_RegionDrawDelayMs();
+	if (delayMs <= 0)
+		return 0;
+
+	// A level boundary clears the placement store; re-prepare so a reload after
+	// the delay has elapsed bakes again on its first frame instead of drawing an
+	// empty region. The clock is not restarted, so the original frame-relative
+	// timing is preserved.
+	const unsigned int generation = AssetCatalogGame_LevelGeneration();
+	if (generation != s_regionDrawDelayGeneration)
+	{
+		s_regionDrawDelayPrepared = 0;
+		s_regionDrawDelayGeneration = generation;
+	}
+
+	if (s_regionDrawDelayPrepared)
+		return 0;
+
+	const unsigned int now = SDL_GetTicks();
+
+	if (!s_regionDrawDelayArmed)
+	{
+		s_regionDrawDelayArmed = 1;
+		s_regionDrawDelayStartTicks = now;
+		PsyX_Log_Info("native region draw: deferred prepare armed for %d ms after the first frame\n",
+			delayMs);
+		return 1;
+	}
+
+	const unsigned int elapsed = now - s_regionDrawDelayStartTicks;
+	if (elapsed < (unsigned int)delayMs)
+		return 1;
+
+	s_regionDrawDelayPrepared = 1;
+
+	char status[512];
+	if (AssetCatalogGame_PrepareRegionDraw(status, sizeof(status)))
+		PsyX_Log_Info("native region draw: deferred prepare at %u ms: %s\n", elapsed, status);
+	else
+		PsyX_Log_Warning("native region draw: deferred prepare at %u ms: %s\n", elapsed, status);
+
+	return 1;
+}
+
 // Full-region submit: register every converted resource once, build the full
-// instance list once from the prepared region placements, and set it once. The
-// placements are camera-independent world transforms, so they are never
-// re-collected or re-set per frame; a level-change generation bump drops the
-// stale list and registrations.
+// instance list once from the prepared region placements, and re-submit it only
+// when the per-frame LOD selection changes. The placements are camera-independent
+// world transforms, so they are never re-collected; only the selected resourceKey
+// changes (E03 visual-parity P9). A level-change generation bump drops the stale
+// list and registrations.
 static int NativeRenderer_DevRegionDrawSubmit(const float view[16])
 {
 	(void)view;
+
+	// E1 diagnosis: when main.c deferred the region prepare out of SpoolSYNC,
+	// run it here once the delay elapses. Until then there is nothing to submit.
+	if (NativeRenderer_RegionDrawPrepareDeferred())
+		return 0;
 
 	// A level change bumps the generation. Reset before re-registering so the
 	// previous level's instances and resources never draw under the new camera,
@@ -784,18 +974,93 @@ static int NativeRenderer_DevRegionDrawSubmit(const float view[16])
 		}
 
 		s_regionDrawRegistered = 1;
-		PsyX_Log_Info("native region draw: registered %d/%d resources\n",
-			s_regionDrawRegisteredCount, resourceCount);
+		PsyX_Log_Info("native region draw: registered %d/%d resources, %d LOD variants, %d high-detail slots\n",
+			s_regionDrawRegisteredCount, resourceCount, AssetCatalogGame_RegionDrawLodSlotCount(),
+			AssetCatalogGame_RegionDrawHighDetailSlotCount());
 	}
 
-	if (s_regionDrawInstancesSet)
-		return s_regionDrawSubmittedCount;
+	// Build the transforms and both resource keys once. The transforms are
+	// camera-independent world placements, so they never need rebuilding.
+	if (!s_regionDrawKeysBuilt)
+	{
+		const int placementCount = AssetCatalogGame_GetRegionDrawPlacementCount();
+		if (placementCount <= 0)
+			return 0;
 
-	const int placementCount = AssetCatalogGame_GetRegionDrawPlacementCount();
-	if (placementCount <= 0)
+		const int count = placementCount < NATIVE_MAX_INSTANCES ? placementCount : NATIVE_MAX_INSTANCES;
+
+		for (int i = 0; i < count; ++i)
+		{
+			AssetCatalogGameDrawPlacement placement;
+
+			if (!AssetCatalogGame_GetRegionDrawPlacement(i, &placement))
+				continue;
+
+			NativeInstance& instance = s_regionDrawInstances[i];
+			memset(&instance, 0, sizeof(instance));
+
+			// The renderer resolves the selected slot's resource key. A slot
+			// whose conversion failed keeps an empty key and is counted as
+			// skippedUnresolved rather than falling back to a placeholder.
+			AssetCatalogGame_GetModelResource(placement.modelSlot, s_regionDrawDetailKeys[i],
+				NATIVE_RESOURCE_KEY_CAPACITY, NULL, 0, NULL, 0, NULL);
+
+			s_regionDrawHasLod[i] = 0;
+			s_regionDrawLodKeys[i][0] = '\0';
+
+			// The LOD key exists only for a placement with a distinct, converted
+			// LOD variant; otherwise the placement draws its detail model at
+			// every distance (the fallback was already named during prepare).
+			if (placement.lodModelSlot >= 0 &&
+				AssetCatalogGame_GetModelResource(placement.lodModelSlot, s_regionDrawLodKeys[i],
+					NATIVE_RESOURCE_KEY_CAPACITY, NULL, 0, NULL, 0, NULL))
+			{
+				s_regionDrawHasLod[i] = 1;
+			}
+
+			s_regionDrawHasHighDetail[i] = 0;
+			s_regionDrawHighDetailKeys[i][0] = '\0';
+
+			// The high-detail key exists only for a TILE-classified placement
+			// with a distinct, converted sibling (the resolver already returned
+			// -1 for non-tile models and named the fallback during prepare).
+			if (placement.highDetailModelSlot >= 0 &&
+				AssetCatalogGame_GetModelResource(placement.highDetailModelSlot, s_regionDrawHighDetailKeys[i],
+					NATIVE_RESOURCE_KEY_CAPACITY, NULL, 0, NULL, 0, NULL))
+			{
+				s_regionDrawHasHighDetail[i] = 1;
+			}
+
+			const int pos[3] = { placement.x, placement.y, placement.z };
+			NativeInstance_ComposeTransform(pos, (unsigned int)placement.rotation, instance.transform);
+
+			instance.level = GameLevel;
+			instance.variant = (int)GetCityType();
+			instance.sourceObjectIndex = placement.sourceObjectIndex;
+			instance.modelSlot = placement.modelSlot;
+			instance.modelRevision = (int)placement.modelRevision;
+		}
+
+		s_regionDrawSubmittedCount = count;
+		s_regionDrawKeysBuilt = 1;
+	}
+
+	const int count = s_regionDrawSubmittedCount;
+	if (count <= 0)
 		return 0;
 
-	const int count = placementCount < NATIVE_MAX_INSTANCES ? placementCount : NATIVE_MAX_INSTANCES;
+	// Per-frame tier selection, exactly like the legacy world draw:
+	//   * a TILE-classified placement with camera-space Z <= DRAW_LOD_DIST_HIGH
+	//     draws its high-detail sibling (tile.c:290-295);
+	//   * otherwise, Z > DRAW_LOD_DIST_LOW swaps the detail key for the LOD key
+	//     (draw.c:1041, tile.c:304);
+	//   * otherwise the detail key is drawn.
+	// Buildings never take the high-detail tier. Re-submit only when at least
+	// one selection changed, which keeps a settled frame from re-uploading the
+	// whole instance array.
+	int changed = !s_regionDrawSelectionValid;
+	int lodSelectedCount = 0;
+	int highDetailSelectedCount = 0;
 
 	for (int i = 0; i < count; ++i)
 	{
@@ -804,23 +1069,39 @@ static int NativeRenderer_DevRegionDrawSubmit(const float view[16])
 		if (!AssetCatalogGame_GetRegionDrawPlacement(i, &placement))
 			continue;
 
+		const int z = LegacyPlacementZ(placement);
+		const int wantHighDetail = s_regionDrawHasHighDetail[i] && z <= DRAW_LOD_DIST_HIGH;
+		const int wantLod = !wantHighDetail && s_regionDrawHasLod[i] && z > DRAW_LOD_DIST_LOW;
+
+		if ((int)s_regionDrawHighDetailSelected[i] != wantHighDetail)
+		{
+			changed = 1;
+			s_regionDrawHighDetailSelected[i] = (unsigned char)wantHighDetail;
+		}
+
+		if ((int)s_regionDrawLodSelected[i] != wantLod)
+		{
+			changed = 1;
+			s_regionDrawLodSelected[i] = (unsigned char)wantLod;
+		}
+
+		lodSelectedCount += wantLod;
+		highDetailSelectedCount += wantHighDetail;
+	}
+
+	s_regionDrawLodSelectedCount = lodSelectedCount;
+	s_regionDrawHighDetailSelectedCount = highDetailSelectedCount;
+
+	if (!changed)
+		return count;
+
+	for (int i = 0; i < count; ++i)
+	{
 		NativeInstance& instance = s_regionDrawInstances[i];
-		memset(&instance, 0, sizeof(instance));
-
-		// The renderer resolves the slot's resource key. A slot whose conversion
-		// failed keeps an empty key and is counted as skippedUnresolved rather
-		// than falling back to a placeholder.
-		AssetCatalogGame_GetModelResource(placement.modelSlot, instance.resourceKey,
-			sizeof(instance.resourceKey), NULL, 0, NULL, 0, NULL);
-
-		const int pos[3] = { placement.x, placement.y, placement.z };
-		NativeInstance_ComposeTransform(pos, (unsigned int)placement.rotation, instance.transform);
-
-		instance.level = GameLevel;
-		instance.variant = (int)GetCityType();
-		instance.sourceObjectIndex = placement.sourceObjectIndex;
-		instance.modelSlot = placement.modelSlot;
-		instance.modelRevision = (int)placement.modelRevision;
+		const char* key = s_regionDrawHighDetailSelected[i]
+			? s_regionDrawHighDetailKeys[i]
+			: (s_regionDrawLodSelected[i] ? s_regionDrawLodKeys[i] : s_regionDrawDetailKeys[i]);
+		snprintf(instance.resourceKey, sizeof(instance.resourceKey), "%s", key);
 	}
 
 	char error[256];
@@ -833,7 +1114,7 @@ static int NativeRenderer_DevRegionDrawSubmit(const float view[16])
 	}
 
 	s_regionDrawInstancesSet = 1;
-	s_regionDrawSubmittedCount = count;
+	s_regionDrawSelectionValid = 1;
 	return count;
 }
 
@@ -1150,12 +1431,15 @@ static void NativeRenderer_DevRegionDrawReport(int submitted, const float view[1
 
 	PsyX_Log_Info("native region draw: resources registered %d/%d, instances submitted %d, drawn %d, "
 		"skippedUnresolved %d, residentResources %d, placements %d, placement-truncated %d, "
-		"resource-truncated %d, camera-position %d,%d,%d, view diag %.5f/%.5f/%.5f, "
-		"camera-z first %.1f, min %.1f, max %.1f, inFrustum %d/%d, laterallyVisible %d/%d, "
-		"level %d variant %d level-generation %u%s\n",
+		"resource-truncated %d, lod slots %d, lod-selected %d, hd slots %d, hd-selected %d, "
+		"camera-position %d,%d,%d, "
+		"view diag %.5f/%.5f/%.5f, camera-z first %.1f, min %.1f, max %.1f, inFrustum %d/%d, "
+		"laterallyVisible %d/%d, level %d variant %d level-generation %u%s\n",
 		s_regionDrawRegisteredCount, AssetCatalogGame_GetModelResourceCount(),
 		statsSubmitted, drawn, skipped, resident, placementCount,
 		AssetCatalogGame_RegionDrawPlacementsTruncated(), AssetCatalogGame_RegionDrawResourcesTruncated(),
+		AssetCatalogGame_RegionDrawLodSlotCount(), s_regionDrawLodSelectedCount,
+		AssetCatalogGame_RegionDrawHighDetailSlotCount(), s_regionDrawHighDetailSelectedCount,
 		cameraPosition[0], cameraPosition[1], cameraPosition[2], view[0], view[5], view[10],
 		zFirst, zMin, zMax, inFrustum, statsSubmitted, onScreen, statsSubmitted,
 		GameLevel, (int)GetCityType(), AssetCatalogGame_LevelGeneration(), diagText);
@@ -1249,6 +1533,25 @@ static void NativeRenderer_DevDrawReport(int submitted, const float view[16],
 	NativeRenderer_DevDrawCaptureFrame(dumpPath);
 }
 
+// Composes the live game camera into the raw-unit view the native scene draws
+// with (view = [R | -R*cam], R the game's inverse camera rotation, 4096 = 1.0).
+// Shared by the per-frame presentation and the timed screenshot so both read the
+// same camera at the same instant.
+static void NativeRenderer_ComposeLiveView(float view[16], int cameraPosition[3])
+{
+	const int rotation[9] = {
+		inv_camera_matrix.m[0][0], inv_camera_matrix.m[0][1], inv_camera_matrix.m[0][2],
+		inv_camera_matrix.m[1][0], inv_camera_matrix.m[1][1], inv_camera_matrix.m[1][2],
+		inv_camera_matrix.m[2][0], inv_camera_matrix.m[2][1], inv_camera_matrix.m[2][2],
+	};
+
+	cameraPosition[0] = camera_position.vx;
+	cameraPosition[1] = camera_position.vy;
+	cameraPosition[2] = camera_position.vz;
+
+	NativeCameraView_Compose(rotation, cameraPosition, view);
+}
+
 static void NativeRenderer_Frame()
 {
 	if (!s_nativeRendererActive)
@@ -1270,23 +1573,23 @@ static void NativeRenderer_Frame()
 		}
 	}
 
-	// Game camera in raw game units: view = [R | -R*cam] with R the game's
-	// inverse camera rotation (4096 = 1.0). The native projection is +Z-forward
+	// Game camera in raw game units. The native projection is +Z-forward
 	// (Option B), so inv_camera_matrix is fed directly with no reflection, and a
 	// raw-unit scene needs raw-unit clip planes (the game's far clip limit is
 	// 125000; draw.c).
-	const int rotation[9] = {
-		inv_camera_matrix.m[0][0], inv_camera_matrix.m[0][1], inv_camera_matrix.m[0][2],
-		inv_camera_matrix.m[1][0], inv_camera_matrix.m[1][1], inv_camera_matrix.m[1][2],
-		inv_camera_matrix.m[2][0], inv_camera_matrix.m[2][1], inv_camera_matrix.m[2][2],
-	};
-	const int cameraPosition[3] = { camera_position.vx, camera_position.vy, camera_position.vz };
-
+	int cameraPosition[3];
 	float view[16];
-	NativeCameraView_Compose(rotation, cameraPosition, view);
+	NativeRenderer_ComposeLiveView(view, cameraPosition);
 
 	NativeRenderer_SetClipPlanes(kNativeDrawClipNear, kNativeDrawClipFar);
-	NativeRenderer_SetCamera(view, kNativeDrawFovY); // 60 degrees
+	NativeRenderer_SetCamera(view, NativeDrawScreenDistance());
+
+	// The live GTE screen offset (SetGeomOffset), so the native framing matches
+	// the legacy GTE screen mapping; the game's (160,128) sits 8 PSX lines below
+	// the display centre.
+	float screenOffsetX = 0.0f, screenOffsetY = 0.0f;
+	NativeDrawScreenOffset(&screenOffsetX, &screenOffsetY);
+	NativeRenderer_SetScreenOffset(screenOffsetX, screenOffsetY);
 
 	const int devDrawInstances = NativeRenderer_DevDrawSubmit(view);
 
@@ -1312,6 +1615,84 @@ static void NativeRenderer_Frame()
 	++s_nativeRendererFrames;
 
 	NativeRenderer_DevDrawReport(devDrawInstances, view, cameraPosition);
+}
+
+// Timed native screenshot: re-renders the live scene (current camera and instance
+// submission) into an offscreen RGBA target at the window size and writes it as
+// SCREENSHOT.BMP. Called from DeveloperDebugStart_Tick, before the post-frame
+// present, so the camera is the one the current frame is about to present and the
+// image is comparable to the legacy SCREENSHOT.BMP. Warn-only: a failure leaves
+// the game running with no screenshot.
+static int NativeRenderer_CaptureScreenshot(const char* path)
+{
+	if (!path || !path[0])
+		return 0;
+
+	SDL_Window* window = PsyX_GetSDLWindow();
+	int width = 0, height = 0;
+	if (window)
+		SDL_GetWindowSize(window, &width, &height);
+	if (width <= 0 || height <= 0)
+	{
+		PsyX_Log_Warning("native screenshot: the game window size is unavailable\n");
+		return 0;
+	}
+
+	// Take the live camera and the live instance submission at this tick, not the
+	// earlier one-shot report snapshot.
+	int cameraPosition[3];
+	float view[16];
+	NativeRenderer_ComposeLiveView(view, cameraPosition);
+	NativeRenderer_SetClipPlanes(kNativeDrawClipNear, kNativeDrawClipFar);
+	NativeRenderer_SetCamera(view, NativeDrawScreenDistance());
+
+	// Match the presented frame: apply the live GTE screen offset to the
+	// screenshot too, so it is comparable to the legacy capture.
+	float screenOffsetX = 0.0f, screenOffsetY = 0.0f;
+	NativeDrawScreenOffset(&screenOffsetX, &screenOffsetY);
+	NativeRenderer_SetScreenOffset(screenOffsetX, screenOffsetY);
+
+	NativeRenderer_DevDrawSubmit(view);
+
+	const size_t pixelBytes = (size_t)width * (size_t)height * 4u;
+	unsigned char* rgba = (unsigned char*)malloc(pixelBytes);
+	if (!rgba)
+	{
+		PsyX_Log_Warning("native screenshot: could not allocate %zu bytes\n", pixelBytes);
+		return 0;
+	}
+
+	char error[256];
+	if (!NativeRenderer_RenderSceneToRGBA(rgba, width, height, error, sizeof(error)))
+	{
+		PsyX_Log_Warning("native screenshot: offscreen render failed: %s\n", error);
+		free(rgba);
+		return 0;
+	}
+
+	// The offscreen target is RGBA8 and read back top-down, matching the legacy
+	// Vulkan readback, so SDL gets the same channel masks and no row flip.
+	SDL_Surface* surface = SDL_CreateRGBSurfaceFrom(rgba, width, height, 32, width * 4,
+		0x000000FF, 0x0000FF00, 0x00FF0000, 0xFF000000);
+	if (!surface)
+	{
+		PsyX_Log_Warning("native screenshot: could not create the BMP surface\n");
+		free(rgba);
+		return 0;
+	}
+
+	const int saved = SDL_SaveBMP(surface, path);
+	SDL_FreeSurface(surface);
+	free(rgba);
+
+	if (saved != 0)
+	{
+		PsyX_Log_Warning("native screenshot: SDL_SaveBMP failed for %s: %s\n", path, SDL_GetError());
+		return 0;
+	}
+
+	PsyX_Log_Info("native screenshot: %dx%d -> %s\n", width, height, path);
+	return 1;
 }
 
 static void NativeRenderer_AttachGameWindow()
@@ -1363,6 +1744,25 @@ static void NativeRenderer_AttachGameWindow()
 	}
 }
 #endif
+
+// Capture entry point called by DeveloperDebugStart_Tick. The native path owns
+// the window, so PsyCross cannot read its swap chain back; re-render the live
+// scene offscreen instead. Every other path keeps the legacy PsyCross readback.
+// Warn-only on failure; the capture never interrupts play.
+void DeveloperDebugStart_RequestScreenshot(void)
+{
+#if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__)
+#ifdef _WIN32
+	if (NativeRenderer_IsActive())
+	{
+		if (!NativeRenderer_CaptureScreenshot("SCREENSHOT.BMP"))
+			PsyX_Log_Warning("native screenshot: capture failed; no SCREENSHOT.BMP was written\n");
+		return;
+	}
+#endif
+	PsyX_TakeScreenshot();
+#endif
+}
 
 int main(int argc, char** argv)
 {
@@ -1475,6 +1875,7 @@ int main(int argc, char** argv)
 	int textureOverrides = 1;
 	int textureOverridesSpecified = 0;
 	int captureAfterSeconds = 0;
+	int captureAfterTicks = 0;
 
 	DeveloperDebugStart_SetProgramName(argv[0]);
 
@@ -1522,6 +1923,7 @@ int main(int argc, char** argv)
 		ini_sget(config, "game", "languageId", "%d", &gUserLanguage);
 		ini_sget(config, "game", "overrideContent", "%d", &gContentOverride);
 		ini_sget(config, "game", "captureAfterSeconds", "%d", &captureAfterSeconds);
+		ini_sget(config, "game", "captureAfterTicks", "%d", &captureAfterTicks);
 		
 	
 		gCameraDefaultScrZ = MAX(MIN(newScrZ, 384), 128);
@@ -1628,6 +2030,8 @@ int main(int argc, char** argv)
 	if (textureOverridesSpecified)
 		HdTextureOverrides_SetEnabled(textureOverrides);
 	DeveloperDebugStart_ConfigureCapture(captureAfterSeconds);
+	if (captureAfterTicks > 0)
+		DeveloperDebugStart_ConfigureCaptureTicks(captureAfterTicks);
 
 	// E00/E01 determinism checks: optional canonical per-tick state dump.
 	DeterministicBaseline_ConfigureFromCommandLine(argc, argv);

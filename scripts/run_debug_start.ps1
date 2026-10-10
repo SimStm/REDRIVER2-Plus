@@ -21,10 +21,22 @@ param(
     # Extra configuration passed with -ini. Defaults to the executable's config.ini.
     [string]$Config = "",
 
+    # Extra game arguments appended verbatim to every launch, in both normal and
+    # -Capture modes. Pass one string or an array; each element is one argument.
+    # Example: -ExtraArgs '-drawregion' prepares the native region draw so a
+    # RED2_NATIVE_RENDERER=1 run has a scene to capture.
+    [string[]]$ExtraArgs = @(),
+
     # Capture mode: launch twice (texture overrides on and off), press F12 in
     # each run and store SCREENSHOT.BMP for comparison.
     [switch]$Capture,
     [int]$DelaySeconds = 20,
+
+    # Anchor the capture to the simulation tick count instead of wall-clock
+    # seconds. When greater than 0 the game freezes the simulation at this many
+    # ticks after the first presented frame, captureAfterSeconds is forced to 0,
+    # and both renderer paths capture the identical simulation state.
+    [int]$DelayTicks = 0,
     [string]$OutDir = "",
 
     # Keep the process attached to this script instead of returning immediately.
@@ -80,27 +92,37 @@ function Read-Snapshot
 
 function New-StartArguments
 {
+    $arguments = @()
+
     if (-not [string]::IsNullOrWhiteSpace($Replay))
     {
-        return @('-nointro', '-replay', $Replay)
+        $arguments = @('-nointro', '-replay', $Replay)
+    }
+    else
+    {
+        if ($Mission -lt 0)
+        {
+            throw 'Specify -Replay or -Mission (or use -FromSnapshot).'
+        }
+
+        $arguments = @('-nointro', '-mission', "$Mission")
+        if ($GameType -ge 0) { $arguments += @('-gametype', "$GameType") }
+        if ($Level -ge 0) { $arguments += @('-level', "$Level") }
+        if ($Car -ge 0) { $arguments += @('-playercar', "$Car") }
+        if ($X -ne [int]::MinValue -and $Z -ne [int]::MinValue)
+        {
+            $arguments += @('-startpos', "$X", "$Z")
+            if ($StartDir -ne [int]::MinValue) { $arguments += @('-startdir', "$StartDir") }
+        }
+        if ($Players -gt 0) { $arguments += @('-players', "$Players") }
+        if ($Chase -ne 0) { $arguments += @('-chase', "$Chase") }
     }
 
-    if ($Mission -lt 0)
+    if ($ExtraArgs.Count -gt 0)
     {
-        throw 'Specify -Replay or -Mission (or use -FromSnapshot).'
+        $arguments += $ExtraArgs
     }
 
-    $arguments = @('-nointro', '-mission', "$Mission")
-    if ($GameType -ge 0) { $arguments += @('-gametype', "$GameType") }
-    if ($Level -ge 0) { $arguments += @('-level', "$Level") }
-    if ($Car -ge 0) { $arguments += @('-playercar', "$Car") }
-    if ($X -ne [int]::MinValue -and $Z -ne [int]::MinValue)
-    {
-        $arguments += @('-startpos', "$X", "$Z")
-        if ($StartDir -ne [int]::MinValue) { $arguments += @('-startdir', "$StartDir") }
-    }
-    if ($Players -gt 0) { $arguments += @('-players', "$Players") }
-    if ($Chase -ne 0) { $arguments += @('-chase', "$Chase") }
     return $arguments
 }
 
@@ -166,13 +188,31 @@ foreach ($enabled in @(1, 0))
         "$captureText`r`n[render]`r`ntextureOverrides=$enabled`r`n"
     }
 
+    # Tick-anchored mode freezes the simulation, so the wall-clock trigger must
+    # not fire earlier than the freeze.
+    $secondsValue = if ($DelayTicks -gt 0) { 0 } else { $DelaySeconds }
+
     if ($captureText -match '(?im)^\s*captureAfterSeconds\s*=')
     {
-        $captureText = [regex]::Replace($captureText, '(?im)^\s*captureAfterSeconds\s*=.*$', "captureAfterSeconds=$DelaySeconds")
+        $captureText = [regex]::Replace($captureText, '(?im)^\s*captureAfterSeconds\s*=.*$', "captureAfterSeconds=$secondsValue")
     }
     else
     {
-        $captureText = "$captureText`r`n[game]`r`ncaptureAfterSeconds=$DelaySeconds`r`n"
+        $captureText = "$captureText`r`n[game]`r`ncaptureAfterSeconds=$secondsValue`r`n"
+    }
+
+    if ($DelayTicks -gt 0)
+    {
+        # Tick mode: the freeze owns the capture moment, so put the tick key in
+        # the same [game] section as the (zeroed) wall trigger.
+        if ($captureText -match '(?im)^\s*captureAfterTicks\s*=')
+        {
+            $captureText = [regex]::Replace($captureText, '(?im)^\s*captureAfterTicks\s*=.*$', "captureAfterTicks=$DelayTicks")
+        }
+        else
+        {
+            $captureText = "$captureText`r`n[game]`r`ncaptureAfterTicks=$DelayTicks`r`n"
+        }
     }
 
     Set-Content -LiteralPath $captureConfig -Value $captureText -Encoding ascii
@@ -184,7 +224,14 @@ foreach ($enabled in @(1, 0))
 
     $process = Start-Process -FilePath $Exe -ArgumentList $arguments -WorkingDirectory $workDir -PassThru
 
-    $deadline = (Get-Date).AddSeconds($DelaySeconds + 60)
+    $deadline = if ($DelayTicks -gt 0)
+    {
+        (Get-Date).AddSeconds([math]::Ceiling($DelayTicks / 4.0) + 240)
+    }
+    else
+    {
+        (Get-Date).AddSeconds($DelaySeconds + 60)
+    }
     while ((Get-Date) -lt $deadline -and -not (Test-Path -LiteralPath $screenshot))
     {
         Start-Sleep -Milliseconds 500
@@ -196,7 +243,8 @@ foreach ($enabled in @(1, 0))
     {
         if (-not $process.HasExited) { $process.Kill() }
         Remove-Item -LiteralPath $captureConfig -Force -ErrorAction SilentlyContinue
-        throw "No SCREENSHOT.BMP after $DelaySeconds seconds with textureOverrides=$enabled. The session may not have reached gameplay."
+        $anchor = if ($DelayTicks -gt 0) { "$DelayTicks ticks" } else { "$DelaySeconds seconds" }
+        throw "No SCREENSHOT.BMP after $anchor with textureOverrides=$enabled. The session may not have reached gameplay."
     }
 
     $destination = Join-Path $OutDir ("overrides-{0}.bmp" -f $enabled)

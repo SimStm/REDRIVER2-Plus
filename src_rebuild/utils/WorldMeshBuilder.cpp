@@ -273,7 +273,8 @@ int WorldMeshBuilder_Build(const SourceMesh& source, GltfMeshData* out,
 
 int WorldMeshBuilder_BuildMulti(const SourceMesh& source, GltfMultiMeshData* out,
 	WorldMeshBuilderResult* result, char* error, int capacity,
-	const WorldSubmeshImage* images, int imageCount)
+	const WorldSubmeshImage* images, int imageCount,
+	const unsigned char* vertexColorsRgb, size_t vertexColorBytes)
 {
 	if (error && capacity > 0)
 		error[0] = '\0';
@@ -384,6 +385,14 @@ int WorldMeshBuilder_BuildMulti(const SourceMesh& source, GltfMultiMeshData* out
 
 	const bool hasUvs = !source.uvs.empty();
 
+	// Optional per-vertex colours: one RGB triple per source vertex. Both the
+	// pointer and a matching byte count are required; the count must be exactly
+	// vertexCount*3 so the copy is bounded.
+	const bool hasVertexColors = vertexColorsRgb != NULL && vertexColorBytes > 0;
+	if (hasVertexColors && vertexColorBytes != (size_t)vertexCount * 3u)
+		return (int)Fail(result, error, capacity, WORLD_MESH_ERROR_ATTRIBUTE_SIZE,
+			"the per-vertex colour byte count does not match the vertex count");
+
 	out->primitives.reserve(source.submeshes.size());
 
 	int totalVertices = 0;
@@ -401,6 +410,8 @@ int WorldMeshBuilder_BuildMulti(const SourceMesh& source, GltfMultiMeshData* out
 		primitive.normals.reserve((size_t)triangleCount * 9);
 		if (hasUvs)
 			primitive.uvs.reserve((size_t)triangleCount * 6);
+		if (hasVertexColors)
+			primitive.colors.reserve((size_t)triangleCount * 12);
 		primitive.indices.reserve((size_t)triangleCount * 3);
 
 		for (int triangle = 0; triangle < triangleCount; ++triangle)
@@ -435,6 +446,14 @@ int WorldMeshBuilder_BuildMulti(const SourceMesh& source, GltfMultiMeshData* out
 					primitive.uvs.push_back(source.uvs[(size_t)vertex * 2 + 0]);
 					primitive.uvs.push_back(source.uvs[(size_t)vertex * 2 + 1]);
 				}
+
+				if (hasVertexColors)
+				{
+					primitive.colors.push_back(vertexColorsRgb[(size_t)vertex * 3 + 0]);
+					primitive.colors.push_back(vertexColorsRgb[(size_t)vertex * 3 + 1]);
+					primitive.colors.push_back(vertexColorsRgb[(size_t)vertex * 3 + 2]);
+					primitive.colors.push_back(255);
+				}
 			}
 
 			primitive.indices.push_back(baseVertex + 0);
@@ -447,8 +466,17 @@ int WorldMeshBuilder_BuildMulti(const SourceMesh& source, GltfMultiMeshData* out
 
 		// Per-primitive base colour, exactly as the single path applies it to
 		// its one submesh: the mean of that submesh's stored face colours, or
-		// the documented neutral when the submesh stored none.
-		if (submesh.hasColors)
+		// the documented neutral when the submesh stored none. When explicit
+		// per-vertex colours are supplied the factor is the neutral white, so
+		// the vertex colour is the only per-primitive modulation.
+		if (hasVertexColors)
+		{
+			primitive.baseColorFactor[0] = 1.0f;
+			primitive.baseColorFactor[1] = 1.0f;
+			primitive.baseColorFactor[2] = 1.0f;
+			primitive.baseColorFactor[3] = 1.0f;
+		}
+		else if (submesh.hasColors)
 			AverageSubmeshColor(source, submesh, primitive.baseColorFactor);
 		else
 		{

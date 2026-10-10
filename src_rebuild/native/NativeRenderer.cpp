@@ -15,10 +15,13 @@
 #include "RefCntAutoPtr.hpp"
 
 #include "../utils/GltfLoader.h"
+#include "../utils/NativeCameraView.h"
 
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <string>
 #include <vector>
 
 using namespace Diligent;
@@ -51,6 +54,57 @@ void SetError(char* error, int capacity, const char* message)
 		snprintf(error, capacity, "%s", message);
 }
 
+// Appends one dev-only diagnostic line to the same log the Diligent message
+// callback uses. A diagnostic never changes the render result and is never
+// fatal; it only records that a diagnosis toggle is active.
+void LogInitDiagnostic(const char* message)
+{
+	FILE* log = fopen("native_renderer.log", "a");
+	if (!log)
+		return;
+	fprintf(log, "native renderer: %s\n", message);
+	fclose(log);
+}
+
+// Reads a dev-only boolean environment toggle: only the exact value "1" enables
+// it, so an unset or any other value is the production default.
+int ReadEnvToggle(const char* name)
+{
+	const char* value = getenv(name);
+	return value && strcmp(value, "1") == 0;
+}
+
+// P7 diagnosis toggles, read exactly once on the first pipeline build. They are
+// deliberately dev-only and process-wide:
+//   * noCutout: the scene pixel shader keeps an alpha==0 texel instead of
+//     discarding it (RED2_NATIVE_NO_CUTOUT=1). It discriminates "the cutout
+//     removes texels the legacy renders" from missing geometry.
+//   * noDepth: the scene pipelines disable the depth test AND write
+//     (RED2_NATIVE_NO_DEPTH=1), so every primitive draws regardless of order.
+//     It discriminates "depth hides geometry that should show" from missing
+//     geometry.
+// Both default off, so the scene pipeline is byte-for-byte the production one
+// when the environment is unset.
+struct SceneDiagnostics
+{
+	int loaded;
+	int noCutout;
+	int noDepth;
+};
+
+SceneDiagnostics g_sceneDiagnostics = { 0, 0, 0 };
+
+const SceneDiagnostics& GetSceneDiagnostics()
+{
+	if (!g_sceneDiagnostics.loaded)
+	{
+		g_sceneDiagnostics.loaded = 1;
+		g_sceneDiagnostics.noCutout = ReadEnvToggle("RED2_NATIVE_NO_CUTOUT");
+		g_sceneDiagnostics.noDepth = ReadEnvToggle("RED2_NATIVE_NO_DEPTH");
+	}
+	return g_sceneDiagnostics;
+}
+
 // ---------------------------------------------------------------------------
 // Scene: a camera-driven, depth-tested, textured draw. Column-major matrices
 // throughout; the shader uses mul(MVP, float4(pos, 1)). Converted E02 content
@@ -61,14 +115,17 @@ void SetError(char* error, int capacity, const char* message)
 struct SceneVertex
 {
 	float x, y, z, u, v;
+	float r, g, b, a;
 };
 
-// 20 floats / 80 bytes: MVP plus the material base-colour factor. HLSL packs
-// the float4x4 into the first 64 bytes and the float4 into the next 16.
+// 24 floats / 96 bytes: MVP, the material base-colour factor and the legacy
+// vertex-colour scale. HLSL packs the float4x4 into the first 64 bytes and each
+// float4 into the next 16.
 struct SceneConstants
 {
 	float mvp[16];
 	float baseColor[4];
+	float colorScale[4];
 };
 
 // One drawable primitive: geometry, texture, bindings and its own base-colour
@@ -87,9 +144,15 @@ struct ScenePrimitive
 	Uint32 indexCount;
 	int triangleCount;
 	float baseColor[4];
+	// Legacy vertex-colour scale: the `bright` multiplier the legacy GPU packed
+	// per primitive (PsyX_GPU.cpp MakeTexcoordQuad etc.). Textured primitives use
+	// 2; untextured use 1. Applied to the vertex colour in float in the vertex
+	// shader, never baked into the attribute, so the modulation and its
+	// framebuffer clamp match the legacy exactly.
+	float colorScale;
 
 	ScenePrimitive()
-		: vertexCount(0), indexCount(0), triangleCount(0)
+		: vertexCount(0), indexCount(0), triangleCount(0), colorScale(1.0f)
 	{
 		baseColor[0] = baseColor[1] = baseColor[2] = baseColor[3] = 1.0f;
 	}
@@ -146,7 +209,18 @@ struct OffscreenTargets
 SceneResources g_scene;
 OffscreenTargets g_offscreen;
 float g_view[16] = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
-float g_fovY = 1.0472f; // 60 degrees
+// The live GTE screen distance h (the game's scr_z), set by the bridge each
+// frame. The projection's focal length is 2h/NATIVE_PSX_DISPLAY_HEIGHT, so it
+// follows the game's dynamic field of view instead of a fixed FOV. Defaults to
+// the game's gCameraDefaultScrZ (256) until the bridge supplies a value.
+float g_screenDistance = 256.0f;
+// The live GTE screen offset (SetGeomOffset OFX/OFY) in PSX display pixels, set
+// by the bridge each frame from the GTE control registers. The renderer is
+// game-agnostic, so it defaults to the PSX display centre (160,120), which the
+// projection turns into a zero NDC translation; the game's live (160,128)
+// pushes the image down by 8 PSX lines. See NativeCameraView_BuildProjection.
+float g_screenOffsetX = NATIVE_PSX_DISPLAY_WIDTH * 0.5f;
+float g_screenOffsetY = NATIVE_PSX_DISPLAY_HEIGHT * 0.5f;
 float g_clipNear = 0.02f;
 float g_clipFar = 300.0f;
 
@@ -247,27 +321,28 @@ void MultiplyColumnMajor(const float a[16], const float b[16], float out[16])
 // with no reflection. The negation is a y reflection: it flips the NDC
 // signed-area sign of every triangle, which the scene cull pin compensates for
 // (see CreateScenePipeline). Column-major, mul(MVP, float4(pos, 1)).
-void BuildPerspective(float fovY, float aspect, float nearPlane, float farPlane, float out[16])
+// The focal length comes from the live GTE screen distance h (the game's
+// scr_z), not a fixed FOV: the legacy GTE projects x_screen = ofx + x*h/z, so
+// the vertical focal is 2h/NATIVE_PSX_DISPLAY_HEIGHT and the horizontal scale
+// follows the render target aspect (the legacy window mapping keeps the PSX
+// display square). See NativeCameraView_BuildProjection for the full mapping.
+void BuildPerspective(float screenDistanceH, float aspect, float nearPlane, float farPlane, float out[16])
 {
-	for (int i = 0; i < 16; ++i)
-		out[i] = 0.0f;
-	const float f = 1.0f / tanf(fovY * 0.5f);
-	out[0] = f / aspect;
-	out[5] = -f;
-	out[10] = farPlane / (farPlane - nearPlane);
-	out[11] = 1.0f;
-	out[14] = -nearPlane * farPlane / (farPlane - nearPlane);
+	NativeCameraView_BuildProjection(screenDistanceH,
+		NATIVE_PSX_DISPLAY_WIDTH, NATIVE_PSX_DISPLAY_HEIGHT,
+		g_screenOffsetX, g_screenOffsetY,
+		aspect, nearPlane, farPlane, out);
 }
 
 void AddQuad(std::vector<SceneVertex>& out,
 	const float a[3], const float b[3], const float c[3], const float d[3])
 {
-	out.push_back({ a[0], a[1], a[2], 0.0f, 0.0f });
-	out.push_back({ b[0], b[1], b[2], 1.0f, 0.0f });
-	out.push_back({ c[0], c[1], c[2], 1.0f, 1.0f });
-	out.push_back({ a[0], a[1], a[2], 0.0f, 0.0f });
-	out.push_back({ c[0], c[1], c[2], 1.0f, 1.0f });
-	out.push_back({ d[0], d[1], d[2], 0.0f, 1.0f });
+	out.push_back({ a[0], a[1], a[2], 0.0f, 0.0f, 1.0f, 1.0f, 1.0f, 1.0f });
+	out.push_back({ b[0], b[1], b[2], 1.0f, 0.0f, 1.0f, 1.0f, 1.0f, 1.0f });
+	out.push_back({ c[0], c[1], c[2], 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f });
+	out.push_back({ a[0], a[1], a[2], 0.0f, 0.0f, 1.0f, 1.0f, 1.0f, 1.0f });
+	out.push_back({ c[0], c[1], c[2], 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f });
+	out.push_back({ d[0], d[1], d[2], 0.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f });
 }
 
 void AddCube(std::vector<SceneVertex>& out, float cx, float cz, float size)
@@ -373,7 +448,7 @@ int CreatePrimitiveShaderBindings(ScenePrimitive& primitive)
 
 int CreateScenePipeline(TEXTURE_FORMAT colorFormat, const char* name, IPipelineState** out)
 {
-	LayoutElement elements[2] = {};
+	LayoutElement elements[3] = {};
 	elements[0].InputIndex = 0;
 	elements[0].BufferSlot = 0;
 	elements[0].NumComponents = 3;
@@ -384,6 +459,15 @@ int CreateScenePipeline(TEXTURE_FORMAT colorFormat, const char* name, IPipelineS
 	elements[1].NumComponents = 2;
 	elements[1].ValueType = VT_FLOAT32;
 	elements[1].RelativeOffset = 3 * sizeof(float);
+	// Per-vertex colour: the legacy PSX primitive colour byte normalised to
+	// [0,1] (psx.vert `a_color` is R8G8B8A8_UNORM; psx.frag multiplies the
+	// sampled texel by it). Kept as four floats here so the existing scene
+	// geometry can default it to opaque white.
+	elements[2].InputIndex = 2;
+	elements[2].BufferSlot = 0;
+	elements[2].NumComponents = 4;
+	elements[2].ValueType = VT_FLOAT32;
+	elements[2].RelativeOffset = 5 * sizeof(float);
 
 	ShaderResourceVariableDesc variables[3] = {};
 	variables[0].Name = "Constants";
@@ -404,51 +488,41 @@ int CreateScenePipeline(TEXTURE_FORMAT colorFormat, const char* name, IPipelineS
 	psoCI.GraphicsPipeline.RTVFormats[0] = colorFormat;
 	psoCI.GraphicsPipeline.DSVFormat = TEX_FORMAT_D32_FLOAT;
 	psoCI.GraphicsPipeline.PrimitiveTopology = PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-	// Winding policy (pinned by tests/SourceModelDecoderTests.cpp and asserted by
-	// tests/NativeRendererSmoke.cpp): the decoder emits world quads as
-	// (v0,v1,v3,v2) and fans them (0,1,2)+(0,2,3); the first triangle (v0,v1,v3)
-	// is exactly the triangle the runtime feeds to gte_nclip (draw.c:780-796).
-	// BuildPerspective negates camera-space y (out[5] = -f) to match the game's
-	// +Y-down screen convention, which reflects the NDC and flips every
-	// triangle's signed-area sign: the game-front triangle is now NEGATIVE-area.
-	// Under Diligent's Vulkan D3D emulation (negative viewport height),
-	// FrontCounterClockwise = False treats those negative-area triangles as
-	// front-facing; CULL_MODE_BACK then removes the reversed back faces. The
-	// projection reflection and this pin flip cancel, so exactly the same world
-	// faces remain front as before the vertical fix. CULL_MODE_NONE is not an
-	// accepted policy. Changing the projection's z handedness does not change
-	// the NDC area sign for a fixed local triangle; it only changes which
-	// camera-space z is in front, so the setting stays False and the fixtures
-	// move to +Z.
-	psoCI.GraphicsPipeline.RasterizerDesc.CullMode = CULL_MODE_BACK;
-	psoCI.GraphicsPipeline.RasterizerDesc.FrontCounterClockwise = False;
-	psoCI.GraphicsPipeline.DepthStencilDesc.DepthEnable = True;
+	// Culling: none. The legacy GPU never culls (PsyX_Vk.cpp sets
+	// VK_CULL_MODE_NONE); the game pre-culls every primitive in software with
+	// gte_nclip / opz > 0 and the PLOT_NO_CULL / PLOT_INV_CULL overrides
+	// (draw.c:784/796/1156-1165). The scene pipelines must not cull again, or
+	// they remove the faces the game deliberately kept. The vertical convention
+	// (BuildPerspective out[5] = -f) still reflects the NDC, but with culling
+	// disabled the winding sign no longer selects a face; the decoder's stored
+	// order only needs to produce the correct raster coverage.
+	psoCI.GraphicsPipeline.RasterizerDesc.CullMode = CULL_MODE_NONE;
 
-	// PSX alpha semantics in the unlit slice (knowledge/rules/texture-alpha-
-	// semantics.md): the baked texture carries 0/128/255 for transparent /
-	// semi-transparent / opaque. One straight-alpha blend state serves all three
-	// for an unlit draw: RGB = src.rgb * src.a + dst.rgb * (1 - src.a), so an
-	// opaque texel (a = 1) reproduces itself exactly, an STP=1 texel (a = 0.5)
-	// halves into the background, and a 0000h texel (a = 0) leaves the
-	// destination untouched. Alpha keeps the destination opaque through
-	// ONE/INV_SRC_ALPHA so the readback stays a = 255. A single pipeline is used
-	// for textured and untextured primitives: an untextured primitive samples
-	// the shared white texel (a = 255), so its blend is a no-op and its base
-	// colour is unchanged. Depth writes stay on for this bounded slice; a
-	// semi-transparent primitive therefore also writes depth, which is
-	// acceptable here (no sorted transparent pass yet) and is revisited when
-	// the renderer gains ordered transparency.
+	// Depth: test and write on with LESS_OR_EQUAL, matching the legacy opaque
+	// primitive state (test/write on, COMPARISON_FUNC_LESS_EQUAL; blending is
+	// what disables the depth test there, and world draws never blend). The
+	// dev-only P7 toggle RED2_NATIVE_NO_DEPTH=1 turns both off so a capture can
+	// tell a depth-occlusion problem from missing geometry.
+	const SceneDiagnostics& diagnostics = GetSceneDiagnostics();
+	psoCI.GraphicsPipeline.DepthStencilDesc.DepthEnable = diagnostics.noDepth ? False : True;
+	psoCI.GraphicsPipeline.DepthStencilDesc.DepthWriteEnable = diagnostics.noDepth ? False : True;
+	psoCI.GraphicsPipeline.DepthStencilDesc.DepthFunc = COMPARISON_FUNC_LESS_EQUAL;
+
+	// Opacity: world models are always opaque. PlotBuildingModel,
+	// PlotModelSubdivNxN and drawMesh issue setPolyFT4 with the semi-transparency
+	// bit clear, and the legacy fragment shader ignores STP for opaque draws
+	// (psx.frag). So the scene pipeline blends nothing: the pixel shader discards
+	// a 0000h texel (the cutout, psx.frag:111) and renders every other texel
+	// fully opaque, including an STP=128 texel. This matches the baked texture's
+	// 0/128/255 convention (knowledge/rules/texture-alpha-semantics.md) with no
+	// blend. True semi-transparent content needs a separate blended,
+	// depth-test-disabled, ordered pass; that is a later block, not this opaque
+	// world slice.
 	RenderTargetBlendDesc& blend = psoCI.GraphicsPipeline.BlendDesc.RenderTargets[0];
-	blend.BlendEnable = True;
-	blend.SrcBlend = BLEND_FACTOR_SRC_ALPHA;
-	blend.DestBlend = BLEND_FACTOR_INV_SRC_ALPHA;
-	blend.BlendOp = BLEND_OPERATION_ADD;
-	blend.SrcBlendAlpha = BLEND_FACTOR_ONE;
-	blend.DestBlendAlpha = BLEND_FACTOR_INV_SRC_ALPHA;
-	blend.BlendOpAlpha = BLEND_OPERATION_ADD;
+	blend.BlendEnable = False;
 
 	psoCI.GraphicsPipeline.InputLayout.LayoutElements = elements;
-	psoCI.GraphicsPipeline.InputLayout.NumElements = 2;
+	psoCI.GraphicsPipeline.InputLayout.NumElements = 3;
 	psoCI.pVS = g_scene.vertexShader;
 	psoCI.pPS = g_scene.pixelShader;
 	g_device->CreateGraphicsPipelineState(psoCI, out);
@@ -464,17 +538,43 @@ int EnsureScenePipelines()
 		return 1;
 
 	const char* vertexSource =
-		"cbuffer Constants { float4x4 MVP; float4 baseColor; };\n"
-		"struct VSIn  { float3 Pos : ATTRIB0; float2 UV : ATTRIB1; };\n"
-		"struct VSOut { float4 Pos : SV_POSITION; float2 UV : TEXCOORD0; };\n"
+		"cbuffer Constants { float4x4 MVP; float4 baseColor; float4 colorScale; };\n"
+		"struct VSIn  { float3 Pos : ATTRIB0; float2 UV : ATTRIB1; float4 Col : ATTRIB2; };\n"
+		"struct VSOut { float4 Pos : SV_POSITION; float2 UV : TEXCOORD0; float4 Col : COLOR0; };\n"
+		// The legacy vertex shader scales the normalised vertex colour by the
+		// per-primitive `bright` multiplier before interpolation (psx.vert:33-34,
+		// PsyX_render.cpp:787-788): v_color.xyz = a_color.xyz * bright. The scene
+		// reproduces that here in float (never in the attribute), so the
+		// modulation and the framebuffer clamp match the legacy.
 		"void main(in VSIn input, out VSOut output)\n"
-		"{ output.Pos = mul(MVP, float4(input.Pos, 1.0)); output.UV = input.UV; }\n";
-	const char* pixelSource =
-		"cbuffer Constants { float4x4 MVP; float4 baseColor; };\n"
+		"{ output.Pos = mul(MVP, float4(input.Pos, 1.0)); output.UV = input.UV;"
+		" output.Col = float4(input.Col.rgb * colorScale.rgb, input.Col.a); }\n";
+	// World primitives are opaque: a 0000h texel (alpha 0) is a cutout and is
+	// discarded (psx.frag:111), every other texel renders fully opaque (the
+	// STP bit is ignored for opaque draws, so a 128 texel shows its full RGB),
+	// and the framebuffer alpha stays opaque. The shared white texel (alpha
+	// 255) keeps the untextured/placeholder draws opaque with no discard.
+	// The per-vertex colour reproduces the legacy `texColor * v_color`
+	// modulation (psx.frag:147); it is opaque white for geometry that carries
+	// none, so the base-colour factor still applies unchanged.
+	//
+	// The dev-only P7 toggle RED2_NATIVE_NO_CUTOUT=1 omits the discard, so an
+	// alpha==0 texel renders with its own colour (alpha still ignored/opaque);
+	// unset, the shader text is exactly the production one.
+	const SceneDiagnostics& diagnostics = GetSceneDiagnostics();
+	std::string pixelSource =
+		"cbuffer Constants { float4x4 MVP; float4 baseColor; float4 colorScale; };\n"
 		"Texture2D    gTexture;\n"
 		"SamplerState gSampler;\n"
-		"struct PSIn { float4 Pos : SV_POSITION; float2 UV : TEXCOORD0; };\n"
-		"float4 main(in PSIn input) : SV_TARGET { return gTexture.Sample(gSampler, input.UV) * baseColor; }\n";
+		"struct PSIn { float4 Pos : SV_POSITION; float2 UV : TEXCOORD0; float4 Col : COLOR0; };\n"
+		"float4 main(in PSIn input) : SV_TARGET\n"
+		"{\n"
+		"    float4 texel = gTexture.Sample(gSampler, input.UV);\n";
+	if (!diagnostics.noCutout)
+		pixelSource += "    if (texel.a == 0.0) discard;\n";
+	pixelSource +=
+		"    return float4(texel.rgb * baseColor.rgb * input.Col.rgb, 1.0);\n"
+		"}\n";
 
 	ShaderCreateInfo shaderCI;
 	shaderCI.SourceLanguage = SHADER_SOURCE_LANGUAGE_HLSL;
@@ -484,7 +584,7 @@ int EnsureScenePipelines()
 	g_device->CreateShader(shaderCI, &g_scene.vertexShader);
 
 	shaderCI.Desc.ShaderType = SHADER_TYPE_PIXEL;
-	shaderCI.Source = pixelSource;
+	shaderCI.Source = pixelSource.c_str();
 	g_device->CreateShader(shaderCI, &g_scene.pixelShader);
 	if (!g_scene.vertexShader || !g_scene.pixelShader)
 		return 0;
@@ -511,6 +611,13 @@ int EnsureScenePipelines()
 		g_scene.offscreenPipeline = g_scene.pipeline;
 	else if (!CreateScenePipeline(TEX_FORMAT_RGBA8_UNORM, "NativeSceneOffscreen", &g_scene.offscreenPipeline))
 		return 0;
+
+	// Warn-only, emitted once when the pipelines are first built: name each
+	// active diagnosis toggle so a capture can be attributed to its env var.
+	if (diagnostics.noCutout)
+		LogInitDiagnostic("cutout disabled by RED2_NATIVE_NO_CUTOUT");
+	if (diagnostics.noDepth)
+		LogInitDiagnostic("depth test/write disabled by RED2_NATIVE_NO_DEPTH");
 
 	g_scene.pipelinesReady = 1;
 	return 1;
@@ -671,6 +778,25 @@ int CreateContentItem(const GltfMultiMeshData& mesh, SceneDrawItem& out,
 				vertex.u = 0.0f;
 				vertex.v = 0.0f;
 			}
+
+			// Per-vertex colour, matching psx.frag's `texColor * v_color`. The
+			// writer stores it as normalised ubyte RGBA; here it becomes four
+			// floats. Geometry with no colour attribute defaults to opaque
+			// white, so its base-colour factor is what is visible.
+			if (source.colors.size() >= (i + 1) * 4)
+			{
+				vertex.r = (float)source.colors[i * 4 + 0] / 255.0f;
+				vertex.g = (float)source.colors[i * 4 + 1] / 255.0f;
+				vertex.b = (float)source.colors[i * 4 + 2] / 255.0f;
+				vertex.a = (float)source.colors[i * 4 + 3] / 255.0f;
+			}
+			else
+			{
+				vertex.r = 1.0f;
+				vertex.g = 1.0f;
+				vertex.b = 1.0f;
+				vertex.a = 1.0f;
+			}
 		}
 
 		item.primitives.push_back(ScenePrimitive());
@@ -739,6 +865,17 @@ int CreateContentItem(const GltfMultiMeshData& mesh, SceneDrawItem& out,
 
 		for (int c = 0; c < 4; ++c)
 			primitive.baseColor[c] = source.baseColorFactor[c];
+
+		// E03 visual parity P6: every converted primitive descends from a legacy
+		// *textured* world primitive (SourcePrimitiveClass is always Textured*),
+		// which the legacy GPU packs with bright = 2 (PsyX_GPU.cpp:790,844,893
+		// MakeTexcoordQuad/Triangle/Rect). The legacy vertex shader therefore
+		// modulates by (colourByte/255) * 2 (psx.vert:33-34), i.e. colourByte/128:
+		// a day ambient of 128 becomes ~1.0 instead of 0.502. The built-in
+		// placeholder is a native-only fixture with white vertex colours, so its
+		// scale stays 1 and is irrelevant to legacy fidelity.
+		primitive.colorScale = 2.0f;
+
 		primitive.triangleCount = source.triangleCount > 0
 			? source.triangleCount
 			: (int)(source.indices.size() / 3);
@@ -860,6 +997,8 @@ void DrawPrimitive(const ScenePrimitive& primitive, IPipelineState* pipeline,
 		constants.mvp[i] = mvp[i];
 	for (int i = 0; i < 4; ++i)
 		constants.baseColor[i] = primitive.baseColor[i];
+	for (int i = 0; i < 4; ++i)
+		constants.colorScale[i] = primitive.colorScale;
 	g_context->UpdateBuffer(g_scene.constants, 0, sizeof(SceneConstants), &constants,
 		RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
 
@@ -925,9 +1064,18 @@ int RenderSceneInto(ITextureView* renderTarget, ITextureView* depthView,
 
 	float projection[16];
 	const float aspect = height > 0 ? (float)width / (float)height : 1.0f;
-	BuildPerspective(g_fovY, aspect, g_clipNear, g_clipFar, projection);
+	BuildPerspective(g_screenDistance, aspect, g_clipNear, g_clipFar, projection);
 
-	const float clearColor[4] = { 0.05f, 0.07f, 0.12f, 1.0f };
+	// Dev diagnostic: RED2_NATIVE_CLEAR_MAGENTA=1 clears with magenta instead of
+	// the normal dark background, so an undrawn (clear colour) region can be
+	// told apart from a drawn texel that happens to have the normal colour.
+	float clearColor[4] = { 0.05f, 0.07f, 0.12f, 1.0f };
+	if (getenv("RED2_NATIVE_CLEAR_MAGENTA") != nullptr)
+	{
+		clearColor[0] = 1.0f;
+		clearColor[1] = 0.0f;
+		clearColor[2] = 1.0f;
+	}
 	g_context->SetRenderTargets(1, &renderTarget, depthView, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
 	g_context->ClearRenderTarget(renderTarget, clearColor, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
 	g_context->ClearDepthStencil(depthView, CLEAR_DEPTH_FLAG, 1.0f, 0,
@@ -1078,14 +1226,20 @@ int NativeRenderer_RenderClearAndPresent(float red, float green, float blue, flo
 	return 1;
 }
 
-void NativeRenderer_SetCamera(const float view[16], float fovYRadians)
+void NativeRenderer_SetCamera(const float view[16], float screenDistanceH)
 {
 	if (!view)
 		return;
 	for (int i = 0; i < 16; ++i)
 		g_view[i] = view[i];
-	if (fovYRadians > 0.01f)
-		g_fovY = fovYRadians;
+	if (screenDistanceH > 0.0f)
+		g_screenDistance = screenDistanceH;
+}
+
+void NativeRenderer_SetScreenOffset(float offsetX, float offsetY)
+{
+	g_screenOffsetX = offsetX;
+	g_screenOffsetY = offsetY;
 }
 
 int NativeRenderer_RenderScene(char* error, int errorCapacity)

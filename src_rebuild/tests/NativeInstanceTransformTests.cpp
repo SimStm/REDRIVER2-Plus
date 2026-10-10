@@ -6,6 +6,15 @@
 // matrixtable[i] = RotMatrixY(i * 64) over a 4096-unit turn
 // (Game/C/draw.c:507-525, 1508-1517) and with utils/DeveloperModernMesh.cpp
 // BuildInstanceWorld (484-492), and yang must wrap at 64.
+//
+// TestGamePipelineParity additionally pins the full game draw pipeline: the
+// game builds CompoundMatrix[yang] = MulMatrix0(inv_camera_matrix,
+// matrixtable[yang]) and trans = inv_camera_matrix * (pos - camera_position)
+// (draw.c:1505-1545, rndrasm.c:63-93), then transforms a vertex as
+// CompoundMatrix * v + trans. The native path applies the same view
+// (utils/NativeCameraView.h) to the instance world matrix, so
+// view * NativeInstance_ComposeTransform(pos, yang) must equal that game camera
+// matrix for every yang and point.
 
 #include "../utils/NativeInstanceTransform.h"
 
@@ -154,12 +163,174 @@ static void TestAgainstAnalytic()
 	}
 }
 
+// --- Game draw-pipeline parity ---------------------------------------------
+//
+// These helpers reimplement, locally and in float, the exact game math the
+// native placement must replace:
+//   * matrixtable[i] = RotMatrixY(i * 64)              (draw.c:507-525)
+//   * CompoundMatrix = MulMatrix0(inv_camera_matrix, matrixtable[yang])
+//                                                       (draw.c:1508-1517)
+//   * trans = inv_camera_matrix * (pos - camera_position) (rndrasm.c:63-93)
+//   * camera = CompoundMatrix * v + trans               (GTE, PsyX_GTE.cpp:382)
+// No Game/PSX headers are used.
+
+// Row-major 3x3 product m0 * m1, matching the game's MulMatrix0 (the "correct
+// Psy-Q" branch computes m2[i][j] = sum_k m0[i][k] * m1[k][j];
+// PsyCross/src/psx/LIBGTE.C:263-337).
+static void MulMatrix0(const float m0[3][3], const float m1[3][3], float out[3][3])
+{
+	for (int i = 0; i < 3; ++i)
+		for (int j = 0; j < 3; ++j)
+			out[i][j] = m0[i][0] * m1[0][j] + m0[i][1] * m1[1][j] + m0[i][2] * m1[2][j];
+}
+
+// Column-major world->camera view [R | -R*cam], matching the native view
+// (utils/NativeCameraView.cpp) and the game's inv_camera_matrix/camera_position.
+static void BuildViewColumnMajor(const float r[3][3], const float cam[3], float out[16])
+{
+	out[0] = r[0][0]; out[4] = r[0][1]; out[8] = r[0][2];
+	out[1] = r[1][0]; out[5] = r[1][1]; out[9] = r[1][2];
+	out[2] = r[2][0]; out[6] = r[2][1]; out[10] = r[2][2];
+	out[12] = -(r[0][0] * cam[0] + r[0][1] * cam[1] + r[0][2] * cam[2]);
+	out[13] = -(r[1][0] * cam[0] + r[1][1] * cam[1] + r[1][2] * cam[2]);
+	out[14] = -(r[2][0] * cam[0] + r[2][1] * cam[1] + r[2][2] * cam[2]);
+	out[3] = 0.0f; out[7] = 0.0f; out[11] = 0.0f; out[15] = 1.0f;
+}
+
+// Column-major 4x4 product, matching NativeRenderer.cpp MultiplyColumnMajor and
+// the shader's mul(MVP, float4(pos, 1)).
+static void MultiplyColumnMajor(const float a[16], const float b[16], float out[16])
+{
+	for (int col = 0; col < 4; ++col)
+		for (int row = 0; row < 4; ++row)
+		{
+			float sum = 0.0f;
+			for (int k = 0; k < 4; ++k)
+				sum += a[k * 4 + row] * b[col * 4 + k];
+			out[col * 4 + row] = sum;
+		}
+}
+
+// The game's per-object camera matrix as a column-major 4x4:
+//   [ CompoundMatrix[yang] | inv_camera_matrix * (pos - camera_position) ].
+static void BuildGameCameraMatrix(const float rCam[3][3], const float cam[3],
+	const float pos[3], unsigned int yang, float out[16])
+{
+	float obj[3][3];
+	RotMatrixYAnalytic((int)(yang & 63u) * 64, obj);
+
+	float compound[3][3];
+	MulMatrix0(rCam, obj, compound);
+
+	const float dx = pos[0] - cam[0];
+	const float dy = pos[1] - cam[1];
+	const float dz = pos[2] - cam[2];
+	const float tx = rCam[0][0] * dx + rCam[0][1] * dy + rCam[0][2] * dz;
+	const float ty = rCam[1][0] * dx + rCam[1][1] * dy + rCam[1][2] * dz;
+	const float tz = rCam[2][0] * dx + rCam[2][1] * dy + rCam[2][2] * dz;
+
+	out[0] = compound[0][0]; out[4] = compound[0][1]; out[8] = compound[0][2]; out[12] = tx;
+	out[1] = compound[1][0]; out[5] = compound[1][1]; out[9] = compound[1][2]; out[13] = ty;
+	out[2] = compound[2][0]; out[6] = compound[2][1]; out[10] = compound[2][2]; out[14] = tz;
+	out[3] = 0.0f; out[7] = 0.0f; out[11] = 0.0f; out[15] = 1.0f;
+}
+
+static void TestGamePipelineParity()
+{
+	// A non-trivial camera and a non-zero translation: a wrong handedness,
+	// transpose, angle unit or translation would change the result.
+	float rCam[3][3];
+	RotMatrixYAnalytic(700, rCam); // camera yawed 700/4096 of a turn
+	const float cam[3] = { 12.0f, 34.0f, -56.0f };
+	const int pos[3] = { 1234, -56, 7890 };
+	const float fpos[3] = { (float)pos[0], (float)pos[1], (float)pos[2] };
+
+	// The requested representative *angles* 0,512,1024,2048,3072,4095 map to
+	// matrixtable entries angle/64: 0,8,16,32,48,63 (4095 quantises down to
+	// entry 63 = RotMatrixY(4032), the closest table entry). yang is the index.
+	CHECK(((0 / 64) & 63) == 0 && ((512 / 64) & 63) == 8 && ((1024 / 64) & 63) == 16 &&
+		((2048 / 64) & 63) == 32 && ((3072 / 64) & 63) == 48 && ((4095 / 64) & 63) == 63,
+		"representative angles map to yang indices 0,8,16,32,48,63");
+
+	const unsigned int yangs[] = { 0, 8, 16, 32, 48, 63 };
+	const float points[3][3] = { { 1.0f, 0.0f, 0.0f }, { 0.0f, 1.0f, 0.0f }, { 0.0f, 0.0f, 1.0f } };
+
+	float view[16];
+	BuildViewColumnMajor(rCam, cam, view);
+
+	for (int c = 0; c < (int)(sizeof(yangs) / sizeof(yangs[0])); ++c)
+	{
+		const unsigned int yang = yangs[c];
+
+		float gameCamera[16];
+		BuildGameCameraMatrix(rCam, cam, fpos, yang, gameCamera);
+
+		float world[16];
+		NativeInstance_ComposeTransform(pos, yang, world);
+
+		float nativeCamera[16];
+		MultiplyColumnMajor(view, world, nativeCamera);
+
+		CHECK(MatrixNear(gameCamera, nativeCamera, 1e-3f),
+			"native view*world equals the game MulMatrix0(inv_cam, matrixtable) matrix");
+	}
+
+	// Exhaustive: every yang index must agree on all three basis points.
+	for (unsigned int yang = 0; yang < 64; ++yang)
+	{
+		float gameCamera[16];
+		BuildGameCameraMatrix(rCam, cam, fpos, yang, gameCamera);
+
+		float world[16];
+		NativeInstance_ComposeTransform(pos, yang, world);
+
+		float nativeCamera[16];
+		MultiplyColumnMajor(view, world, nativeCamera);
+
+		bool agree = true;
+		for (int p = 0; p < 3; ++p)
+		{
+			float g[3];
+			float n[3];
+			TransformPoint(gameCamera, points[p], g);
+			TransformPoint(nativeCamera, points[p], n);
+			if (!Near(g[0], n[0], 1e-3f) || !Near(g[1], n[1], 1e-3f) || !Near(g[2], n[2], 1e-3f))
+				agree = false;
+		}
+		CHECK(agree, "game and native map the same world points to the same camera-space points");
+	}
+}
+
+static void TestYDecodeConvention()
+{
+	// The packed cell object stores y pre-doubled (ppco->pos.vy = y<<1 | flag)
+	// and QuickUnpackCellObject decodes it as (short)vy >> 1 (cell.h:17). The
+	// region-draw bridge submits that decoded value (assetcatalog_game.c:407-410),
+	// so this helper must copy y verbatim and must not shift it again.
+	const int decodedY = 1234;
+	const int modelHighBit = 1; // (ppco->pos.vy & 1) selects the model-type high bit
+	const int packedVy = (decodedY << 1) | modelHighBit;
+	const int unpackedY = (int)((short)packedVy >> 1);
+
+	CHECK(unpackedY == decodedY, "the packed vy decodes to y>>1");
+
+	const int pos[3] = { 10, unpackedY, 20 };
+	float m[16];
+	NativeInstance_ComposeTransform(pos, 0, m);
+	CHECK(Near(m[13], (float)decodedY, 1e-6f),
+		"compose copies the decoded y verbatim (no second halving)");
+	CHECK(!Near(m[13], (float)packedVy, 1e-6f),
+		"compose does not use the packed (doubled) vy");
+}
+
 int main()
 {
 	TestCardinalAngles();
 	TestTranslationAndLayout();
 	TestYangWrap();
 	TestAgainstAnalytic();
+	TestGamePipelineParity();
+	TestYDecodeConvention();
 
 	printf("%d checks, %d failures\n", g_checks, g_failures);
 	return g_failures == 0 ? 0 : 1;

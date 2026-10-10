@@ -740,6 +740,150 @@ static void TestImageErrors()
 	CHECK(mesh.primitives.empty());
 }
 
+// P2: explicit per-vertex colours become an RGBA8 COLOR_0 attribute and the
+// base-colour factor becomes the neutral white, so the renderer's
+// texel * vertexColour product is the only modulation. Two builds are
+// byte-identical and the colour survives the multi GLB round trip.
+static void TestMultiVertexColors()
+{
+	SourceMesh source = MakeMultiSubmeshMesh();
+	const int vertexCount = (int)(source.positions.size() / 3);
+	std::vector<unsigned char> colors((size_t)vertexCount * 3);
+	for (int v = 0; v < vertexCount; ++v)
+	{
+		colors[(size_t)v * 3 + 0] = (unsigned char)(10 + v);
+		colors[(size_t)v * 3 + 1] = (unsigned char)(20 + v);
+		colors[(size_t)v * 3 + 2] = (unsigned char)(30 + v);
+	}
+
+	GltfMultiMeshData mesh;
+	WorldMeshBuilderResult result;
+	char error[256];
+	CHECK(WorldMeshBuilder_BuildMulti(source, &mesh, &result, error, sizeof(error),
+		NULL, 0, colors.data(), colors.size()) == WORLD_MESH_ERROR_NONE);
+	CHECK(result.error == WORLD_MESH_ERROR_NONE);
+	CHECK(mesh.primitives.size() == 2);
+
+	for (size_t p = 0; p < mesh.primitives.size(); ++p)
+	{
+		// One RGBA colour per expanded corner, neutral base colour.
+		CHECK(mesh.primitives[p].colors.size() == (size_t)mesh.primitives[p].vertexCount * 4);
+		CHECK(NearlyEqual(mesh.primitives[p].baseColorFactor[0], 1.0f));
+		CHECK(NearlyEqual(mesh.primitives[p].baseColorFactor[1], 1.0f));
+		CHECK(NearlyEqual(mesh.primitives[p].baseColorFactor[2], 1.0f));
+		CHECK(NearlyEqual(mesh.primitives[p].baseColorFactor[3], 1.0f));
+	}
+
+	// Primitive 0's first corner is source vertex 0 (indices 0,1,2,0,2,3).
+	CHECK(mesh.primitives[0].colors[0] == 10 && mesh.primitives[0].colors[1] == 20 &&
+		mesh.primitives[0].colors[2] == 30 && mesh.primitives[0].colors[3] == 255);
+	// The per-polygon colour stays flat: both triangles of the quad repeat it.
+	CHECK(mesh.primitives[0].colors[0] == mesh.primitives[0].colors[3 * 4 + 0]);
+
+	// A byte count that does not match the vertex count is rejected, zero output.
+	{
+		GltfMultiMeshData rejected;
+		CHECK(WorldMeshBuilder_BuildMulti(source, &rejected, &result, error, sizeof(error),
+			NULL, 0, colors.data(), colors.size() - 1) == WORLD_MESH_ERROR_ATTRIBUTE_SIZE);
+		CHECK(rejected.primitives.empty());
+	}
+
+	// Determinism and the multi GLB round trip.
+	GltfMultiMeshData second;
+	CHECK(WorldMeshBuilder_BuildMulti(source, &second, &result, error, sizeof(error),
+		NULL, 0, colors.data(), colors.size()) == WORLD_MESH_ERROR_NONE);
+	CHECK(Gltf_WriteFileMulti("world_colors_a.glb", mesh, error, sizeof(error)) == 0);
+	CHECK(Gltf_WriteFileMulti("world_colors_b.glb", second, error, sizeof(error)) == 0);
+	std::vector<unsigned char> bytesA, bytesB;
+	CHECK(ReadFileBytes("world_colors_a.glb", &bytesA));
+	CHECK(ReadFileBytes("world_colors_b.glb", &bytesB));
+	CHECK(!bytesA.empty() && bytesA.size() == bytesB.size() &&
+		memcmp(bytesA.data(), bytesB.data(), bytesA.size()) == 0);
+
+	GltfMultiMeshData loaded;
+	CHECK(Gltf_LoadFileMulti("world_colors_a.glb", &loaded, error, sizeof(error)) == 0);
+	CHECK(loaded.primitives.size() == mesh.primitives.size());
+	for (size_t p = 0; p < mesh.primitives.size(); ++p)
+		CHECK(loaded.primitives[p].colors == mesh.primitives[p].colors);
+}
+
+// Decode actual cyclic MODEL records before BuildMulti, rather than supplying
+// an already-triangulated fixture that could conceal a decoder topology error.
+static void TestDecodedCyclicQuadCoverage()
+{
+	const unsigned char types[] = { 11, 21, 23 };
+	for (int t = 0; t < 3; ++t)
+	{
+		std::vector<unsigned char> bytes(72, 0);
+		bytes[16] = 1; // B=(1,0,0)
+		bytes[24] = 1; bytes[26] = 1; // C=(1,1,0)
+		bytes[34] = 1; // D=(0,1,0)
+		for (int n = 0; n < 4; ++n)
+			bytes[40 + n * 8 + 5] = 16; // +Z point normal, 4096
+		const int stride = types[t] == 11 ? 16 : types[t] == 21 ? 20 : 24;
+		bytes.resize(72 + stride, 0);
+		unsigned char* record = &bytes[72];
+		record[0] = types[t]; record[1] = 2; record[2] = 5; record[3] = 0x87;
+		for (int v = 0; v < 4; ++v)
+		{
+			record[4 + v] = (unsigned char)v;
+			if (types[t] == 23) record[8 + v] = (unsigned char)v;
+			const int uvOffset = types[t] == 23 ? 12 : 8;
+			record[uvOffset + v * 2] = (unsigned char)(v * 2 + 1);
+			record[uvOffset + v * 2 + 1] = (unsigned char)(v * 2 + 2);
+		}
+		if (types[t] != 11)
+		{
+			const int rgbOffset = types[t] == 23 ? 20 : 16;
+			record[rgbOffset] = 10; record[rgbOffset + 1] = 20; record[rgbOffset + 2] = 30;
+		}
+		SourceModelView view = {};
+		view.instanceNumber = -1; view.numVertices = 4; view.numPolys = 1;
+		view.vertices = 8; view.pointNormals = 40; view.numPointNormals = 4; view.polyBlock = 72;
+		SourceMesh source;
+		char error[256] = "";
+		CHECK(DecodeSourceModel(bytes.data(), bytes.data() + bytes.size(), view,
+			&source, error, sizeof(error)).error == SOURCE_MODEL_ERROR_NONE);
+		// HashSourceMesh includes these exact index bytes in the world cache
+		// source hash: corrected indices cannot reuse the old topology's key.
+		const unsigned int oldIndices[] = { 0,1,2, 0,2,3 };
+		CHECK(ConversionCache_HashBytes(source.indices.data(), (int)(source.indices.size() * sizeof(unsigned int))) !=
+			ConversionCache_HashBytes(oldIndices, sizeof(oldIndices)));
+		GltfMultiMeshData mesh;
+		WorldMeshBuilderResult result;
+		CHECK(WorldMeshBuilder_BuildMulti(source, &mesh, &result, error, sizeof(error)) == WORLD_MESH_ERROR_NONE);
+		CHECK(mesh.primitives.size() == 1);
+		const GltfPrimitiveData& primitive = mesh.primitives[0];
+		CHECK(primitive.vertexCount == 6 && primitive.triangleCount == 2);
+		for (int v = 0; v < 6; ++v)
+		{
+			const unsigned int original = source.indices[v];
+			CHECK(NearlyEqual(primitive.normals[v * 3 + 2], 1.0f));
+			CHECK(NearlyEqual(primitive.uvs[v * 2], source.uvs[original * 2]));
+			CHECK(NearlyEqual(primitive.uvs[v * 2 + 1], source.uvs[original * 2 + 1]));
+		}
+		const float samples[][2] = { {0.1f,0.5f}, {0.9f,0.5f}, {0.2f,0.1f}, {0.8f,0.95f} };
+		for (int s = 0; s < 4; ++s)
+		{
+			int coverage = 0;
+			for (int i = 0; i < 6; i += 3)
+			{
+				float edges[3];
+				for (int e = 0; e < 3; ++e)
+				{
+					const float* a = &primitive.positions[primitive.indices[i + e] * 3];
+					const float* b = &primitive.positions[primitive.indices[i + (e + 1) % 3] * 3];
+					edges[e] = (b[0] - a[0]) * (samples[s][1] - a[1]) -
+						(b[1] - a[1]) * (samples[s][0] - a[0]);
+				}
+				if ((edges[0] > 0 && edges[1] > 0 && edges[2] > 0) ||
+					(edges[0] < 0 && edges[1] < 0 && edges[2] < 0)) coverage++;
+			}
+			CHECK(coverage == 1);
+		}
+	}
+}
+
 int main()
 {
 	TestFlatNormals();
@@ -755,6 +899,8 @@ int main()
 	TestMultiDeterminismAndReload();
 	TestMultiSubmeshImages();
 	TestImageErrors();
+	TestMultiVertexColors();
+	TestDecodedCyclicQuadCoverage();
 
 	printf("%d checks, %d failures\n", g_checks, g_failures);
 	return g_failures == 0 ? 0 : 1;

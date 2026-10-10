@@ -166,6 +166,8 @@ bool s_regionPlacementsTruncated = false;
 bool s_regionResourcesTruncated = false;
 int s_regionConvertedSlotCount = 0;
 int s_regionFailedSlotCount = 0;
+int s_regionLodSlotCount = 0;
+int s_regionHighDetailSlotCount = 0;
 
 // Per-slot probe record. The loader reports each model once at its size-live
 // site; a reused slot replaces its record in place.
@@ -257,6 +259,8 @@ void AssetCatalogGame_BeginLevel(void)
 	s_regionResourcesTruncated = false;
 	s_regionConvertedSlotCount = 0;
 	s_regionFailedSlotCount = 0;
+	s_regionLodSlotCount = 0;
+	s_regionHighDetailSlotCount = 0;
 }
 
 void AssetCatalogGame_RegisterModel(int modelIndex)
@@ -853,7 +857,7 @@ static unsigned long long HashSourceMesh(const SourceMesh& mesh)
 {
 	std::vector<unsigned char> bytes;
 	bytes.reserve(mesh.positions.size() * sizeof(float) + mesh.uvs.size() * sizeof(float) +
-		mesh.colors.size() + mesh.indices.size() * sizeof(unsigned int) +
+		mesh.colors.size() + mesh.shadeIndices.size() + mesh.indices.size() * sizeof(unsigned int) +
 		mesh.submeshes.size() * 12);
 
 	const unsigned char* positions = (const unsigned char*)mesh.positions.data();
@@ -861,6 +865,7 @@ static unsigned long long HashSourceMesh(const SourceMesh& mesh)
 	const unsigned char* uvs = (const unsigned char*)mesh.uvs.data();
 	bytes.insert(bytes.end(), uvs, uvs + mesh.uvs.size() * sizeof(float));
 	bytes.insert(bytes.end(), mesh.colors.begin(), mesh.colors.end());
+	bytes.insert(bytes.end(), mesh.shadeIndices.begin(), mesh.shadeIndices.end());
 	const unsigned char* indices = (const unsigned char*)mesh.indices.data();
 	bytes.insert(bytes.end(), indices, indices + mesh.indices.size() * sizeof(unsigned int));
 
@@ -1056,6 +1061,231 @@ static unsigned long long HashBakedImages(const TextureBakeResult& bake)
 	return ConversionCache_HashBytes(stream.data(), (int)stream.size());
 }
 
+// Combines the baked-image hash with the legacy-shading colour hash so a
+// time-of-day/weather change (which changes the baked colours) never reuses a
+// stale GLB. Returns the image hash unchanged when there are no legacy colours,
+// so a sprite/override conversion keeps its historical key.
+static unsigned long long HashConversionOptions(const TextureBakeResult& bake,
+	const std::vector<unsigned char>& legacyColors)
+{
+	const unsigned long long imageHash = HashBakedImages(bake);
+	if (legacyColors.empty())
+		return imageHash;
+
+	std::vector<unsigned char> stream;
+	stream.push_back(0xA5); // separator: keeps the colour stream distinct from the image stream
+	for (int shift = 0; shift < 64; shift += 8)
+		stream.push_back((unsigned char)(imageHash >> shift));
+	stream.insert(stream.end(), legacyColors.begin(), legacyColors.end());
+	return ConversionCache_HashBytes(stream.data(), (int)stream.size());
+}
+
+// ---------------------------------------------------------------------------
+// E03 visual parity P2: legacy world-shading bake.
+//
+// The legacy world draw does NOT use the stored RGB for buildings or tiles:
+//   * buildings, ptype 21 (and 20 after the even->odd conversion) use the global
+//     `combointensity` (draw.c:789,885,1169);
+//   * buildings, ptype 11/23 (and 10/22 after conversion) use
+//     `f4colourTable[(r - th) & 31]` (draw.c:793,1173), where `th` is the
+//     polygon's normal index and `r` is the instance rotation bucket;
+//   * tiles use the flat `plotContext.colour` computed in DrawTILES
+//     (tile.c:227-253).
+// This computes the same bytes at conversion time and hands them to
+// WorldMeshBuilder as per-vertex colours (COLOR_0). `combointensity` and the
+// time-of-day/weather are per-frame globals (main.c:1482), so the
+// conversion-time value is baked; the dynamic coupling is documented here and is
+// a follow-up to record in the knowledge handoff (a per-frame ambient factor
+// would need the plane table and the instance rotation at draw time).
+// The instance rotation `r` is not known per model slot, so the normal-shaded
+// branch is baked at r = 0 (the plane table is symmetric in its shading pairs,
+// so this matches an unrotated instance).
+// ---------------------------------------------------------------------------
+
+// The ambient intensity the world draw uses, in the same 0xRRGGBB form as
+// `combointensity`. The live global is the primary source; the conversion runs
+// at level load, before the first StepSim has set it, so a zero global falls
+// back to StepSim's steady-state ambience (main.c:1444-1490) computed from the
+// live time-of-day/weather. This keeps the bake from ever being all-black.
+static u_int LegacyAmbient(void)
+{
+	if (combointensity != 0)
+		return (u_int)combointensity;
+
+	int ambient;
+	if (gTimeOfDay == TIME_DAY)
+		ambient = (gWeather - 1U > 1) ? 128 : 78;
+	else if (gTimeOfDay == TIME_NIGHT)
+		ambient = 128;
+	else if (gTimeOfDay == TIME_DUSK)
+		ambient = (gWeather - 1U < 2) ? 78 : 96;
+	else
+		ambient = (gTimeOfDay == TIME_DAWN) ? 26 : 128;
+
+	return (u_int)(ambient | ambient << 8 | ambient << 16);
+}
+
+// Mirror of tile.c `fst_div_3`.
+static int LegacyFstDiv3(int x)
+{
+	return x * 171 >> 9;
+}
+
+// Mirror of SetupPlaneColours (draw.c:370-412), computed locally so the bake
+// never depends on plotContext having been populated by a prior frame.
+static void LegacyComputePlaneColours(u_int ambient, u_int planeColours[8])
+{
+	u_int r, g, b;
+
+	if (gWeather == 0 && gTimeOfDay >= 0 &&
+		((1 << gTimeOfDay) & ((1 << TIME_DAWN) | (1 << TIME_DUSK))) == 0)
+	{
+		if (gTimeOfDay == TIME_DAY)
+		{
+			b = ambient & 255;
+			g = ambient >> 8 & 255;
+			r = ambient >> 16 & 255;
+
+			planeColours[1] = (r * 120 >> 7) << 16 | (g * 120 >> 7) << 8 | b * 120 >> 7;
+			planeColours[2] = (r * 103 >> 7) << 16 | (g * 103 >> 7) << 8 | b * 103 >> 7;
+			planeColours[3] = (r * 13 >> 5) << 16 | (g * 13 >> 5) << 8 | b * 13 >> 5;
+			planeColours[0] = r << 16 | g << 8 | b;
+			planeColours[4] = (r * 3 >> 3) << 16 | (g * 3 >> 3) << 8 | b * 3 >> 3;
+			planeColours[5] = planeColours[3];
+			planeColours[6] = planeColours[2];
+			planeColours[7] = planeColours[1];
+			return;
+		}
+
+		for (int i = 0; i < 8; i++)
+			planeColours[i] = ambient;
+		return;
+	}
+
+	planeColours[0] = ambient;
+	planeColours[1] = ambient + 0x10101;
+	planeColours[2] = ambient + 0x30303;
+	planeColours[3] = ambient + 0x80808;
+	planeColours[4] = ambient + 0xa0a0a;
+	planeColours[5] = ambient + 0x80808;
+	planeColours[6] = ambient + 0x30303;
+	planeColours[7] = ambient + 0x10101;
+}
+
+// Mirror of the DrawTILES colour block (tile.c:227-253), including its weather
+// quartering. The dynamic-lighting variant (Tile1x1Lit / drawMeshLit) is not
+// baked; the default gEnableDlights == 0 uses this flat colour.
+static u_int LegacyComputeTileColour(void)
+{
+	u_int colour = 0;
+
+	if (gTimeOfDay > -1)
+	{
+		const int combo = (int)LegacyAmbient();
+		if (gTimeOfDay < TIME_NIGHT)
+			colour = combo & 0xffffffU | 0x2C000000;
+		else if (gTimeOfDay == TIME_NIGHT)
+			colour = LegacyFstDiv3(combo >> 16 & 255) << 16 |
+				LegacyFstDiv3(combo >> 8 & 255) << 8 |
+				LegacyFstDiv3(combo & 255) | 0x2C000000U;
+	}
+
+	if (gWeather - 1U < 2)
+	{
+		const u_int col = colour >> 2 & 63;
+		colour = col * 0x30000 | col * 0x300 | col * 3 | 0x2C000000;
+	}
+
+	return colour;
+}
+
+// True for the primitive classes the runtime shades with combointensity: the
+// flat textured types 20/21 (after conversion 20->21). The PL (10/11) and
+// gouraud (22/23) classes use the normal-indexed f4colourTable instead.
+static bool LegacyClassUsesCombo(SourcePrimitiveClass primitiveClass)
+{
+	return primitiveClass == SourcePrimitiveClass::TexturedFlatTriangle ||
+		primitiveClass == SourcePrimitiveClass::TexturedFlatQuad;
+}
+
+static void LegacyWriteRgb(std::vector<unsigned char>& out, unsigned int vertex, u_int colour)
+{
+	out[(size_t)vertex * 3 + 0] = (unsigned char)((colour >> 16) & 0xFF);
+	out[(size_t)vertex * 3 + 1] = (unsigned char)((colour >> 8) & 0xFF);
+	out[(size_t)vertex * 3 + 2] = (unsigned char)(colour & 0xFF);
+}
+
+// Builds one legacy-shaded RGB triple per source vertex. Returns false when the
+// model is a sprite (it keeps the historical base-colour-factor behaviour) or
+// when the decode carried no shading metadata, so the caller passes no override.
+static bool LegacyComputeWorldColors(const SourceMesh& source, const MODEL* model,
+	std::vector<unsigned char>& out)
+{
+	const size_t vertexCount = source.positions.size() / 3;
+	if (vertexCount == 0 || source.shadeIndices.size() != vertexCount)
+		return false;
+
+	if ((model->shape_flags & SHAPE_FLAG_SPRITE) != 0)
+		return false;
+
+	const bool tile = ((model->shape_flags & (SHAPE_FLAG_WATER | SHAPE_FLAG_TILE)) != 0) ||
+		((model->flags2 & (MODEL_FLAG_PATH | MODEL_FLAG_GRASS)) != 0);
+
+	out.assign(vertexCount * 3, 0);
+
+	if (tile)
+	{
+		const u_int colour = LegacyComputeTileColour();
+		for (size_t v = 0; v < vertexCount; v++)
+			LegacyWriteRgb(out, (unsigned int)v, colour);
+		return true;
+	}
+
+	// Building: combo for ptype 20/21, the normal-indexed f4colourTable for
+	// ptype 10/11/22/23. Every index belongs to exactly one submesh, so the
+	// submesh's class selects the branch for each vertex it references.
+	u_int planeColours[8];
+	LegacyComputePlaneColours(LegacyAmbient(), planeColours);
+
+	int f4colourTable[32];
+	for (int i = 0; i < 8; i++)
+	{
+		f4colourTable[i * 4 + 0] = (int)(planeColours[i] | 0x2C000000);
+		f4colourTable[i * 4 + 1] = (int)(planeColours[0] | 0x2C000000);
+		f4colourTable[i * 4 + 2] = (int)(planeColours[5] | 0x2C000000);
+		f4colourTable[i * 4 + 3] = (int)(planeColours[0] | 0x2C000000);
+	}
+
+	const u_int combo = LegacyAmbient() & 0x2ffffffU;
+
+	for (size_t s = 0; s < source.submeshes.size(); s++)
+	{
+		const SourceSubmesh& submesh = source.submeshes[s];
+		const bool usesCombo = LegacyClassUsesCombo(submesh.primitiveClass);
+
+		for (unsigned int k = submesh.firstIndex; k < submesh.firstIndex + submesh.indexCount; k++)
+		{
+			const unsigned int vertex = source.indices[k];
+			if (vertex >= vertexCount)
+				return false;
+
+			u_int colour;
+			if (usesCombo)
+				colour = combo;
+			else
+			{
+				// Legacy: f4colourTable[(r - th) & 31]; baked at r = 0.
+				const unsigned int index =
+					(0u - (unsigned int)source.shadeIndices[vertex]) & 31u;
+				colour = (u_int)f4colourTable[index];
+			}
+			LegacyWriteRgb(out, vertex, colour);
+		}
+	}
+
+	return true;
+}
+
 // Converts one resident model slot and registers its published resource. The
 // caller owns the request gating; this is the shared core of the
 // `-convertmodel` flag and the `-drawmodel` preparation.
@@ -1172,8 +1402,21 @@ static bool ConvertModelSlot(int slot, char* status, int statusCapacity)
 	TextureBakeResult bake;
 	TextureBake_BakeModel(source, &bake);
 
+	// E03 visual parity P2: bake the legacy per-polygon shading into per-vertex
+	// colours. Sprites and metadata-less decodes leave the override null and keep
+	// the historical base-colour-factor behaviour.
+	std::vector<unsigned char> legacyColors;
+	const unsigned char* vertexColors = NULL;
+	size_t vertexColorBytes = 0;
+	if (LegacyComputeWorldColors(source, model, legacyColors))
+	{
+		vertexColors = legacyColors.data();
+		vertexColorBytes = legacyColors.size();
+	}
+
 	if (WorldMeshBuilder_BuildMulti(source, &mesh, &built, error, sizeof(error),
-			bake.images.empty() ? NULL : bake.images.data(), (int)bake.images.size()) != WORLD_MESH_ERROR_NONE)
+			bake.images.empty() ? NULL : bake.images.data(), (int)bake.images.size(),
+			vertexColors, vertexColorBytes) != WORLD_MESH_ERROR_NONE)
 	{
 		snprintf(status, statusCapacity, "convert-model: slot %d build failed: %s (%s)",
 			slot, WorldMeshBuilder_ErrorName(built.error), error);
@@ -1197,7 +1440,7 @@ static bool ConvertModelSlot(int slot, char* status, int statusCapacity)
 	}
 
 	const unsigned long long sourceHash = HashSourceMesh(source);
-	const unsigned long long optionsHash = HashBakedImages(bake);
+	const unsigned long long optionsHash = HashConversionOptions(bake, legacyColors);
 	ConversionCacheKey key;
 	ConversionCache_MakeKey(&key, "world-mesh", sourceHash, optionsHash, 0ULL, CONVERSION_CACHE_SCHEMA_VERSION);
 
@@ -1351,6 +1594,10 @@ int AssetCatalogGame_CollectDrawPlacements(int modelSlot, int maxPlacements,
 		placement.sourceObjectIndex = walk.placements[i].sourceObjectIndex;
 		placement.modelSlot = modelSlot;
 		placement.modelRevision = handle.revision;
+		placement.lodModelSlot = -1;	// the bounded dev draw keeps one model slot
+		placement.lodModelRevision = 0;
+		placement.highDetailModelSlot = -1;
+		placement.highDetailModelRevision = 0;
 	}
 
 	s_drawPlacementCount = copied;
@@ -1418,6 +1665,213 @@ bool AssetCatalogGame_PrepareNativeDraw(char* status, int statusCapacity)
 	return true;
 }
 
+// --- E03 visual-parity P8 dev-only content filter --------------------------
+// RED2_NATIVE_REGION_FILTER selects one content class to drop (or keep) from
+// the region prepare, so a capture can localize a class whose converted
+// geometry/placement is suspect without a rebuild. It is read once from the
+// environment on the first region prepare; unset/empty/"none" means no filter
+// and the prepare output stays byte-for-byte unchanged. Developer/diagnostic
+// only: the filter never mutates gameplay or the asset catalog.
+enum RegionContentFilter
+{
+	REGION_FILTER_NONE = 0,
+	REGION_FILTER_NO_INSTANCED,		// drop models with instance_number != -1
+	REGION_FILTER_INSTANCED_ONLY,	// keep only those
+	REGION_FILTER_NO_TILES,			// drop tile-class models
+	REGION_FILTER_TILES_ONLY,		// keep only those
+};
+
+static RegionContentFilter s_regionFilter = REGION_FILTER_NONE;
+static bool s_regionFilterRead = false;
+
+static RegionContentFilter RegionContentFilterFromEnvironment(void)
+{
+	const char* value = getenv("RED2_NATIVE_REGION_FILTER");
+
+	if (value == NULL || value[0] == '\0' || strcmp(value, "none") == 0)
+		return REGION_FILTER_NONE;
+	if (strcmp(value, "noinstanced") == 0)
+		return REGION_FILTER_NO_INSTANCED;
+	if (strcmp(value, "instancedonly") == 0)
+		return REGION_FILTER_INSTANCED_ONLY;
+	if (strcmp(value, "notiles") == 0)
+		return REGION_FILTER_NO_TILES;
+	if (strcmp(value, "tilesonly") == 0)
+		return REGION_FILTER_TILES_ONLY;
+
+	printWarning("AssetCatalog: region draw: unknown RED2_NATIVE_REGION_FILTER \"%s\"; no filter\n", value);
+	return REGION_FILTER_NONE;
+}
+
+static RegionContentFilter GetRegionContentFilter(void)
+{
+	if (!s_regionFilterRead)
+	{
+		s_regionFilter = RegionContentFilterFromEnvironment();
+		s_regionFilterRead = true;
+	}
+
+	return s_regionFilter;
+}
+
+static const char* RegionContentFilterName(RegionContentFilter filter)
+{
+	switch (filter)
+	{
+	case REGION_FILTER_NO_INSTANCED: return "noinstanced";
+	case REGION_FILTER_INSTANCED_ONLY: return "instancedonly";
+	case REGION_FILTER_NO_TILES: return "notiles";
+	case REGION_FILTER_TILES_ONLY: return "tilesonly";
+	default: return "none";
+	}
+}
+
+// True when `modelSlot`'s live MODEL is an instanced sub-model
+// (instance_number != -1). A non-resident or unclassifiable slot is not
+// instanced, so the "no" filters retain it and the "only" filters drop it.
+static bool RegionFilterModelIsInstanced(int modelSlot)
+{
+	if (modelSlot < 0 || modelSlot >= MAX_MODEL_SLOTS)
+		return false;
+
+	const MODEL* model = modelpointers[modelSlot];
+	if (model == NULL || model == &dummyModel)
+		return false;
+
+	return model->instance_number != -1;
+}
+
+// True when `modelSlot`'s live MODEL is a tile-class model, using the exact
+// predicate of the world draw dispatch (ClassifyDispatchInputs). A
+// non-resident or unclassifiable slot is not a tile.
+static bool RegionFilterModelIsTile(int modelSlot)
+{
+	if (modelSlot < 0 || modelSlot >= MAX_MODEL_SLOTS)
+		return false;
+
+	const MODEL* model = modelpointers[modelSlot];
+	if (model == NULL || model == &dummyModel)
+		return false;
+
+	return ((model->shape_flags & (SHAPE_FLAG_WATER | SHAPE_FLAG_TILE)) != 0) ||
+		((model->flags2 & (MODEL_FLAG_PATH | MODEL_FLAG_GRASS)) != 0);
+}
+
+// True when the active filter keeps `modelSlot`. The "only" filters keep a
+// model solely when its predicate holds; the "no" filters drop a model solely
+// when its predicate holds, so an unclassifiable slot is always retained by a
+// "no" filter and never by an "only" filter.
+static bool RegionFilterKeepsModel(int modelSlot)
+{
+	switch (GetRegionContentFilter())
+	{
+	case REGION_FILTER_NO_INSTANCED: return !RegionFilterModelIsInstanced(modelSlot);
+	case REGION_FILTER_INSTANCED_ONLY: return RegionFilterModelIsInstanced(modelSlot);
+	case REGION_FILTER_NO_TILES: return !RegionFilterModelIsTile(modelSlot);
+	case REGION_FILTER_TILES_ONLY: return RegionFilterModelIsTile(modelSlot);
+	default: return true;
+	}
+}
+
+// --- E03 visual-parity P9 LOD tier -----------------------------------------
+// The legacy world draw swaps to the low-detail model for distant placements:
+//   draw.c:1041 (buildings) and tile.c:304 both use
+//   `Z > DRAW_LOD_DIST_LOW ? pLodModels[slot] : modelpointers[slot]`.
+// `pLodModels[slot]` is a DIFFERENT model slot when Low2LowerDetailTable maps
+// this slot to another resident one (spool.c:667-677); otherwise it is the
+// detail model itself. These helpers resolve that distinct variant so the
+// region prepare can convert it as an additional resource.
+
+// True when the legacy LOD tables declare a distinct lower-detail target for
+// `modelSlot`, whether or not it is resident. Used only to name a fallback once.
+static bool RegionHasDeclaredLod(int modelSlot)
+{
+	if (modelSlot < 0 || modelSlot >= MAX_MODEL_SLOTS || Low2LowerDetailTable == NULL)
+		return false;
+
+	// Low2LowerDetailTable has exactly num_models_in_pack entries (tile.c:
+	// ProcessLowDetailTable); a slot outside that range has no declared LOD.
+	if (modelSlot >= num_models_in_pack)
+		return false;
+
+	const unsigned int lod = Low2LowerDetailTable[modelSlot];
+	return lod != 0xFFFFU && lod != (unsigned int)modelSlot && lod < (unsigned int)num_models_in_pack;
+}
+
+// The distinct, resident LOD variant slot for `modelSlot`, or -1 when the LOD
+// model is the detail model (no link) or its target is not resident. The pointer
+// comparison is the reliable check: pLodModels[slot] is a different model only
+// when the mapping applies and the target was loaded.
+static int RegionLodSlotFor(int modelSlot)
+{
+	if (modelSlot < 0 || modelSlot >= MAX_MODEL_SLOTS)
+		return -1;
+
+	if (pLodModels[modelSlot] == NULL || pLodModels[modelSlot] == modelpointers[modelSlot])
+		return -1;
+
+	if (!RegionHasDeclaredLod(modelSlot))
+		return -1;
+
+	const int lod = (int)Low2LowerDetailTable[modelSlot];
+
+	if (pLodModels[modelSlot] != modelpointers[lod])
+		return -1;
+
+	if (modelpointers[lod] == NULL || modelpointers[lod] == &dummyModel)
+		return -1;
+
+	return lod;
+}
+
+// --- E03 visual-parity P10a near-tile high-detail tier ----------------------
+// The legacy tile path swaps a close tile's model number up through
+// Low2HighDetailTable before drawing it:
+//   tile.c:290-295 `if (Z <= DRAW_LOD_DIST_HIGH) { if
+//   (Low2HighDetailTable[model_number] != 0xffff) model_number =
+//   Low2HighDetailTable[model_number]; ... TileNxN(pModel, ...); }`
+// The cell data references the LOW-detail tile model, so the native draw must
+// resolve and convert the HIGH-detail sibling to draw the pavement/curb
+// structure the far LOD pass (P9) cannot recover. Only the tile dispatch path
+// has this swap; buildings never do.
+
+// True when Low2HighDetailTable declares a distinct high-detail sibling for
+// `modelSlot`, whether or not it is resident. Used only to name a fallback once.
+static bool RegionHasDeclaredHighDetail(int modelSlot)
+{
+	if (modelSlot < 0 || modelSlot >= MAX_MODEL_SLOTS || Low2HighDetailTable == NULL)
+		return false;
+
+	// Low2HighDetailTable has exactly num_models_in_pack entries; the lower-
+	// detail table immediately follows it (tile.c:731), so a slot outside that
+	// range must not be indexed here.
+	if (modelSlot >= num_models_in_pack)
+		return false;
+
+	const unsigned int hd = Low2HighDetailTable[modelSlot];
+	return hd != 0xFFFFU && hd != (unsigned int)modelSlot && hd < (unsigned int)MAX_MODEL_SLOTS;
+}
+
+// The distinct, resident high-detail sibling slot for a TILE-classified
+// `modelSlot`, or -1 when the model is not a tile, has no declared sibling, or
+// the sibling is not resident. The legacy applies this swap only in the tile
+// path, so a non-tile model always returns -1.
+static int RegionHighDetailSlotFor(int modelSlot)
+{
+	if (!RegionFilterModelIsTile(modelSlot))
+		return -1;
+
+	if (!RegionHasDeclaredHighDetail(modelSlot))
+		return -1;
+
+	const int hd = (int)Low2HighDetailTable[modelSlot];
+
+	if (modelpointers[hd] == NULL || modelpointers[hd] == &dummyModel)
+		return -1;
+
+	return hd;
+}
+
 // Full-region native draw preparation. It reuses the level inventory walker
 // without the report path (the same walker the bounded `-drawmodel` collector
 // uses), derives the distinct referenced model slots, converts each once through
@@ -1445,6 +1899,10 @@ bool AssetCatalogGame_PrepareRegionDraw(char* status, int statusCapacity)
 	s_regionResourcesTruncated = false;
 	s_regionConvertedSlotCount = 0;
 	s_regionFailedSlotCount = 0;
+
+	// Dev-only content filter (RED2_NATIVE_REGION_FILTER). Read once; NONE when
+	// unset, in which case every branch below is the unchanged original path.
+	const RegionContentFilter filter = GetRegionContentFilter();
 
 	if (!AssetCatalog_IsValid())
 	{
@@ -1508,6 +1966,9 @@ bool AssetCatalogGame_PrepareRegionDraw(char* status, int statusCapacity)
 		if (modelSlot < 0 || modelSlot >= MAX_MODEL_SLOTS)
 			continue;
 
+		if (!RegionFilterKeepsModel(modelSlot))
+			continue;
+
 		bool seen = false;
 		for (int s = 0; s < distinctCount; s++)
 			if (distinctSlots[s] == modelSlot)
@@ -1527,10 +1988,103 @@ bool AssetCatalogGame_PrepareRegionDraw(char* status, int statusCapacity)
 		distinctSlots[distinctCount++] = modelSlot;
 	}
 
-	// Convert each distinct slot once; a failed slot is a named warning and is
-	// skipped while the rest continue. A failed slot keeps no resource, so the
-	// bridge submits its instances with an empty key and the renderer counts
-	// them as skippedUnresolved rather than falling back to a placeholder.
+	// Distinct declared LOD variants for those detail slots (E03 visual-parity
+	// P9). A variant that duplicates a detail slot or another variant is
+	// converted once. The combined count is bounded by the resource registry
+	// capacity; exceeding it is the same named resource truncation. A declared
+	// LOD target that is not resident (or has no distinct model) is used as the
+	// detail key and is named once.
+	int lodSlots[ASSET_CATALOG_GAME_MAX_MODEL_RESOURCES];
+	int lodCount = 0;
+	bool lodFallbackLogged = false;
+
+	for (int s = 0; s < distinctCount; s++)
+	{
+		const int detailSlot = distinctSlots[s];
+		const int lod = RegionLodSlotFor(detailSlot);
+
+		if (lod < 0)
+		{
+			if (RegionHasDeclaredLod(detailSlot) && !lodFallbackLogged)
+			{
+				printWarning("AssetCatalog: region draw: slot %d LOD variant is not resident; detail key used\n",
+					detailSlot);
+				lodFallbackLogged = true;
+			}
+			continue;
+		}
+
+		bool seen = false;
+		for (int l = 0; l < lodCount && !seen; l++)
+			seen = lodSlots[l] == lod;
+		for (int d = 0; d < distinctCount && !seen; d++)
+			seen = distinctSlots[d] == lod;
+		if (seen)
+			continue;
+
+		if (distinctCount + lodCount >= ASSET_CATALOG_GAME_MAX_MODEL_RESOURCES)
+		{
+			s_regionResourcesTruncated = true;
+			continue;
+		}
+
+		lodSlots[lodCount++] = lod;
+	}
+
+	// Distinct declared high-detail siblings of the TILE-classified detail
+	// slots (E03 visual-parity P10a). The cell data references the low-detail
+	// tile, so the legacy swaps the model number up through Low2HighDetailTable
+	// when the tile is close (tile.c:290-295); that sibling must be converted as
+	// an additional resource. Only the tile dispatch path has this swap, so the
+	// resolver already returns -1 for non-tile models. A sibling that duplicates
+	// a detail/LOD slot or another sibling is converted once. The combined count
+	// is bounded by the resource registry capacity; exceeding it is the same
+	// named resource truncation. A declared sibling that is not resident, or has
+	// no distinct model, is used as the detail key and is named once.
+	int highDetailSlots[ASSET_CATALOG_GAME_MAX_MODEL_RESOURCES];
+	int highDetailCount = 0;
+	bool highDetailFallbackLogged = false;
+
+	for (int s = 0; s < distinctCount; s++)
+	{
+		const int detailSlot = distinctSlots[s];
+		const int hd = RegionHighDetailSlotFor(detailSlot);
+
+		if (hd < 0)
+		{
+			if (RegionFilterModelIsTile(detailSlot) && RegionHasDeclaredHighDetail(detailSlot) &&
+				!highDetailFallbackLogged)
+			{
+				printWarning("AssetCatalog: region draw: slot %d high-detail sibling is not resident; detail key used\n",
+					detailSlot);
+				highDetailFallbackLogged = true;
+			}
+			continue;
+		}
+
+		bool seen = false;
+		for (int h = 0; h < highDetailCount && !seen; h++)
+			seen = highDetailSlots[h] == hd;
+		for (int l = 0; l < lodCount && !seen; l++)
+			seen = lodSlots[l] == hd;
+		for (int d = 0; d < distinctCount && !seen; d++)
+			seen = distinctSlots[d] == hd;
+		if (seen)
+			continue;
+
+		if (distinctCount + lodCount + highDetailCount >= ASSET_CATALOG_GAME_MAX_MODEL_RESOURCES)
+		{
+			s_regionResourcesTruncated = true;
+			continue;
+		}
+
+		highDetailSlots[highDetailCount++] = hd;
+	}
+
+	// Convert each distinct detail slot once; a failed slot is a named warning
+	// and is skipped while the rest continue. A failed slot keeps no resource,
+	// so the bridge submits its instances with an empty key and the renderer
+	// counts them as skippedUnresolved rather than falling back to a placeholder.
 	for (int s = 0; s < distinctCount; s++)
 	{
 		char convertStatus[512];
@@ -1544,6 +2098,40 @@ bool AssetCatalogGame_PrepareRegionDraw(char* status, int statusCapacity)
 		}
 	}
 
+	// Convert each distinct LOD variant once. A failed LOD conversion is a named
+	// warning and leaves the placement on its detail key; the rest continue.
+	for (int l = 0; l < lodCount; l++)
+	{
+		char convertStatus[512];
+
+		if (ConvertModelSlot(lodSlots[l], convertStatus, sizeof(convertStatus)))
+			s_regionConvertedSlotCount++;
+		else
+		{
+			s_regionFailedSlotCount++;
+			printWarning("AssetCatalog: region draw (LOD): %s\n", convertStatus);
+		}
+	}
+
+	// Convert each distinct high-detail sibling once. A failed high-detail
+	// conversion is a named warning and leaves the placement on its detail key;
+	// the rest continue.
+	for (int h = 0; h < highDetailCount; h++)
+	{
+		char convertStatus[512];
+
+		if (ConvertModelSlot(highDetailSlots[h], convertStatus, sizeof(convertStatus)))
+			s_regionConvertedSlotCount++;
+		else
+		{
+			s_regionFailedSlotCount++;
+			printWarning("AssetCatalog: region draw (high-detail): %s\n", convertStatus);
+		}
+	}
+
+	s_regionLodSlotCount = lodCount;
+	s_regionHighDetailSlotCount = highDetailCount;
+
 	// Resolve each distinct slot's revision once for the placement store; the
 	// renderer only ever sees the resource key, so this is staleness provenance.
 	unsigned int revisions[ASSET_CATALOG_GAME_MAX_MODEL_RESOURCES];
@@ -1554,15 +2142,38 @@ bool AssetCatalogGame_PrepareRegionDraw(char* status, int statusCapacity)
 		revisions[s] = record >= 0 ? AssetCatalog_GetModelHandle(record).revision : 0;
 	}
 
+	unsigned int lodRevisions[ASSET_CATALOG_GAME_MAX_MODEL_RESOURCES];
+
+	for (int l = 0; l < lodCount; l++)
+	{
+		const int record = AssetCatalog_FindModel(lodSlots[l]);
+		lodRevisions[l] = record >= 0 ? AssetCatalog_GetModelHandle(record).revision : 0;
+	}
+
+	unsigned int highDetailRevisions[ASSET_CATALOG_GAME_MAX_MODEL_RESOURCES];
+
+	for (int h = 0; h < highDetailCount; h++)
+	{
+		const int record = AssetCatalog_FindModel(highDetailSlots[h]);
+		highDetailRevisions[h] = record >= 0 ? AssetCatalog_GetModelHandle(record).revision : 0;
+	}
+
 	// Copy every resident placement into the bounded store. The store bound is
 	// the native instance bound; a full store is a named truncation.
 	int copied = 0;
+	int filteredOut = 0;
 
 	for (int i = 0; i < walk.count; i++)
 	{
 		const AssetCatalogPlacement& source = walk.placements[i];
 		if (source.modelNumber < 0 || source.modelNumber >= MAX_MODEL_SLOTS)
 			continue;
+
+		if (!RegionFilterKeepsModel(source.modelNumber))
+		{
+			filteredOut++;
+			continue;
+		}
 
 		if (copied >= ASSET_CATALOG_GAME_MAX_REGION_PLACEMENTS)
 		{
@@ -1578,6 +2189,65 @@ bool AssetCatalogGame_PrepareRegionDraw(char* status, int statusCapacity)
 				break;
 			}
 
+		// E03 visual-parity P9: the LOD variant is usable only once its own
+		// resource is published; a failed LOD conversion falls back to the detail
+		// key (named once) instead of leaving the placement unresolved.
+		int lodSlot = RegionLodSlotFor(source.modelNumber);
+		unsigned int lodRevision = 0;
+
+		if (lodSlot >= 0)
+		{
+			if (!AssetCatalogGame_GetModelResource(lodSlot, NULL, 0, NULL, 0, NULL, 0, NULL))
+			{
+				if (!lodFallbackLogged)
+				{
+					printWarning("AssetCatalog: region draw: LOD slot %d has no resource; detail key used\n",
+						lodSlot);
+					lodFallbackLogged = true;
+				}
+				lodSlot = -1;
+			}
+			else
+			{
+				for (int l = 0; l < lodCount; l++)
+					if (lodSlots[l] == lodSlot)
+					{
+						lodRevision = lodRevisions[l];
+						break;
+					}
+			}
+		}
+
+		// E03 visual-parity P10a: the near-tile high-detail sibling is usable
+		// only once its own resource is published; a failed conversion falls back
+		// to the detail key (named once). The resolver returns -1 for non-tile
+		// models, so a building never carries a high-detail tier.
+		int highDetailSlot = RegionHighDetailSlotFor(source.modelNumber);
+		unsigned int highDetailRevision = 0;
+
+		if (highDetailSlot >= 0)
+		{
+			if (!AssetCatalogGame_GetModelResource(highDetailSlot, NULL, 0, NULL, 0, NULL, 0, NULL))
+			{
+				if (!highDetailFallbackLogged)
+				{
+					printWarning("AssetCatalog: region draw: high-detail slot %d has no resource; detail key used\n",
+						highDetailSlot);
+					highDetailFallbackLogged = true;
+				}
+				highDetailSlot = -1;
+			}
+			else
+			{
+				for (int h = 0; h < highDetailCount; h++)
+					if (highDetailSlots[h] == highDetailSlot)
+					{
+						highDetailRevision = highDetailRevisions[h];
+						break;
+					}
+			}
+		}
+
 		AssetCatalogGameDrawPlacement& placement = s_regionPlacements[copied++];
 		placement.x = source.x;
 		placement.y = source.y;
@@ -1586,6 +2256,10 @@ bool AssetCatalogGame_PrepareRegionDraw(char* status, int statusCapacity)
 		placement.sourceObjectIndex = source.sourceObjectIndex;
 		placement.modelSlot = source.modelNumber;
 		placement.modelRevision = revision;
+		placement.lodModelSlot = lodSlot;
+		placement.lodModelRevision = lodRevision;
+		placement.highDetailModelSlot = highDetailSlot;
+		placement.highDetailModelRevision = highDetailRevision;
 	}
 
 	// The walker's own object bound is a placement truncation too: placements
@@ -1600,16 +2274,38 @@ bool AssetCatalogGame_PrepareRegionDraw(char* status, int statusCapacity)
 
 	if (copied == 0)
 	{
-		snprintf(status, statusCapacity, "region draw: no resident placements");
+		if (filter != REGION_FILTER_NONE)
+			snprintf(status, statusCapacity,
+				"region draw: filter %s: no resident placements kept (%d filtered out)",
+				RegionContentFilterName(filter), filteredOut);
+		else
+			snprintf(status, statusCapacity, "region draw: no resident placements");
 		return false;
 	}
 
-	snprintf(status, statusCapacity,
-		"region draw: %d placements%s, %d distinct slots%s, %d converted, %d failed; %s",
-		copied, s_regionPlacementsTruncated ? " (placement-truncated)" : "",
-		distinctCount, s_regionResourcesTruncated ? " (resource-truncated)" : "",
-		s_regionConvertedSlotCount, s_regionFailedSlotCount,
-		walk.capacityExceeded ? "walker object bound reached" : "walker complete");
+	if (filter != REGION_FILTER_NONE)
+	{
+		printInfo("AssetCatalog: region draw: filter %s: %d placements kept, %d filtered out; "
+			"%d detail slots, %d LOD slots, %d high-detail slots\n",
+			RegionContentFilterName(filter), copied, filteredOut, distinctCount, lodCount, highDetailCount);
+
+		snprintf(status, statusCapacity,
+			"region draw: filter %s: %d placements%s, %d detail slots, %d LOD slots, %d high-detail slots%s, %d converted, %d failed; %s",
+			RegionContentFilterName(filter),
+			copied, s_regionPlacementsTruncated ? " (placement-truncated)" : "",
+			distinctCount, lodCount, highDetailCount, s_regionResourcesTruncated ? " (resource-truncated)" : "",
+			s_regionConvertedSlotCount, s_regionFailedSlotCount,
+			walk.capacityExceeded ? "walker object bound reached" : "walker complete");
+	}
+	else
+	{
+		snprintf(status, statusCapacity,
+			"region draw: %d placements%s, %d detail slots, %d LOD slots, %d high-detail slots%s, %d converted, %d failed; %s",
+			copied, s_regionPlacementsTruncated ? " (placement-truncated)" : "",
+			distinctCount, lodCount, highDetailCount, s_regionResourcesTruncated ? " (resource-truncated)" : "",
+			s_regionConvertedSlotCount, s_regionFailedSlotCount,
+			walk.capacityExceeded ? "walker object bound reached" : "walker complete");
+	}
 	return true;
 }
 
@@ -1758,6 +2454,16 @@ bool AssetCatalogGame_RegionDrawPlacementsTruncated(void)
 bool AssetCatalogGame_RegionDrawResourcesTruncated(void)
 {
 	return s_regionResourcesTruncated;
+}
+
+int AssetCatalogGame_RegionDrawLodSlotCount(void)
+{
+	return s_regionLodSlotCount;
+}
+
+int AssetCatalogGame_RegionDrawHighDetailSlotCount(void)
+{
+	return s_regionHighDetailSlotCount;
 }
 
 #else
@@ -1919,6 +2625,16 @@ bool AssetCatalogGame_RegionDrawPlacementsTruncated(void)
 bool AssetCatalogGame_RegionDrawResourcesTruncated(void)
 {
 	return false;
+}
+
+int AssetCatalogGame_RegionDrawLodSlotCount(void)
+{
+	return 0;
+}
+
+int AssetCatalogGame_RegionDrawHighDetailSlotCount(void)
+{
+	return 0;
 }
 
 void AssetCatalogGame_RecordModelSpan(int modelIndex, const unsigned char* modelBegin, int spanBytes)

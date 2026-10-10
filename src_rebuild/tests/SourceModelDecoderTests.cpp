@@ -263,6 +263,77 @@ static bool MeshEqual(const SourceMesh& a, const SourceMesh& b)
 
 // --- F-A: quad emission order and UVs ---------------------------------------
 
+static float EdgeXY(const float* a, const float* b, float x, float y)
+{
+	return (b[0] - a[0]) * (y - a[1]) - (b[1] - a[1]) * (x - a[0]);
+}
+
+static int QuadCoverage(const SourceMesh& mesh, float x, float y)
+{
+	int coverage = 0;
+	for (size_t i = 0; i < mesh.indices.size(); i += 3)
+	{
+		const float* a = &mesh.positions[mesh.indices[i] * 3];
+		const float* b = &mesh.positions[mesh.indices[i + 1] * 3];
+		const float* c = &mesh.positions[mesh.indices[i + 2] * 3];
+		const float ab = EdgeXY(a, b, x, y), bc = EdgeXY(b, c, x, y), ca = EdgeXY(c, a, x, y);
+		if ((ab > 0 && bc > 0 && ca > 0) || (ab < 0 && bc < 0 && ca < 0))
+			coverage++;
+	}
+	return coverage;
+}
+
+static void TestCyclicQuadCoverage()
+{
+	const int types[] = { 11, 21, 23 };
+	for (int t = 0; t < 3; ++t)
+	{
+		SourceModelBuilder b;
+		b.BeginVertices();
+		b.AddVertex(0, 0, 0); b.AddVertex(1, 0, 0);
+		b.AddVertex(1, 1, 0); b.AddVertex(0, 1, 0);
+		b.BeginPointNormals();
+		b.AddRawNormal(4096, 0, 0); b.AddRawNormal(0, 4096, 0);
+		b.AddRawNormal(0, 0, 4096); b.AddRawNormal(-4096, 0, 0);
+		b.BeginPolys();
+		if (types[t] == 11)
+			AddPL(b, 2, 5, 0x87, 0, 1, 2, 3, UV(1, 2), UV(3, 4), UV(5, 6), UV(7, 8));
+		else if (types[t] == 21)
+			AddFT4(b, 2, 5, 0, 1, 2, 3, UV(1, 2), UV(3, 4), UV(5, 6), UV(7, 8), RGB(10, 20, 30));
+		else
+			AddGT4(b, 2, 5, 0, 1, 2, 3, 0, 1, 2, 3, UV(1, 2), UV(3, 4), UV(5, 6), UV(7, 8), RGB(10, 20, 30));
+		SourceMesh mesh;
+		char error[256] = "";
+		CHECK(Decode(b, mesh, error, sizeof(error)).error == SOURCE_MODEL_ERROR_NONE);
+		CHECK(mesh.positions == std::vector<float>({ 0,0,0, 1,0,0, 0,1,0, 1,1,0 }));
+		CHECK(mesh.uvs == std::vector<float>({ 1,2, 3,4, 7,8, 5,6 }));
+		CHECK(mesh.indices.size() == 6 && mesh.submeshes.size() == 1);
+		CHECK(mesh.submeshes[0].indexCount == 6);
+		CHECK(mesh.submeshes[0].textureSet == 2 && mesh.submeshes[0].textureId == 5);
+		CHECK(mesh.shadeIndices == std::vector<unsigned char>(4, types[t] == 11 ? 7 : types[t] == 21 ? 0 : 8));
+		CHECK(mesh.colors == (types[t] == 11 ? std::vector<unsigned char>() :
+			std::vector<unsigned char>({ 10,20,30, 10,20,30, 10,20,30, 10,20,30 })));
+		if (types[t] == 23)
+			CHECK(mesh.normals == std::vector<float>({ 4096,0,0, 0,4096,0, -4096,0,0, 0,0,4096 }));
+		else
+			CHECK(mesh.normals.empty());
+		for (size_t i = 0; i < mesh.indices.size(); i += 3)
+		{
+			const float* a = &mesh.positions[mesh.indices[i] * 3];
+			const float* b = &mesh.positions[mesh.indices[i + 1] * 3];
+			const float* c = &mesh.positions[mesh.indices[i + 2] * 3];
+			CHECK(EdgeXY(a, b, c[0], c[1]) > 0);
+		}
+		const float samples[][2] = { {0.1f,0.5f}, {0.9f,0.5f}, {0.2f,0.1f}, {0.8f,0.95f} };
+		for (int s = 0; s < 4; ++s)
+			CHECK(QuadCoverage(mesh, samples[s][0], samples[s][1]) == 1);
+		// The old topology has both overlap and a hole despite equal total area.
+		mesh.indices = { 0,1,2, 0,2,3 };
+		CHECK(QuadCoverage(mesh, 0.1f, 0.5f) == 2);
+		CHECK(QuadCoverage(mesh, 0.9f, 0.5f) == 0);
+	}
+}
+
 static void TestQuadOrderAndUVs()
 {
 	SourceModelBuilder b;
@@ -294,10 +365,10 @@ static void TestQuadOrderAndUVs()
 	CHECK(mesh.uvs[4] == 7.0f && mesh.uvs[5] == 8.0f);
 	CHECK(mesh.uvs[6] == 5.0f && mesh.uvs[7] == 6.0f);
 
-	// Triangle list (0,1,2)+(0,2,3).
+	// Triangle list over stored A,B,D,C: ABD+BCD.
 	CHECK(mesh.indices.size() == 6);
 	CHECK(mesh.indices[0] == 0 && mesh.indices[1] == 1 && mesh.indices[2] == 2);
-	CHECK(mesh.indices[3] == 0 && mesh.indices[4] == 2 && mesh.indices[5] == 3);
+	CHECK(mesh.indices[3] == 1 && mesh.indices[4] == 3 && mesh.indices[5] == 2);
 
 	CHECK(!mesh.colors.empty());
 	CHECK(mesh.colors.size() == 12);
@@ -675,7 +746,7 @@ static void TestPLQuadOrderAndUVs()
 
 	CHECK(mesh.indices.size() == 6);
 	CHECK(mesh.indices[0] == 0 && mesh.indices[1] == 1 && mesh.indices[2] == 2);
-	CHECK(mesh.indices[3] == 0 && mesh.indices[4] == 2 && mesh.indices[5] == 3);
+	CHECK(mesh.indices[3] == 1 && mesh.indices[4] == 3 && mesh.indices[5] == 2);
 
 	// No RGB exists in the PL layout, so the mesh has no color array at all.
 	CHECK(mesh.colors.empty());
@@ -726,6 +797,48 @@ static void TestPLTriangleOrderAndUVs()
 	CHECK(!mesh.submeshes[0].hasNormals);
 	CHECK(mesh.submeshes[0].textureSet == 6 && mesh.submeshes[0].textureId == 7);
 	CHECK(mesh.submeshes[0].firstIndex == 0 && mesh.submeshes[0].indexCount == 3);
+}
+
+// P2: the decoder exposes the legacy shading bucket per corner. The combo types
+// {20,21} carry 0 (they use combointensity); the normal-shaded types {10,11,22,23}
+// use the stored `th & 31` when its 0x80 flag is set, otherwise the recomputed
+// normalIndex bucket. A +Z-facing triangle v0=(0,0,0), v1=(100,0,0),
+// v2=(0,100,0) is the hand-computed bucket 8.
+static void TestLegacyShadeIndices()
+{
+	SourceModelBuilder b;
+	b.BeginVertices();
+	b.AddVertex(0, 0, 0);     // 0
+	b.AddVertex(100, 0, 0);   // 1
+	b.AddVertex(0, 100, 0);   // 2
+	b.AddVertex(0, 0, 100);   // 3
+	b.BeginPolys();
+	// ptype 11 quad, stored th=0 -> the decoder recomputes the bucket (8).
+	AddPL(b, 1, 1, 0x00, 0, 1, 2, 3, UV(0, 0), UV(1, 0), UV(0, 1), UV(1, 1));
+	// ptype 11 quad, stored th=0x80|7 -> the precomputed bucket 7 is used.
+	AddPL(b, 1, 1, 0x80 | 7, 0, 1, 2, 3, UV(0, 0), UV(1, 0), UV(0, 1), UV(1, 1));
+	// ptype 21 quad -> combo, bucket 0.
+	AddFT4(b, 1, 1, 0, 1, 2, 3, UV(0, 0), UV(1, 0), UV(0, 1), UV(1, 1), RGB(9, 9, 9));
+
+	SourceMesh mesh;
+	char error[256] = "";
+	SourceModelDecoderResult result = Decode(b, mesh, error, sizeof(error));
+	CHECK(result.error == SOURCE_MODEL_ERROR_NONE);
+
+	CHECK(mesh.positions.size() / 3 == 12);
+	CHECK(mesh.shadeIndices.size() == 12);
+	// First quad (4 corners): recomputed bucket 8.
+	CHECK(mesh.shadeIndices[0] == 8 && mesh.shadeIndices[3] == 8);
+	// Second quad: stored precomputed bucket 7.
+	CHECK(mesh.shadeIndices[4] == 7 && mesh.shadeIndices[7] == 7);
+	// FT4 combo quad carries 0.
+	CHECK(mesh.shadeIndices[8] == 0 && mesh.shadeIndices[11] == 0);
+
+	// The two PL records merge into one submesh (same class/texture); the FT4 is
+	// a separate submesh, so the combo/normal branch is decided per submesh.
+	CHECK(mesh.submeshes.size() == 2);
+	CHECK(mesh.submeshes[0].primitiveClass == SourcePrimitiveClass::TexturedPlQuad);
+	CHECK(mesh.submeshes[1].primitiveClass == SourcePrimitiveClass::TexturedFlatQuad);
 }
 
 // A model may legally mix a PL record with an FT4 record (the building loop
@@ -1674,8 +1787,10 @@ static void TestDeterminism()
 int main()
 {
 	TestQuadOrderAndUVs();
+	TestCyclicQuadCoverage();
 	TestPLQuadOrderAndUVs();
 	TestPLTriangleOrderAndUVs();
+	TestLegacyShadeIndices();
 	TestMixedModelPerSubmeshColors();
 	TestMixedModelPerSubmeshNormals();
 	TestEmptyModel();

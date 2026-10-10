@@ -10,7 +10,8 @@
  * It writes exactly the subset Gltf_LoadFile / Gltf_LoadFileMulti reads back:
  * one mesh, one node carrying the mesh placement as a column-major matrix, and
  * one or more primitives. Each primitive has POSITION/NORMAL/TEXCOORD_0 float
- * accessors, unsigned 32-bit indices and its own pbrMetallicRoughness material
+ * accessors, an optional COLOR_0 attribute (RGBA8 ubyte, normalised), unsigned
+ * 32-bit indices and its own pbrMetallicRoughness material
  * with a base-colour factor. A primitive may additionally carry a baked RGBA8
  * base-colour image, which is embedded as one deterministic PNG per material.
  *
@@ -22,8 +23,9 @@
  * also a valid PNG that any conforming decoder accepts.
  *
  * Layout is deterministic and documented: one shared BIN buffer holds, per
- * primitive, POSITION then NORMAL/TEXCOORD_0 (when present) then the index list,
- * then the PNG image (when present), in that fixed order; accessors are numbered
+ * primitive, POSITION then NORMAL/TEXCOORD_0/COLOR_0 (when present) then the
+ * index list, then the PNG image (when present), in that fixed order; accessors
+ * are numbered
  * per primitive in the same order; material i belongs to primitive i; the k-th
  * textured primitive owns image/texture/sampler k. Identical input therefore
  * produces byte-identical GLB, and a one-primitive mesh with no image written

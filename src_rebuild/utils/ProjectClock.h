@@ -57,6 +57,13 @@ void ProjectClock_SetPaused(int paused);
    applied through the normal bounded catch-up path on the next BeginFrame. */
 void ProjectClock_InjectElapsedMicros(unsigned long long micros);
 
+/* Debug/visual-parity fixture: freeze the simulation at an exact tick count so
+   two renderer paths can capture the identical state. Once the tick count
+   reaches `tick`, BeginFrame returns 0 forever after; before that it never
+   returns more ticks than the remaining room to `tick`. Cleared by Init/Reset. */
+void ProjectClock_SetFreezeTick(unsigned int tick);
+void ProjectClock_ClearFreezeTick(void);
+
 /* Returns the number of simulation ticks due for this presentation frame,
    bounded by the catch-up cap. */
 int ProjectClock_BeginFrame(void);

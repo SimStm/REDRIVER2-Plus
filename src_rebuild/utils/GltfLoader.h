@@ -7,11 +7,12 @@
  * Bounded glTF 2.0 / GLB static-mesh importer (renderer roadmap R3).
  *
  * Scope: one mesh. Attributes POSITION/NORMAL/TEXCOORD_0 as float accessors,
- * unsigned 16/32-bit indices, and a pbrMetallicRoughness material with a
- * base-colour factor and (optionally) one embedded image. Images are decoded on
- * Windows through WIC (PNG/JPEG), the same decoder the override path uses.
- * Anything outside that subset fails with a clear message instead of importing
- * silently wrong geometry.
+ * unsigned 16/32-bit indices, an optional COLOR_0 attribute (ubyte VEC3/VEC4,
+ * normalised or not, expanded to RGBA8), and a pbrMetallicRoughness material
+ * with a base-colour factor and (optionally) one embedded image. Images are
+ * decoded on Windows through WIC (PNG/JPEG), the same decoder the override path
+ * uses. Anything outside that subset fails with a clear message instead of
+ * importing silently wrong geometry.
  *
  * Two records exist. `Gltf_LoadFile` keeps the historical single-primitive
  * contract (first primitive only, images retained through WIC) unchanged for
@@ -35,6 +36,7 @@ struct GltfMeshData
 	std::vector<float> positions;			// 3 floats per vertex
 	std::vector<float> normals;				// 3 floats per vertex (may be empty)
 	std::vector<float> uvs;					// 2 floats per vertex (may be empty)
+	std::vector<unsigned char> colors;		// RGBA8, 4 bytes per vertex (may be empty)
 	std::vector<unsigned int> indices;		// triangle list (may be empty -> non-indexed)
 
 	std::vector<unsigned char> baseColorRGBA;	// width*height*4, may be empty
@@ -96,6 +98,7 @@ struct GltfPrimitiveData
 	std::vector<float> positions;			// 3 floats per vertex
 	std::vector<float> normals;				// 3 floats per vertex (may be empty)
 	std::vector<float> uvs;					// 2 floats per vertex (may be empty)
+	std::vector<unsigned char> colors;		// RGBA8, 4 bytes per vertex (may be empty)
 	std::vector<unsigned int> indices;		// triangle list (may be empty -> non-indexed)
 
 	std::vector<unsigned char> imageRgba;	// RGBA8 row-major, width*height*4, may be empty

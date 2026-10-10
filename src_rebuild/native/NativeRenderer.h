@@ -19,22 +19,55 @@
  * factor and its own shader bindings, and an instance draws all of them. A
  * primitive whose record carries an embedded base-colour image gets its own
  * RGBA8_UNORM texture sampled with a nearest/clamp PSX-look sampler; primitives
- * without an image sample a shared 1x1 white texel. Converted UVs are raw texel
+ * without an image sample a shared 1x1 white texel. A primitive may also carry a
+ * per-vertex COLOR_0 attribute (the E03 visual-parity P2 legacy shading bake):
+ * the pixel shader multiplies the sampled texel by it, matching the legacy
+ * `texColor * v_color` (psx.frag:147). Geometry with no COLOR_0 defaults to
+ * opaque white, so its base-colour factor still applies unchanged. Converted UVs
+ * are raw texel
  * coordinates and are scaled by 1/256 at upload time, so a full 256-texel page
- * samples correctly. RenderSceneToRGBA runs the same draw into an offscreen
+ * samples correctly.
+ *
+ * Vertex-colour scale (E03 visual-parity P6): the legacy GPU packs a per-
+ * primitive `bright` multiplier into the vertex data; every textured primitive
+ * uses bright = 2 (PsyX_GPU.cpp:790,844,893 MakeTexcoordQuad/Triangle/Rect) and
+ * the legacy vertex shader scales the normalised colour by it before
+ * interpolation (psx.vert:33-34 `v_color.xyz *= float(a_texcoord.z)`). The
+ * effective textured modulation is therefore (colourByte/255) * 2, i.e.
+ * colourByte/128; a day ambient of 128 becomes ~1.0, not 0.502. Converted
+ * content primitives are all textured legacy world primitives, so they carry
+ * colorScale = 2 and the scene vertex shader applies it in float to the vertex
+ * colour (never baked into the attribute). The built-in placeholder is a
+ * native-only fixture with white vertex colours and keeps colorScale = 1.
+ * RenderSceneToRGBA runs the same draw into an offscreen
  * readback target for tests and evidence capture.
  *
  * Alpha/cutout: the baked texture carries the PSX alpha convention from
  * knowledge/rules/texture-alpha-semantics.md (0x0000 -> 0, STP=1 with unknown
- * blend context -> 128, otherwise 255). The unlit slice samples that alpha and
- * blends with one straight-alpha state (SRC_ALPHA / INV_SRC_ALPHA for RGB,
- * ONE / INV_SRC_ALPHA for alpha): alpha 255 is opaque, alpha 128 is a 50%
- * blend into the background, and alpha 0 leaves the destination untouched. A
- * single pipeline covers textured and untextured primitives because the shared
- * white texel (alpha 255) makes the blend a no-op, so the placeholder and
- * untextured paths are unchanged. Depth writes stay enabled for this bounded
- * slice, so a semi-transparent primitive also writes depth; ordered
- * transparency is a later block.
+ * blend context -> 128, otherwise 255). World models are always opaque:
+ * PlotBuildingModel, PlotModelSubdivNxN and drawMesh issue setPolyFT4 with the
+ * semi-transparency bit clear, and the legacy fragment shader ignores STP for
+ * opaque draws. This slice therefore renders world geometry without blending:
+ * the pixel shader discards a texel whose sampled alpha is 0 (the 0000h cutout,
+ * psx.frag:111), renders every other texel fully opaque (an STP=128 texel shows
+ * its full RGB), and writes an opaque framebuffer alpha. The shared white texel
+ * (alpha 255) keeps the placeholder and untextured paths opaque with no discard.
+ * Depth writes stay enabled, so a discarded texel writes no depth and a cutout
+ * hole shows whatever is behind it. True semi-transparent content (STP with a
+ * real blend context) needs a separate blended pass with the depth test disabled
+ * and ordered transparency; that is a later block, not this opaque world slice.
+ *
+ * Dev-only P7 diagnosis toggles (both default off; unset environment = the
+ * production pipeline byte-for-byte). They are read exactly once, on the first
+ * scene-pipeline build, and are process-wide:
+ *   * RED2_NATIVE_NO_CUTOUT=1 omits the alpha==0 discard, so a cutout texel
+ *     renders with its own colour (alpha still ignored/opaque). It tells a
+ *     wrong-cutout/CLUT/page problem apart from missing geometry.
+ *   * RED2_NATIVE_NO_DEPTH=1 disables the scene depth test AND write, so every
+ *     primitive draws regardless of order. It tells a depth-occlusion problem
+ *     apart from missing geometry.
+ * Each active toggle is named once in native_renderer.log
+ * ("native renderer: cutout disabled by RED2_NATIVE_NO_CUTOUT"), warn-only.
  *
  * Coordinate/unit policy (pinned by tests/SourceModelDecoderTests.cpp): the
  * camera `view` matrix, decoded vertices and the projection near/far must share
@@ -56,17 +89,17 @@
  * unchanged: the game's inv_camera_matrix already carries the game axes and the
  * negation lives only in the projection (NativeCameraView_Compose stays as-is).
  *
- * Winding policy: the y negation above is a reflection, so it flips the signed
- * area sign of every triangle in the NDC. The decoder emits quads
- * (v0,v1,v3,v2) whose first triangle (v0,v1,v3) is the game's gte_nclip
- * triangle (draw.c:780-796); under the reflected projection that game-front
- * triangle has a NEGATIVE signed area, so the scene pipelines cull back faces
- * with CULL_MODE_BACK and FrontCounterClockwise False (Diligent's Vulkan D3D
- * emulation). The reflection and the flipped pin cancel: exactly the same world
- * faces remain front as before the vertical fix. The projection is +Z-forward
- * (the game/GTE convention, GR_Perspective3D clip.w = +z), so geometry ahead of
- * the camera has positive camera-space z and a positive clip w; the game's
- * inv_camera_matrix is fed directly with no reflection.
+ * Winding/culling policy: the scene pipelines cull nothing (CULL_MODE_NONE),
+ * matching the legacy GPU (PsyX_Vk.cpp sets VK_CULL_MODE_NONE). The game
+ * pre-culls every primitive in software with gte_nclip / opz > 0 and the
+ * PLOT_NO_CULL / PLOT_INV_CULL overrides (draw.c:784/796/1156-1165), so the
+ * renderer must not cull again or it removes the faces the game deliberately
+ * kept. The vertical convention above still reflects the NDC (a y negation), but
+ * with culling disabled the winding sign no longer selects a face; the decoder's
+ * stored order only needs to produce the correct raster coverage. The projection
+ * is +Z-forward (the game/GTE convention, GR_Perspective3D clip.w = +z), so
+ * geometry ahead of the camera has positive camera-space z and a positive clip
+ * w; the game's inv_camera_matrix is fed directly with no reflection.
  *
  * Residency and submission are separate: resources are registered by key
  * (NativeRenderer_RegisterResource), and a frame submits a bounded list of
@@ -80,9 +113,13 @@
 #ifdef _WIN32
 
 /* Bounded residency and per-frame submission limits. Reaching a limit is a
-   named error; the renderer never evicts a resource or an instance silently. */
-#define NATIVE_MAX_RESOURCES 64
-#define NATIVE_MAX_INSTANCES 4096
+   named error; the renderer never evicts a resource or an instance silently.
+   Sized for the whole resident world (E03 visual-parity P4): the level ptypes
+   probe records up to 516 model slots, so the resource table covers them with
+   headroom, and the E02 inventory counts 6740 unique placements, so the
+   per-frame instance bound covers them too. */
+#define NATIVE_MAX_RESOURCES 1024
+#define NATIVE_MAX_INSTANCES 8192
 #define NATIVE_RESOURCE_KEY_CAPACITY 160
 #define NATIVE_INSTANCE_DIAGNOSTIC_CAPACITY 256
 
@@ -124,9 +161,19 @@ int NativeRenderer_RenderClearAndPresent(float red, float green, float blue, flo
 	char* error, int errorCapacity);
 
 /* Feeds the game camera: `view` is a column-major world->camera matrix and
-   `fovYRadians` the vertical field of view. The projection is built from the
-   current draw target's aspect on the next scene draw. */
-void NativeRenderer_SetCamera(const float view[16], float fovYRadians);
+   `screenDistanceH` the live GTE screen distance h (the game's scr_z). The
+   projection's vertical focal length is 2h/NATIVE_PSX_DISPLAY_HEIGHT and its
+   horizontal scale follows the current draw target's aspect on the next scene
+   draw (see NativeCameraView_BuildProjection). */
+void NativeRenderer_SetCamera(const float view[16], float screenDistanceH);
+
+/* Feeds the live GTE screen offset (SetGeomOffset OFX/OFY), in PSX display
+   pixels (the 320x240 space NATIVE_PSX_DISPLAY_*). It is a constant NDC
+   translation added by the projection: the PSX display centre (160,120) is
+   neutral, and the game's live (160,128) pushes the image 8 PSX lines down.
+   The renderer is game-agnostic and defaults to the centre, so a caller that
+   never sets it keeps the centred projection. */
+void NativeRenderer_SetScreenOffset(float offsetX, float offsetY);
 
 /* Draws the native scene (submitted instances when any are set, otherwise the
    loaded converted content, otherwise a textured ground and pillars) with the

@@ -26,10 +26,12 @@
 // stored-block subset with a named diagnostic, leaving the loaded content and
 // the scene draw unaffected.
 //
-// Part 7: a textured primitive with a 4x1 image (opaque red, alpha-128 green, an
-// alpha-0 hole and opaque blue) renders through the real offscreen pipeline and
-// the readback matches the straight-alpha blend arithmetic over the clear
-// colour, pinning the PSX alpha semantics of the unlit slice.
+// Part 7: world opacity (supersedes the earlier straight-alpha blend checks).
+// A near quad with a 4x1 image (opaque red, alpha-128 green, an alpha-0 hole
+// and opaque blue) over a farther opaque quad renders through the real offscreen
+// pipeline with NO blending: the opaque texels show themselves, the STP=128
+// texel shows its full RGB, and the alpha-0 texel is a cutout hole that shows
+// the farther quad through it (no depth written, no blend).
 //
 // It requires a Vulkan-capable GPU/driver and the Diligent libraries built by
 // scripts/fetch_diligent.ps1; it needs no game assets. Build and run
@@ -38,6 +40,7 @@
 #include "../native/NativeRenderer.h"
 #include "../utils/GltfLoader.h"
 #include "../utils/GltfWriter.h"
+#include "../utils/NativeCameraView.h"
 #include "../utils/NativeInstanceTransform.h"
 
 #ifdef _WIN32
@@ -64,6 +67,12 @@
 #include "GraphicsTypes.h"
 
 using namespace Diligent;
+
+// The native camera API takes the live GTE screen distance h (the game's
+// scr_z), not a FOV. This h reproduces the previous 60-degree vertical FOV
+// under the legacy GTE focal length: 2h/NATIVE_PSX_DISPLAY_HEIGHT ==
+// 1/tan(30 degrees) == 1.73205, so the existing pixel expectations stay valid.
+static const float kSmokeScreenDistance = 120.0f / 0.57735027f; // 2h/240 = 1/tan(30 deg)
 
 static int g_checks = 0;
 static int g_failures = 0;
@@ -615,7 +624,7 @@ static void TestConvertedContentScene()
 	Check(Gltf_WriteFile("content-scene.glb", quad, error, sizeof(error)) == 0,
 		"scene fixture GLB written");
 
-	NativeRenderer_SetCamera(identity, 1.0472f); // 60 degrees
+	NativeRenderer_SetCamera(identity, kSmokeScreenDistance); // 60 degrees
 
 	Check(NativeRenderer_LoadContent("content-scene.glb", error, sizeof(error)) == 1,
 		"converted content loaded for drawing");
@@ -640,7 +649,7 @@ static void TestConvertedContentScene()
 	for (int i = 0; i < 16; ++i)
 		movedView[i] = identity[i];
 	movedView[12] = -1000.0f;
-	NativeRenderer_SetCamera(movedView, 1.0472f);
+	NativeRenderer_SetCamera(movedView, kSmokeScreenDistance);
 
 	unsigned char movedImage[64 * 64 * 4] = {};
 	Check(NativeRenderer_RenderSceneToRGBA(movedImage, 64, 64, error, sizeof(error)) == 1,
@@ -696,7 +705,7 @@ static void TestConvertedContentScene()
 	NativeRenderer_GetContentStats(&vertices, &triangles);
 	Check(vertices == 4 && triangles == 2, "stats stay correct after resource replacement");
 
-	NativeRenderer_SetCamera(identity, 1.0472f);
+	NativeRenderer_SetCamera(identity, kSmokeScreenDistance);
 	unsigned char reloadedImage[64 * 64 * 4] = {};
 	const bool reloaded = NativeRenderer_RenderSceneToRGBA(reloadedImage, 64, 64, error, sizeof(error)) == 1;
 	const unsigned char* reloadedCentre = &reloadedImage[((32 * 64) + 32) * 4];
@@ -705,20 +714,19 @@ static void TestConvertedContentScene()
 		"replaced content resources still draw the quad");
 }
 
-// E03-B2.5/item4: pins the decoder's winding to the renderer's cull mode under
-// the +Z-forward projection. The decoder emits a world quad as (v0,v1,v3,v2)
-// and fans it (0,1,2)+(0,2,3); the first triangle (v0,v1,v3) is the game's
-// gte_nclip triangle (draw.c:780-796). BuildPerspective negates camera-space y
-// (out[5] = -f) to match the game's +Y-down screen convention, which reflects
-// the NDC and makes that game-front triangle NEGATIVE-area. The scene pipelines
-// cull back faces with CULL_MODE_BACK and FrontCounterClockwise = False
-// (native/NativeRenderer.cpp): the reflection and the flipped pin cancel, so a
-// front-winding quad is still visible and a reversed back-winding quad is still
-// culled. Both quads sit at z = +5 (ahead) under an identity camera.
-static void TestWindingCullPolicy()
+// E03 visual parity P1: the scene pipelines cull nothing (CULL_MODE_NONE),
+// matching the legacy GPU (PsyX_Vk.cpp sets VK_CULL_MODE_NONE). The game
+// pre-culls every primitive in software (gte_nclip / opz > 0 and the
+// PLOT_NO_CULL / PLOT_INV_CULL overrides, draw.c:784/796/1156-1165), so the
+// renderer must not cull again. A quad and its reversed-winding twin must
+// therefore BOTH render under the same camera; culling either one would drop a
+// face the game deliberately kept. Both quads sit at z = +5 (ahead) under an
+// identity camera.
+static void TestNoCullBothFaces()
 {
 	const float identity[16] = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
-	NativeRenderer_SetCamera(identity, 1.0472f); // 60 degrees
+	NativeRenderer_SetCamera(identity, kSmokeScreenDistance); // 60 degrees
+	NativeRenderer_SetClipPlanes(0.02f, 300.0f); // metre-scale fixtures
 
 	GltfMeshData quad;
 	// Stored order c0..c3 is the convex counter-clockwise boundary order; the
@@ -752,13 +760,12 @@ static void TestWindingCullPolicy()
 	const bool frontVisible = frontCentre[0] >= 239 && frontCentre[1] <= 16 &&
 		frontCentre[2] <= 16 && frontCentre[3] == 255;
 	if (!frontVisible)
-		printf("    (front centre %u,%u,%u,%u, expected red: front face must survive the cull)\n",
+		printf("    (front centre %u,%u,%u,%u, expected red)\n",
 			frontCentre[0], frontCentre[1], frontCentre[2], frontCentre[3]);
-	Check(frontVisible, "front-winding quad is kept by the pinned back-face cull");
+	Check(frontVisible, "front-winding quad renders");
 
-	// Back winding: reversed index order gives a positive NDC signed area under
-	// the y-negated projection and must be culled, leaving the scene clear
-	// colour at the centre.
+	// Back winding: reversed index order. With culling disabled it must still
+	// render; under the old CULL_MODE_BACK policy this was the culled case.
 	GltfMeshData back = quad;
 	back.indices = { 0, 2, 1,  0, 3, 2 };
 	Check(Gltf_WriteFile("winding-back.glb", back, error, sizeof(error)) == 0,
@@ -769,13 +776,12 @@ static void TestWindingCullPolicy()
 	Check(NativeRenderer_RenderSceneToRGBA(backImage, 64, 64, error, sizeof(error)) == 1,
 		"back-winding quad rendered offscreen");
 	const unsigned char* backCentre = &backImage[((32 * 64) + 32) * 4];
-	const bool backCulled = backCentre[0] >= 9 && backCentre[0] <= 17 &&
-		backCentre[1] >= 14 && backCentre[1] <= 22 &&
-		backCentre[2] >= 27 && backCentre[2] <= 35 && backCentre[3] == 255;
-	if (!backCulled)
-		printf("    (back centre %u,%u,%u,%u, expected the clear colour ~13,18,31,255)\n",
+	const bool backVisible = backCentre[0] >= 239 && backCentre[1] <= 16 &&
+		backCentre[2] <= 16 && backCentre[3] == 255;
+	if (!backVisible)
+		printf("    (back centre %u,%u,%u,%u, expected red: no face is culled)\n",
 			backCentre[0], backCentre[1], backCentre[2], backCentre[3]);
-	Check(backCulled, "back-winding quad is culled by the pinned back-face cull");
+	Check(backVisible, "back-winding quad renders (the scene pipelines cull nothing)");
 
 	NativeRenderer_ClearContent();
 }
@@ -789,7 +795,7 @@ static void TestWindingCullPolicy()
 // Writes a horizontal (x-z plane) rectangle with the decoder's stored order
 // (c0=v0, c1=v1, c2=v3, c3=v2), which for a convex quad is the counter-clockwise
 // boundary order, and the (0,1,2)+(0,2,3) fan. `backWinding` reverses the index
-// order so the same geometry is culled.
+// order; the scene pipelines cull nothing, so both windings render.
 static bool WriteRectangleFixture(const char* path, float halfX, float halfZ,
 	bool backWinding, const float rgba[4], char* error, int errorCapacity)
 {
@@ -884,6 +890,11 @@ static bool IsGreen(const unsigned char* pixel)
 static bool IsBlue(const unsigned char* pixel)
 {
 	return pixel[2] >= 200 && pixel[0] <= 64 && pixel[1] <= 64;
+}
+
+static bool IsYellow(const unsigned char* pixel)
+{
+	return pixel[0] >= 200 && pixel[1] >= 200 && pixel[2] <= 64;
 }
 
 static bool IsClear(const unsigned char* pixel)
@@ -988,7 +999,7 @@ static void TestInstanceScreenRegions()
 
 	float view[16];
 	BuildTopDownView(20000.0f, view);
-	NativeRenderer_SetCamera(view, 1.0472f);
+	NativeRenderer_SetCamera(view, kSmokeScreenDistance);
 	NativeRenderer_SetClipPlanes(100.0f, 125000.0f);
 
 	NativeInstance instances[3];
@@ -1029,7 +1040,9 @@ static void TestInstanceScreenRegions()
 	Check(centreWidth > centreHeight, "the unyawed instance footprint is wider than tall");
 	Check(rightHeight > rightWidth, "the yang=16 yaw swaps the footprint aspect");
 
-	// A back-winding instance is culled by the same pinned policy.
+	// A back-winding instance is NOT culled: the scene pipelines cull nothing
+	// (matching the legacy GPU; the game software-culls), so both windings
+	// render. Under the old CULL_MODE_BACK policy this was the culled case.
 	const float backRed[4] = { 1.0f, 0.0f, 0.0f, 1.0f };
 	Check(WriteRectangleFixture("instance-back.glb", 6000.0f, 4000.0f, true, backRed, error, sizeof(error)),
 		"back-winding instance fixture written");
@@ -1042,7 +1055,7 @@ static void TestInstanceScreenRegions()
 	unsigned char backImage[64 * 64 * 4] = {};
 	Check(NativeRenderer_RenderSceneToRGBA(backImage, 64, 64, error, sizeof(error)) == 1,
 		"back-winding instance rendered offscreen");
-	Check(CountRed(backImage, 64, 64) == 0, "the back-winding instance is culled");
+	Check(CountRed(backImage, 64, 64) > 50, "the back-winding instance renders (no culling)");
 
 	// Acceptance (b): the nearer instance occludes the farther one. Draw the
 	// nearer green first and the farther red second so draw order cannot pass
@@ -1130,7 +1143,7 @@ static void TestMultiPrimitiveResource()
 
 	float view[16];
 	BuildTopDownView(20000.0f, view);
-	NativeRenderer_SetCamera(view, 1.0472f);
+	NativeRenderer_SetCamera(view, kSmokeScreenDistance);
 	NativeRenderer_SetClipPlanes(100.0f, 125000.0f);
 
 	NativeInstance instance;
@@ -1242,7 +1255,7 @@ static void TestTexturedMultiPrimitiveResource()
 
 	float view[16];
 	BuildTopDownView(20000.0f, view);
-	NativeRenderer_SetCamera(view, 1.0472f);
+	NativeRenderer_SetCamera(view, kSmokeScreenDistance);
 	NativeRenderer_SetClipPlanes(100.0f, 125000.0f);
 
 	NativeInstance instance;
@@ -1304,76 +1317,105 @@ static void TestTexturedMultiPrimitiveResource()
 	NativeRenderer_ClearResources();
 }
 
-// Writes a full-screen horizontal rectangle whose 4x1 base-colour image encodes
-// the PSX alpha convention (knowledge/rules/texture-alpha-semantics.md), left to
-// right: opaque red (255,0,0,255), semi-transparent green (0,255,0,128), a fully
-// transparent blue hole (0,0,255,0) and opaque blue (0,0,255,255). Raw texel UVs
-// 0..256 map to normalized 0..1, so each texel owns a 16-pixel screen quarter.
-static bool WriteAlphaFixture(const char* path, char* error, int errorCapacity)
+// Writes the world-opacity fixture: two horizontal (x-z plane) quads in one
+// multi record, drawn in primitive order through the real scene pipeline.
+//
+//   * near quad (world y = 0, camera depth 20000) carries a 4x1 base-colour
+//     image encoding the PSX alpha convention (knowledge/rules/
+//     texture-alpha-semantics.md), left to right: opaque red (255,0,0,255),
+//     STP green (0,255,0,128), a 0000h hole (0,0,255,0) and opaque blue
+//     (0,0,255,255). Raw texel UVs 0..256 map to normalized 0..1, so each texel
+//     owns a 16-pixel screen quarter.
+//   * far quad (world y = -4000, camera depth 24000, so BEHIND the near one)
+//     is untextured and opaque yellow (base colour 1,1,0,1 over the shared white
+//     texel). It covers the whole view and shows through the near quad's hole.
+//
+// The world half-extent that exactly fills the 64x64 view: with the camera at
+// y = 20000 (depth 20000) and a 60-degree fov, NDC.x = 1 at
+// x = depth * tan(30) = 11547. All near-quad vertices share world y = 0, so its
+// camera depth is constant and the quarter boundaries fall at screen x =
+// 16/32/48. The far quad is larger (half 20000) so it still covers the view at
+// depth 24000.
+static bool WriteWorldOpacityFixture(const char* path, char* error, int errorCapacity)
 {
 	GltfMultiMeshData multi;
-	GltfPrimitiveData primitive;
-	// The world half-extent that exactly fills the 64x64 view: with the camera at
-	// y = 20000 (depth 20000) and a 60-degree fov, NDC.x = 1 at
-	// x = depth * tan(30) = 11547. All vertices share world y = 0, so the camera
-	// depth is constant and the quarter boundaries fall at screen x = 16/32/48.
+
+	GltfPrimitiveData nearPrimitive;
 	const float half = 11547.0f;
-	primitive.positions = {
+	nearPrimitive.positions = {
 		-half, 0, -half,  half, 0, -half,  half, 0, half,  -half, 0, half,
 	};
-	primitive.uvs = { 0, 0,  256, 0,  256, 256,  0, 256 };
-	primitive.indices = { 0, 1, 2,  0, 2, 3 };
-	primitive.vertexCount = 4;
-	primitive.triangleCount = 2;
-	primitive.imageRgba = {
+	nearPrimitive.uvs = { 0, 0,  256, 0,  256, 256,  0, 256 };
+	nearPrimitive.indices = { 0, 1, 2,  0, 2, 3 };
+	nearPrimitive.vertexCount = 4;
+	nearPrimitive.triangleCount = 2;
+	nearPrimitive.imageRgba = {
 		255, 0, 0, 255,	// opaque red
-		0, 255, 0, 128,	// semi-transparent green (STP=1)
-		0, 0, 255, 0,	// fully transparent blue (0000h hole)
+		0, 255, 0, 128,	// STP green (alpha 128)
+		0, 0, 255, 0,	// 0000h hole (alpha 0)
 		0, 0, 255, 255,	// opaque blue
 	};
-	primitive.imageWidth = 4;
-	primitive.imageHeight = 1;
-	multi.primitives.push_back(primitive);
+	nearPrimitive.imageWidth = 4;
+	nearPrimitive.imageHeight = 1;
+	multi.primitives.push_back(nearPrimitive);
+
+	GltfPrimitiveData farPrimitive;
+	const float farHalf = 20000.0f;
+	const float farY = -4000.0f; // camera depth 24000: behind the near quad
+	farPrimitive.positions = {
+		-farHalf, farY, -farHalf,  farHalf, farY, -farHalf,
+		farHalf, farY, farHalf,  -farHalf, farY, farHalf,
+	};
+	farPrimitive.uvs = { 0, 0,  1, 0,  1, 1,  0, 1 };
+	farPrimitive.indices = { 0, 1, 2,  0, 2, 3 };
+	farPrimitive.vertexCount = 4;
+	farPrimitive.triangleCount = 2;
+	farPrimitive.baseColorFactor[0] = 1.0f;
+	farPrimitive.baseColorFactor[1] = 1.0f;
+	farPrimitive.baseColorFactor[2] = 0.0f;
+	farPrimitive.baseColorFactor[3] = 1.0f;
+	multi.primitives.push_back(farPrimitive);
+
 	return Gltf_WriteFileMulti(path, multi, error, errorCapacity) == 0;
 }
 
-// E03 alpha/cutout phase: a textured primitive must sample the texture alpha and
-// apply the PSX semantics through the real offscreen pipeline. The scene clears
-// to (0.05, 0.07, 0.12) = (13, 18, 31) and the pipeline blends with
-// SRC_ALPHA / INV_SRC_ALPHA, so:
-//   * opaque red (a = 1)   -> 255,0,0   (the texel reproduces itself exactly)
-//   * alpha-128 green      -> src*src.a + dst*(1 - src.a)
-//                          = (0, 0.50196, 0) + 0.49804*(0.05098, 0.07059, 0.12157)
-//                          = (0.0254, 0.5371, 0.0605) -> (6, 137, 15)
-//   * alpha-0 blue (hole)  -> the destination is untouched: the clear (13,18,31)
-//   * opaque blue (a = 1)  -> 0,0,255
-// The blended green channel (~137) proves a 50% blend: neither the opaque texel
-// (255) nor the bare clear colour (18).
-static void TestAlphaBlendSemantics()
+// E03 visual parity P1: world geometry is always opaque, so the scene pipeline
+// blends nothing and the pixel shader discards only a 0000h texel. This test
+// supersedes the earlier straight-alpha blend semantics (TestAlphaBlendSemantics
+// and its 50% blend fixture are gone). Over a farther opaque yellow quad the
+// scene clears to (0.05, 0.07, 0.12) = (13, 18, 31), and:
+//   * opaque red (a = 255)  -> 255,0,0,255 (unchanged)
+//   * STP green (a = 128)   -> 0,255,0,255: FULLY opaque, NOT a 50% blend
+//   * 0000h hole (a = 0)    -> the texel is discarded (no colour, no depth), so
+//                              the farther yellow quad shows through it
+//   * opaque blue (a = 255) -> 0,0,255,255 (unchanged)
+// The full-green STP texel proves there is no blend; the yellow hole proves the
+// discard writes no depth (a depth-writing hole would occlude the far quad).
+static void TestWorldOpacity()
 {
 	char error[256];
 	NativeRenderer_ClearContent();
 	NativeRenderer_ClearInstances();
 	NativeRenderer_ClearResources();
 
-	Check(WriteAlphaFixture("alpha-blend.glb", error, sizeof(error)),
-		"alpha fixture written");
-	Check(NativeRenderer_LoadContent("alpha-blend.glb", error, sizeof(error)) == 1,
-		"alpha fixture loaded");
+	Check(WriteWorldOpacityFixture("world-opacity.glb", error, sizeof(error)),
+		"world-opacity fixture written");
+	Check(NativeRenderer_LoadContent("world-opacity.glb", error, sizeof(error)) == 1,
+		"world-opacity fixture loaded");
 
 	float view[16];
 	BuildTopDownView(20000.0f, view);
-	NativeRenderer_SetCamera(view, 1.0472f);
+	NativeRenderer_SetCamera(view, kSmokeScreenDistance);
 	NativeRenderer_SetClipPlanes(100.0f, 125000.0f);
 
 	unsigned char image[64 * 64 * 4] = {};
 	Check(NativeRenderer_RenderSceneToRGBA(image, 64, 64, error, sizeof(error)) == 1,
-		"alpha fixture rendered offscreen");
+		"world-opacity fixture rendered offscreen");
 
 	// Sample the centre row of each 16-pixel quarter (x = 8 / 24 / 40 / 56),
 	// safely inside the texel regions.
 	const unsigned char* opaqueRed = &image[((32 * 64) + 8) * 4];
-	const unsigned char* semiGreen = &image[((32 * 64) + 24) * 4];
+	const unsigned char* stpGreen = &image[((32 * 64) + 24) * 4];
 	const unsigned char* hole = &image[((32 * 64) + 40) * 4];
 	const unsigned char* opaqueBlue = &image[((32 * 64) + 56) * 4];
 
@@ -1381,31 +1423,36 @@ static void TestAlphaBlendSemantics()
 	if (!redOpaque)
 		printf("    (alpha-255 texel %u,%u,%u,%u, expected opaque red 255,0,0,255)\n",
 			opaqueRed[0], opaqueRed[1], opaqueRed[2], opaqueRed[3]);
-	Check(redOpaque, "alpha 255 samples opaque (the blend is a no-op)");
+	Check(redOpaque, "opaque red texel is unchanged");
 
-	// src = (0,1,0), src.a = 128/255; dst = clear (13,18,31). The straight-alpha
-	// blend gives roughly (6,137,15).
-	const bool greenBlended = semiGreen[0] <= 16 &&
-		semiGreen[1] >= 120 && semiGreen[1] <= 155 &&
-		semiGreen[2] >= 8 && semiGreen[2] <= 24 && semiGreen[3] == 255;
-	if (!greenBlended)
-		printf("    (alpha-128 texel %u,%u,%u,%u, expected ~6,137,15,255 over the clear)\n",
-			semiGreen[0], semiGreen[1], semiGreen[2], semiGreen[3]);
-	Check(greenBlended, "alpha 128 blends 50% into the background");
-	Check(semiGreen[1] > 60 && semiGreen[1] < 200,
-		"the alpha-128 result is neither the opaque texel nor the bare clear colour");
+	// STP=128 must render its full RGB, not blend: exactly (0,255,0,255).
+	const bool greenFull = stpGreen[0] <= 16 && stpGreen[1] >= 239 &&
+		stpGreen[2] <= 16 && stpGreen[3] == 255;
+	if (!greenFull)
+		printf("    (alpha-128 texel %u,%u,%u,%u, expected FULL opaque green 0,255,0,255)\n",
+			stpGreen[0], stpGreen[1], stpGreen[2], stpGreen[3]);
+	Check(greenFull, "alpha 128 (STP) renders fully opaque (no 50% blend)");
 
-	const bool holeTransparent = IsClear(hole);
-	if (!holeTransparent)
-		printf("    (alpha-0 texel %u,%u,%u,%u, expected the clear colour ~13,18,31,255)\n",
+	// The 0000h texel is discarded; the farther yellow quad shows through it,
+	// proving the hole wrote no colour and no depth (no blend, no occlusion).
+	const bool holeShowsBehind = IsYellow(hole) && hole[3] == 255;
+	if (!holeShowsBehind)
+		printf("    (alpha-0 texel %u,%u,%u,%u, expected the farther yellow quad 255,255,0,255)\n",
 			hole[0], hole[1], hole[2], hole[3]);
-	Check(holeTransparent, "alpha 0 leaves the destination untouched (a hole)");
+	Check(holeShowsBehind, "alpha 0 is a cutout hole: the farther quad shows through");
+	Check(!IsClear(hole) && !IsBlue(hole),
+		"the hole is neither the clear colour nor the near quad's blue (no blend, no depth)");
 
 	const bool blueOpaque = IsBlue(opaqueBlue) && opaqueBlue[3] == 255;
 	if (!blueOpaque)
 		printf("    (opaque blue texel %u,%u,%u,%u, expected 0,0,255,255)\n",
 			opaqueBlue[0], opaqueBlue[1], opaqueBlue[2], opaqueBlue[3]);
 	Check(blueOpaque, "the neighbouring opaque texel is still fully opaque");
+
+	// The near quad occludes the far one where it is opaque (LESS_OR_EQUAL depth):
+	// the opaque red quarter must not show the far yellow quad.
+	Check(!IsYellow(opaqueRed) && !IsYellow(opaqueBlue),
+		"the near opaque texels occlude the farther quad (depth test)");
 
 	NativeRenderer_ClearContent();
 }
@@ -1510,7 +1557,7 @@ static void TestTexturedContentRejected()
 	NativeRenderer_ClearResources();
 
 	const float identity[16] = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
-	NativeRenderer_SetCamera(identity, 1.0472f);
+	NativeRenderer_SetCamera(identity, kSmokeScreenDistance);
 	// The fixtures are metre-scale (z = +5), so use metre-scale clip planes:
 	// an earlier test leaves the raw-unit pair (100 / 125000) in place.
 	NativeRenderer_SetClipPlanes(0.02f, 300.0f);
@@ -1607,7 +1654,7 @@ static void TestInstanceResidencyAndDiagnostics()
 
 	float view[16];
 	BuildTopDownView(20000.0f, view);
-	NativeRenderer_SetCamera(view, 1.0472f);
+	NativeRenderer_SetCamera(view, kSmokeScreenDistance);
 	NativeRenderer_SetClipPlanes(100.0f, 125000.0f);
 
 	NativeInstance instance;
@@ -1669,8 +1716,8 @@ static void TestInstanceResidencyAndDiagnostics()
 	NativeRenderer_GetInstanceStats(&submitted, &drawn, &skipped, &resident);
 	Check(drawn == 0, "no instance is drawn for an all-unresolved submission");
 
-	// Capacity: the 17th distinct resource is a named error and never evicts a
-	// resident one.
+	// Capacity: the (NATIVE_MAX_RESOURCES+1)th distinct resource is a named
+	// error and never evicts a resident one.
 	NativeRenderer_ClearResources();
 	for (int i = 0; i < NATIVE_MAX_RESOURCES; ++i)
 	{
@@ -1711,7 +1758,7 @@ static void TestCameraConventionAndPlaceholder()
 
 	float view[16];
 	BuildAngledView(8000.0f, -20000.0f, 0.349f /* 20 degrees */, view);
-	NativeRenderer_SetCamera(view, 1.0472f);
+	NativeRenderer_SetCamera(view, kSmokeScreenDistance);
 	NativeRenderer_SetClipPlanes(100.0f, 125000.0f);
 
 	// No instances: the placeholder (ground and pillars) is visible.
@@ -1778,7 +1825,7 @@ static void TestVerticalConvention()
 		"vertical marker red resource registered");
 
 	const float identity[16] = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
-	NativeRenderer_SetCamera(identity, 1.0472f);
+	NativeRenderer_SetCamera(identity, kSmokeScreenDistance);
 	NativeRenderer_SetClipPlanes(100.0f, 125000.0f);
 
 	// Camera-space +y marker (green) and -y marker (red), both ahead (+z).
@@ -1806,6 +1853,178 @@ static void TestVerticalConvention()
 
 	NativeRenderer_ClearInstances();
 	NativeRenderer_ClearResources();
+}
+
+// E03 visual parity P5b: the GTE screen offset (SetGeomOffset) is applied as a
+// constant NDC translation by the projection. A thin red horizontal band in
+// camera space sits at the vertical centre under the centred offset (160,120);
+// raising ofy by 60 PSX lines (120 -> 180) must move the band down by
+// 60/240 = 0.25 of the target height (16px at 64px). The renderer is
+// game-agnostic and defaults to the centred offset, so this test also pins that
+// default.
+static void TestScreenOffset()
+{
+	char error[256];
+	NativeRenderer_ClearContent();
+	NativeRenderer_ClearInstances();
+	NativeRenderer_ClearResources();
+
+	const float identity[16] = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
+	NativeRenderer_SetCamera(identity, kSmokeScreenDistance);
+	NativeRenderer_SetClipPlanes(0.02f, 300.0f);
+	NativeRenderer_SetScreenOffset(NATIVE_PSX_DISPLAY_WIDTH * 0.5f,
+		NATIVE_PSX_DISPLAY_HEIGHT * 0.5f); // centred, the renderer default
+
+	// A thin horizontal red band (x-y plane) at z = +5, y in [-0.4, 0.4]: under
+	// the 60-degree-equivalent focal it projects to a ~9px band at the centre.
+	GltfMeshData band;
+	band.positions = { -1.0f, -0.4f, 0.0f,  1.0f, -0.4f, 0.0f,
+		1.0f, 0.4f, 0.0f,  -1.0f, 0.4f, 0.0f };
+	band.uvs = { 0, 0,  1, 0,  1, 1,  0, 1 };
+	band.indices = { 0, 1, 2,  0, 2, 3 };
+	band.vertexCount = 4;
+	band.triangleCount = 2;
+	band.baseColorFactor[0] = 1.0f;
+	band.baseColorFactor[1] = 0.0f;
+	band.baseColorFactor[2] = 0.0f;
+	band.baseColorFactor[3] = 1.0f;
+	for (int i = 0; i < 16; ++i)
+		band.transform[i] = identity[i];
+	band.transform[14] = 5.0f; // ahead of the identity camera (+Z forward)
+
+	Check(Gltf_WriteFile("screen-offset-band.glb", band, error, sizeof(error)) == 0,
+		"screen-offset band fixture written");
+	Check(NativeRenderer_LoadContent("screen-offset-band.glb", error, sizeof(error)) == 1,
+		"screen-offset band loaded");
+
+	unsigned char centredImage[64 * 64 * 4] = {};
+	Check(NativeRenderer_RenderSceneToRGBA(centredImage, 64, 64, error, sizeof(error)) == 1,
+		"band rendered with the centred screen offset");
+	const float centredRow = MeanRowOf(centredImage, 64, 64, true);
+	Check(centredRow >= 0.0f, "the band is visible with the centred screen offset");
+
+	// Move the offset 60 PSX lines down (ofy 120 -> 180): 60/240 = 0.25 of the
+	// target height, i.e. 16px at 64px.
+	NativeRenderer_SetScreenOffset(NATIVE_PSX_DISPLAY_WIDTH * 0.5f,
+		NATIVE_PSX_DISPLAY_HEIGHT * 0.5f + 60.0f);
+	unsigned char shiftedImage[64 * 64 * 4] = {};
+	Check(NativeRenderer_RenderSceneToRGBA(shiftedImage, 64, 64, error, sizeof(error)) == 1,
+		"band rendered with the lowered screen offset");
+	const float shiftedRow = MeanRowOf(shiftedImage, 64, 64, true);
+	Check(shiftedRow >= 0.0f, "the band is visible with the lowered screen offset");
+	if (!(centredRow >= 0.0f && shiftedRow > centredRow + 5.0f))
+		printf("    (band mean row %.1f centred -> %.1f lowered; expected a downward shift)\n",
+			centredRow, shiftedRow);
+	Check(centredRow >= 0.0f && shiftedRow > centredRow + 5.0f,
+		"the screen offset shifts the projected geometry down");
+
+	NativeRenderer_SetScreenOffset(NATIVE_PSX_DISPLAY_WIDTH * 0.5f,
+		NATIVE_PSX_DISPLAY_HEIGHT * 0.5f); // restore the centred default
+	NativeRenderer_ClearContent();
+}
+
+// E03 visual parity P2 + P6: the pixel shader multiplies the sampled texel by
+// the per-vertex COLOR_0, matching psx.frag's `texColor * v_color`. The legacy
+// vertex shader also scales that colour by the per-primitive `bright` multiplier
+// before interpolation (psx.vert:33-34), and every textured primitive uses
+// bright = 2 (PsyX_GPU.cpp:790 MakeTexcoordQuad). The effective textured
+// modulation is therefore (colourByte/255) * 2, clamped at the framebuffer
+// write. The native applies the same factor in float in the vertex shader, so a
+// 1x1 opaque red texel renders:
+//   * colourByte 128 -> (128/255)*2 ~= 1.004 -> full red 255 (the day ambient's
+//     legacy ~1.0, i.e. the texel is essentially unchanged);
+//   * colourByte 64  -> (64/255)*2  ~= 0.502 -> red ~128 (the factor is real:
+//     without it the red would be 64);
+//   * colourByte 200 -> (200/255)*2 ~= 1.569 -> full red 255 (clamps like the
+//     legacy once the product exceeds 1.0).
+// Writes the fixture, loads it and returns the centre pixel; false on any step
+// failing so the caller can report it.
+static bool RenderVertexColorCase(unsigned char colourByte, const char* path,
+	unsigned char outPixel[4])
+{
+	NativeRenderer_ClearContent();
+
+	GltfMultiMeshData multi;
+	GltfPrimitiveData primitive;
+	primitive.positions = { -1, -1, 0,  1, -1, 0,  1, 1, 0,  -1, 1, 0 };
+	primitive.uvs = { 0, 0,  1, 0,  1, 1,  0, 1 };
+	primitive.indices = { 0, 1, 2,  0, 2, 3 };
+	primitive.vertexCount = 4;
+	primitive.triangleCount = 2;
+	primitive.imageRgba = { 255, 0, 0, 255 }; // 1x1 opaque red
+	primitive.imageWidth = 1;
+	primitive.imageHeight = 1;
+	for (int c = 0; c < 4; ++c)
+		primitive.baseColorFactor[c] = 1.0f;
+	// Uniform opaque grey vertex colour on every corner.
+	primitive.colors = { colourByte, colourByte, colourByte, 255,
+		colourByte, colourByte, colourByte, 255,
+		colourByte, colourByte, colourByte, 255,
+		colourByte, colourByte, colourByte, 255 };
+	multi.primitives.push_back(primitive);
+	multi.transform[14] = 5.0f; // ahead of the identity camera (+Z forward)
+
+	char error[256];
+	if (Gltf_WriteFileMulti(path, multi, error, sizeof(error)) != 0)
+		return false;
+	if (NativeRenderer_LoadContent(path, error, sizeof(error)) != 1)
+		return false;
+
+	unsigned char image[64 * 64 * 4] = {};
+	if (NativeRenderer_RenderSceneToRGBA(image, 64, 64, error, sizeof(error)) != 1)
+		return false;
+
+	const unsigned char* centre = &image[((32 * 64) + 32) * 4];
+	outPixel[0] = centre[0];
+	outPixel[1] = centre[1];
+	outPixel[2] = centre[2];
+	outPixel[3] = centre[3];
+	return true;
+}
+
+static void TestVertexColorModulation()
+{
+	NativeRenderer_ClearContent();
+	NativeRenderer_ClearInstances();
+	NativeRenderer_ClearResources();
+
+	const float identity[16] = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
+	NativeRenderer_SetCamera(identity, kSmokeScreenDistance);
+	NativeRenderer_SetClipPlanes(0.02f, 300.0f);
+
+	unsigned char pixel[4] = {};
+
+	// colourByte 128: (128/255)*2 ~= 1.004, so the red texel stays ~unchanged.
+	const bool unityRendered = RenderVertexColorCase(128, "vertex-color-128.glb", pixel);
+	Check(unityRendered, "vertex-colour 128 fixture rendered");
+	const bool unity = pixel[0] >= 239 && pixel[1] <= 16 && pixel[2] <= 16 && pixel[3] == 255;
+	if (!unity)
+		printf("    (centre pixel %u,%u,%u,%u, expected full red: (128/255)*2 ~= 1.0)\n",
+			pixel[0], pixel[1], pixel[2], pixel[3]);
+	Check(unity, "colour 128 * the legacy bright=2 factor leaves the red texel ~unchanged");
+
+	// colourByte 64: (64/255)*2 ~= 0.502 -> red ~128, proving the factor applies
+	// (without it the red would be 64).
+	const bool halfRendered = RenderVertexColorCase(64, "vertex-color-064.glb", pixel);
+	Check(halfRendered, "vertex-colour 64 fixture rendered");
+	const bool half = pixel[0] >= 110 && pixel[0] <= 145 &&
+		pixel[1] <= 16 && pixel[2] <= 16 && pixel[3] == 255;
+	if (!half)
+		printf("    (centre pixel %u,%u,%u,%u, expected red ~128: (64/255)*2 ~= 0.5)\n",
+			pixel[0], pixel[1], pixel[2], pixel[3]);
+	Check(half, "colour 64 * 2 halves the red texel (the legacy factor is applied)");
+
+	// colourByte 200: (200/255)*2 ~= 1.569 -> clamps to full red, matching the
+	// legacy framebuffer saturation once the product exceeds 1.0.
+	const bool saturatedRendered = RenderVertexColorCase(200, "vertex-color-200.glb", pixel);
+	Check(saturatedRendered, "vertex-colour 200 fixture rendered");
+	const bool saturated = pixel[0] >= 239 && pixel[1] <= 16 && pixel[2] <= 16 && pixel[3] == 255;
+	if (!saturated)
+		printf("    (centre pixel %u,%u,%u,%u, expected full red: (200/255)*2 clamps to 1.0)\n",
+			pixel[0], pixel[1], pixel[2], pixel[3]);
+	Check(saturated, "colour 200 * 2 exceeds 1.0 and clamps like the legacy");
+
+	NativeRenderer_ClearContent();
 }
 
 static void TestTriangleDraw()
@@ -1862,15 +2081,17 @@ int main()
 	TestTriangleDraw();
 	TestTexturedQuad();
 	TestConvertedContentScene();
-	TestWindingCullPolicy();
+	TestNoCullBothFaces();
 	TestInstanceScreenRegions();
 	TestMultiPrimitiveResource();
 	TestTexturedMultiPrimitiveResource();
-	TestAlphaBlendSemantics();
+	TestWorldOpacity();
 	TestTexturedContentRejected();
 	TestInstanceResidencyAndDiagnostics();
 	TestCameraConventionAndPlaceholder();
 	TestVerticalConvention();
+	TestScreenOffset();
+	TestVertexColorModulation();
 
 	NativeRenderer_Resize(640, 480);
 	Check(NativeRenderer_RenderClearAndPresent(0.3f, 0.1f, 0.2f, 1.0f, error, sizeof(error)) == 1,
@@ -1879,7 +2100,7 @@ int main()
 	// The scene path must survive a swap chain resize (its depth target is
 	// recreated) and the offscreen target must follow a size change.
 	const float identityView[16] = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
-	NativeRenderer_SetCamera(identityView, 1.0472f);
+	NativeRenderer_SetCamera(identityView, kSmokeScreenDistance);
 	Check(NativeRenderer_RenderScene(error, sizeof(error)) == 1, "scene renders after swap chain resize");
 
 	unsigned char resizedImage[96 * 64 * 4] = {};

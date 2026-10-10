@@ -1,5 +1,7 @@
 #include "DeveloperDebugStart.h"
 
+#include "ProjectClock.h"
+
 #include "driver2.h"
 #include "C/cars.h"
 #include "C/glaunch.h"
@@ -20,6 +22,11 @@
 #include <windows.h>
 #endif
 
+// Installed by the game entry point (redriver2_psxpc.cpp): saves SCREENSHOT.BMP
+// with whichever renderer owns the window. Declared here instead of in the
+// public header so DeveloperDebugStart's API stays stable.
+extern void DeveloperDebugStart_RequestScreenshot(void);
+
 extern int gChaseNumber;
 
 namespace
@@ -31,6 +38,8 @@ char g_programName[260] = "REDRIVER2_dev.exe";
 
 unsigned int g_captureStartTicks = 0;
 unsigned int g_captureDelayMs = 0;
+unsigned int g_captureDelayTicks = 0;
+unsigned int g_captureFreezeTick = 0;
 int g_captureTaken = 0;
 
 bool IsFiniteInt(int value)
@@ -321,9 +330,57 @@ void DeveloperDebugStart_ConfigureCapture(int seconds)
 	g_captureTaken = 0;
 }
 
+void DeveloperDebugStart_ConfigureCaptureTicks(int ticks)
+{
+	g_captureStartTicks = 0;
+	g_captureFreezeTick = 0;
+	g_captureDelayTicks = 0;
+	g_captureTaken = 0;
+
+	if (ticks > 0)
+	{
+		// Tick mode is mutually exclusive with the wall-clock trigger.
+		g_captureDelayTicks = (unsigned int)ticks;
+		g_captureDelayMs = 0;
+	}
+}
+
 void DeveloperDebugStart_Tick(void)
 {
-	if (g_captureDelayMs == 0 || g_captureTaken)
+	if (g_captureTaken)
+		return;
+
+	// Tick-anchored mode: freeze the simulation at an exact tick count so both
+	// renderer paths capture the identical simulation state.
+	if (g_captureDelayTicks > 0)
+	{
+		if (g_captureFreezeTick == 0)
+		{
+			// delayTicks > 0 guarantees a non-zero target, so zero doubles as
+			// the "not yet armed" marker for the first presented frame.
+			g_captureFreezeTick = ProjectClock_GetTickCount() + g_captureDelayTicks;
+			ProjectClock_SetFreezeTick(g_captureFreezeTick);
+			return;
+		}
+
+		if (ProjectClock_GetTickCount() >= g_captureFreezeTick)
+		{
+			g_captureTaken = 1;
+			PsyX_Log_Info("debug-start: tick-anchored capture at tick %u (dropped %u)\n",
+				ProjectClock_GetTickCount(), ProjectClock_GetDroppedTicks());
+#if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__)
+			// Routed to the active renderer: the legacy PsyCross path reads back
+			// its own swap chain, the native path re-renders the live scene
+			// offscreen because PsyCross does not own the window there. The
+			// capture happens at this tick call site, exactly like the wall path.
+			DeveloperDebugStart_RequestScreenshot();
+#endif
+		}
+		return;
+	}
+
+	// Wall-clock mode.
+	if (g_captureDelayMs == 0)
 		return;
 
 	const unsigned int now = SDL_GetTicks();
@@ -337,7 +394,7 @@ void DeveloperDebugStart_Tick(void)
 	{
 		g_captureTaken = 1;
 #if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__)
-		PsyX_TakeScreenshot();
+		DeveloperDebugStart_RequestScreenshot();
 #endif
 	}
 }

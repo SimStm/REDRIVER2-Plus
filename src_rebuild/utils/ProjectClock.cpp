@@ -37,6 +37,8 @@ int g_tickPeriodMicros = 33333; /* 30 Hz NTSC */
 int g_paused = 0;
 unsigned int g_tickCount = 0;
 unsigned int g_droppedTicks = 0;
+int g_freezeArmed = 0; /* debug freeze: hold the sim at g_freezeTick */
+unsigned int g_freezeTick = 0;
 unsigned long long g_pendingJumpCounts = 0; /* one-shot stall injection (fixture) */
 int g_firstFramePending = 0; /* re-base on the first frame so load time is skipped */
 }
@@ -122,6 +124,8 @@ extern "C" void ProjectClock_Init(void)
 	g_tickCount = 0;
 	g_droppedTicks = 0;
 	g_firstFramePending = 1;
+	g_freezeArmed = 0;
+	g_freezeTick = 0;
 
 	// Debug fixture: RED2_CLOCKJUMP_MS arms a one-shot synthetic stall so the
 	// bounded backlog policy can be exercised without real frame hitching.
@@ -142,6 +146,8 @@ extern "C" void ProjectClock_Reset(void)
 	g_elapsedCounts = 0;
 	g_pendingJumpCounts = 0;
 	g_firstFramePending = 0;
+	g_freezeArmed = 0;
+	g_freezeTick = 0;
 }
 
 extern "C" void ProjectClock_SetPaused(int paused)
@@ -163,6 +169,18 @@ extern "C" void ProjectClock_InjectElapsedMicros(unsigned long long micros)
 		return;
 
 	g_pendingJumpCounts += (g_frequency * micros) / kMicrosPerSecond;
+}
+
+extern "C" void ProjectClock_SetFreezeTick(unsigned int tick)
+{
+	g_freezeArmed = 1;
+	g_freezeTick = tick;
+}
+
+extern "C" void ProjectClock_ClearFreezeTick(void)
+{
+	g_freezeArmed = 0;
+	g_freezeTick = 0;
 }
 
 extern "C" int ProjectClock_BeginFrame(void)
@@ -206,6 +224,16 @@ extern "C" int ProjectClock_BeginFrame(void)
 		/* Bounded backlog: drop the excess instead of an unbounded catch-up. */
 		g_droppedTicks += (unsigned int)(ticks - (unsigned long long)kMaxCatchUpTicks);
 		ticks = (unsigned long long)kMaxCatchUpTicks;
+	}
+
+	// Debug freeze: never step past the armed tick. The clamped-away ticks are
+	// an intentional freeze, not a stall, so they are not counted as dropped.
+	if (g_freezeArmed)
+	{
+		const unsigned long long room = g_freezeTick > g_tickCount
+			? (unsigned long long)(g_freezeTick - g_tickCount) : 0ULL;
+		if (ticks > room)
+			ticks = room;
 	}
 
 	g_tickCount += (unsigned int)ticks;

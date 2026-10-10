@@ -38,6 +38,11 @@ where release policy permits it.
 
 ### Added
 
+- Tick-anchored developer screenshots: `run_debug_start.ps1 -Capture -DelayTicks`
+  uses `captureAfterTicks` and a debug clock freeze to avoid wall-clock comparisons
+  at different simulation progress under bounded catch-up. Wall-clock capture
+  remains available; matching tick counts alone does not establish visual parity.
+
 - E03 source MODEL decoder foundation (Block 1, extended in Block 2):
   `utils/SourceModelDecoder.*` is a pure, asset-free decoder of the reconstructed
   MODEL poly block from an explicit `[begin,end)` span (the MODEL structure has no
@@ -1081,6 +1086,13 @@ where release policy permits it.
   pick until the button is pressed again.
 
 ### Fixed
+
+- Native world quad conversion now uses the legacy diagonal with consistently
+  wound triangles (`012,132` for stored corners `v0,v1,v3,v2`), eliminating the
+  overlapping and uncovered regions produced by the previous fan. Regression
+  fixtures cover geometry, attributes and the decoded-model-to-world-builder
+  path; changed indices select a new conversion-cache source hash without deleting
+  old artifacts. Full-game native visual parity remains unaccepted.
 
 - Desktop smoke, exhaust, debris, birds, hubcaps, rain and light phases no longer
   advance per presentation frame. Effect poses interpolate locally at the shared

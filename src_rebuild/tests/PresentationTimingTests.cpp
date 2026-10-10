@@ -224,6 +224,37 @@ static void TestClockStalls()
 	Check(ProjectClock_BeginFrame() == 0, "reset clears pending elapsed-time fixture");
 }
 
+static void TestClockFreeze()
+{
+	// (a) The freeze clamps bounded catch-up, then the remaining room to the
+	// armed tick, then holds the simulation at exactly that tick.
+	Reset();
+	ProjectClock_SetFreezeTick(5);
+	ProjectClock_InjectElapsedMicros(1000000);
+	Check(ProjectClock_BeginFrame() == 4, "freeze still applies bounded catch-up");
+	ProjectClock_InjectElapsedMicros(1000000);
+	Check(ProjectClock_BeginFrame() == 1, "freeze never steps past the armed tick");
+	Check(ProjectClock_BeginFrame() == 0, "freeze holds the simulation at the armed tick");
+	Check(ProjectClock_GetTickCount() == 5, "frozen tick count equals the armed tick");
+	Check(ProjectClock_GetDroppedTicks() == (unsigned)(2 * (rate - 4)),
+		"freeze-clamped-away ticks are an intentional freeze, not dropped ticks");
+	ProjectClock_ClearFreezeTick();
+	ProjectClock_InjectElapsedMicros(1000000);
+	Check(ProjectClock_BeginFrame() > 0, "clearing the freeze resumes simulation time");
+
+	// (b) A fresh session clears an armed freeze, so one capture cannot leak its
+	// frozen tick into the next.
+	ProjectClock_SetFreezeTick(3);
+	ProjectClock_Init();
+	Check(ProjectClock_BeginFrame() == 0, "first frame after Init skips setup time");
+	ProjectClock_InjectElapsedMicros(1000000);
+	Check(ProjectClock_BeginFrame() == 4, "Init clears an armed freeze");
+	ProjectClock_SetFreezeTick(1);
+	ProjectClock_Reset();
+	ProjectClock_InjectElapsedMicros(1000000);
+	Check(ProjectClock_BeginFrame() == 4, "Reset clears an armed freeze");
+}
+
 static void TestRotations()
 {
 	MATRIX a, b, out;
@@ -319,7 +350,7 @@ int main()
 	const int fps[] = {25, 30, 60, 120, 144, 1000};
 	for (int i = 0; i < 6; ++i) RunSchedule(fps[i], false);
 	RunSchedule(0, true);
-	TestClockStalls(); TestDiscontinuities(); TestRotations();
+	TestClockStalls(); TestClockFreeze(); TestDiscontinuities(); TestRotations();
 	TestPresentationControls();
 	printf("%d checks, %d failures (%d Hz)\n", checks, failures, rate);
 	return failures ? 1 : 0;

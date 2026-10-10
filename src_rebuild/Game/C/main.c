@@ -1,6 +1,8 @@
 #include "driver2.h"
 #include "main.h"
 
+#include <stdlib.h> /* getenv/atoi for the E1 deferred-prepare env var */
+
 #include "ASM/rndrasm.h"
 #include "ASM/d2mapasm.h"
 
@@ -713,14 +715,30 @@ void State_GameInit(void* param)
 	// model slot referenced by the resident placements through the existing
 	// path and collects the full placement list for the native bridge to submit
 	// as instances. Warn-only: a failure must never interrupt the game.
+	//
+	// E1 diagnosis: a positive RED2_NATIVE_REGION_DELAY_MS defers this prepare
+	// out of SpoolSYNC. The native bridge (redriver2_psxpc.cpp) then runs it
+	// once that many milliseconds after its first frame, so the texture bake can
+	// read a VRAM snapshot taken close to the capture instead of the SpoolSYNC
+	// one. Absent/0 prepares immediately, exactly as before.
 	if (AssetCatalogGame_RegionDrawRequested())
 	{
-		char regionStatus[512];
+		const char* regionDelay = getenv("RED2_NATIVE_REGION_DELAY_MS");
 
-		if (AssetCatalogGame_PrepareRegionDraw(regionStatus, sizeof(regionStatus)))
-			printInfo("AssetCatalog: %s\n", regionStatus);
+		if (regionDelay && regionDelay[0] && atoi(regionDelay) > 0)
+		{
+			printInfo("AssetCatalog: region draw prepare deferred by RED2_NATIVE_REGION_DELAY_MS=%s ms\n",
+				regionDelay);
+		}
 		else
-			printWarning("AssetCatalog: %s\n", regionStatus);
+		{
+			char regionStatus[512];
+
+			if (AssetCatalogGame_PrepareRegionDraw(regionStatus, sizeof(regionStatus)))
+				printInfo("AssetCatalog: %s\n", regionStatus);
+			else
+				printWarning("AssetCatalog: %s\n", regionStatus);
+		}
 	}
 
 	// The playground replaces the loaded world with a generated, resident

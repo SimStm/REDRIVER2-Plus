@@ -5,7 +5,10 @@
 void NativeInstance_ComposeTransform(const int pos[3], unsigned int yang, float out[16])
 {
 	// yang is a 6-bit yaw index; entry i is RotMatrixY(i * 64) over a
-	// 4096-unit turn, so masking wraps yang + 64 back to yang.
+	// 4096-unit turn, so masking wraps yang + 64 back to yang. The resulting
+	// world matrix matches the game's MulMatrix0(inv_camera_matrix,
+	// matrixtable[yang]) once the view is applied; pos is already the decoded
+	// CELL_OBJECT position, so y is copied verbatim (see the header).
 	const int angle = (int)(yang & 63u) * 64;
 	const float a = (float)angle * (2.0f * 3.14159265358979f / 4096.0f);
 	const float c = cosf(a);

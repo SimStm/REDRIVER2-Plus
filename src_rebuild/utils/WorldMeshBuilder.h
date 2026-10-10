@@ -141,6 +141,18 @@ int WorldMeshBuilder_Build(const SourceMesh& source, GltfMeshData* out,
  *    (WORLD_MESH_ERROR_ARGUMENT otherwise). The UV convention is unchanged: the
  *    raw texel coordinates stay, and the renderer scales them by 1/256.
  *
+ *  - Optional per-vertex colours (visual parity P2). `vertexColorsRgb` is either
+ *    null (or `vertexColorBytes` zero) for the historical base-colour-factor
+ *    behaviour, or one RGB triple per source vertex, in the same vertex order as
+ *    `source.positions`, with `vertexColorBytes == vertexCount * 3`. When
+ *    supplied, every emitted corner carries the source vertex's colour as an
+ *    RGBA8 COLOR_0 attribute (alpha 255) and the primitive's `baseColorFactor` is
+ *    the documented neutral white, so the renderer's `texel * vertexColour`
+ *    product reproduces the legacy `texColor * v_color` modulation exactly. A
+ *    mismatched byte count is WORLD_MESH_ERROR_ATTRIBUTE_SIZE with zero output.
+ *    Because every triangle already owns dedicated per-corner vertices, a
+ *    per-polygon flat colour is preserved without splitting anything.
+ *
  * Deterministic and bounded: identical input produces byte-identical output
  * (via Gltf_WriteFileMulti), and any failure resets the destination to an empty
  * record (no partial output). `result` reports aggregate vertex/triangle counts
@@ -149,7 +161,8 @@ int WorldMeshBuilder_Build(const SourceMesh& source, GltfMeshData* out,
  */
 int WorldMeshBuilder_BuildMulti(const SourceMesh& source, GltfMultiMeshData* out,
 	WorldMeshBuilderResult* result, char* error, int capacity,
-	const WorldSubmeshImage* images = NULL, int imageCount = 0);
+	const WorldSubmeshImage* images = NULL, int imageCount = 0,
+	const unsigned char* vertexColorsRgb = NULL, size_t vertexColorBytes = 0);
 
 /* Human-readable name of a build error code. */
 const char* WorldMeshBuilder_ErrorName(WorldMeshBuilderError error);

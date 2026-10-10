@@ -42,7 +42,8 @@
  *    size must equal it.
  *  - World quad emission order is (v0,v1,v3,v2) with UVs (uv0,uv1,uv3,uv2); this
  *    applies to ptypes 11, 21 and 23. The decoder then applies the same
- *    (0,1,2)/(0,2,3) fan over those emitted corners. The car vertex order
+ *    (0,1,2)/(1,3,2) triangles over those emitted corners, covering raw cyclic
+ *    ABD+BCD with consistent winding. The car vertex order
  *    (v0,v1,v2,v3) is NOT used.
  *  - Three-vertex types (10, 20, 22) emit (v0,v1,v2) with UVs (uv0,uv1,uv2).
  *  - The caller supplies an explicit [begin,end) span. Every derived offset and
@@ -214,13 +215,23 @@ struct SourceSubmesh
    (combointensity/f4colourTable in draw.c, GetDLightLevel in tile.c) is applied
    at draw time and is NOT baked here.
 
-   `uvs` hold the raw 8-bit texel coordinates as floats, not normalised. */
+   `uvs` hold the raw 8-bit texel coordinates as floats, not normalised.
+
+   `shadeIndices` is one byte per emitted corner: the legacy world-shading bucket
+   for the normal-shaded polygon types {10,11,22,23}, exactly the
+   `normalIndex(...) & 31` value the runtime uses to index `f4colourTable`
+   (draw.c:740-743,793,1173). The combo-shaded types {20,21} carry 0 there (they
+   use `combointensity`, not the table). It is filled for every corner whenever
+   the mesh has any corner, and is empty only for an empty mesh. This is
+   metadata for the game-side shading bake, never geometry: the stored RGB and
+   the legacy per-frame intensity are NOT baked here. */
 struct SourceMesh
 {
 	std::vector<float> positions;      // 3 floats per vertex
 	std::vector<float> normals;        // 3 floats per vertex, or empty
 	std::vector<float> uvs;            // 2 floats per vertex
 	std::vector<unsigned char> colors; // 3 bytes (RGB) per vertex, or empty
+	std::vector<unsigned char> shadeIndices; // 1 byte per vertex (legacy shading bucket)
 	std::vector<unsigned int> indices; // triangle list
 	std::vector<SourceSubmesh> submeshes;
 };

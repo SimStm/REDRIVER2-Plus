@@ -749,6 +749,41 @@ static void TestMaterialExtensionTextureRejection()
 	CHECK(loaded.primitives.empty()); // zero partial output
 }
 
+// P2: a primitive's optional per-vertex COLOR_0 attribute (RGBA8) round-trips
+// through both the multi and single loaders, and a primitive without colours
+// writes no COLOR_0 (the no-colour byte-identity is covered by
+// TestSingleVsMultiByteIdentity / TestReproducibleBytes).
+static void TestColorRoundTrip()
+{
+	GltfMultiMeshData source;
+	GltfPrimitiveData primitive = MakePrimitive(
+		{ 0, 0, 0, 1, 0, 0, 0, 1, 0 },
+		{ 0, 0, 1, 0, 0, 1, 0, 0, 1 },
+		{ 0, 0, 1, 0, 0, 1 },
+		{ 0, 1, 2 },
+		0.25f, 0.5f, 0.75f, 1.0f);
+	primitive.colors = { 10, 20, 30, 255, 40, 50, 60, 255, 70, 80, 90, 255 };
+	source.primitives.push_back(primitive);
+
+	char error[256];
+	CHECK(Gltf_WriteFileMulti("color.glb", source, error, sizeof(error)) == 0);
+
+	GltfMultiMeshData loaded;
+	CHECK(Gltf_LoadFileMulti("color.glb", &loaded, error, sizeof(error)) == 0);
+	CHECK(loaded.primitives.size() == 1);
+	if (loaded.primitives.size() == 1)
+	{
+		CHECK(loaded.primitives[0].colors == primitive.colors);
+		CHECK(loaded.primitives[0].positions == primitive.positions);
+		CHECK(loaded.primitives[0].indices == primitive.indices);
+	}
+
+	// The single loader reads the same COLOR_0 attribute.
+	GltfMeshData single;
+	CHECK(Gltf_LoadFile("color.glb", &single, error, sizeof(error)) == 0);
+	CHECK(single.colors == primitive.colors);
+}
+
 int main()
 {
 	TestRoundTrip();
@@ -765,6 +800,7 @@ int main()
 	TestStoredPngTruncatedTrailer();
 	TestPngCorruptedChunkCrc();
 	TestMaterialExtensionTextureRejection();
+	TestColorRoundTrip();
 
 	printf("%d checks, %d failures\n", g_checks, g_failures);
 	return g_failures == 0 ? 0 : 1;

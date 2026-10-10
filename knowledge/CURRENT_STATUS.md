@@ -13,9 +13,12 @@ tags: [okf, status]
 
 ## Branch and adopted plan
 
-`feat/new-engine` is at checkpoint `7617bd92`; the PsyCross headless-presentation, post-frame-hook and
-pad-backend-disable changes are committed/pushed as `99950a7`. Subsequent E02/E03/E04 implementation and
-documentation changes remain uncommitted.
+`feat/new-engine` HEAD is `856b4398`; checkpoints through the E03 texture/finalize-rendering
+blocks and E04 A1 are committed/pushed. PsyCross headless presentation, post-frame hook and
+pad-backend disable are committed/pushed as `99950a7`. The subsequent bounded world-parity,
+quad-topology and tick-capture changes are being preserved in a separate checkpoint on 2026-10-10.
+No migration-stage acceptance follows from publication. The tracked Serena project configuration
+selects the C++ language server; generated state and proprietary assets/SDKs are not included.
 
 The former dirty native Vulkan work is committed/pushed separately at `e68b6ea6b1e30543af77d6244c109f7993ff65cf`
 on [`feat/vulkan-native-rework`](https://github.com/SimStm/REDRIVER2-Plus/tree/feat/vulkan-native-rework)
@@ -95,104 +98,78 @@ accepted.
   categories remain open; the conversion cache is not consumed by native loading. See
   [inventory evidence](engine-migration/e02/chicago-inventory.md).
 
-## Engine migration E03 (in progress)
+## Engine migration E03 (in progress; parity not accepted)
 
-- Blocks 1-4 (prior narrative; full detail in CHANGELOG): DiligentEngine `v2.5.6` (DiligentCore `b036337d`) then
-  official master (`API256019`), built Vulkan-only static Release via `scripts/fetch_diligent.ps1` (gitignored
-  `dependencies/DiligentEngine`; C++17, `volk.lib`, `glslang.lib`, `/std:c++17`). `native/NativeRenderer.*` owns
-  the device/swap chain (Diligent-free C ABI) and draws converted GLB geometry/texture; the game links it on
-  Windows behind `RED2_NATIVE_RENDERER`, with PsyCross headless (`PsyX_SetHeadless`) and a post-frame camera feed
-  (`PsyX_SetPostFrameHandler`); `Release_dev_native` builds `RED2_NATIVE_RENDERER=1 -nointro -nofmv`.
-- Source decode + policy (blocks 1, 2.1, 2a, 2.5; detail in CHANGELOG): `utils/SourceModelDecoder.*` is a pure,
-  asset-free decoder of the MODEL poly block from an explicit `[begin,end)` span (allowlist `{10,11,20,21,22,23}`;
-  stride `PolySizes[ptype & 0x1f]`; world quad order `(v0,v1,v3,v2)` with UVs `(uv0,uv1,uv3,uv2)`; named-error
-  validation, zero output); `Strict` (default) vs `SkipUnsupported` apply to building-class models only. Loader
-  `model_byte_sizes[]` exposes `ModelRecord.spanBytes`; `AssetCatalogPlacement.sourceObjectIndex` is the walker's
-  14-bit index. Pure `Game/C/modelptypeprobe.{h,c}` + `-modelptypes`; Chicago histogram 516 slots/5538 records
-  (after the allowlist 2 outside, ptype 9 only). Pure fixtures pin `RotMatrixY(yang*64)`, the view/NDC winding and
-  the raw-unit policy. Tests: `ModelPtypeProbeTests` 68, `AssetCatalogTests` 278.
-- CPU texture decode (block 2.4): `utils/TextureDecode.{h,c}` is a pure decoder of indexed 4/8-bit pages + CLUT
-  bytes and 16-bit direct pages into RGBA8 (row stride; BGR555 `E5TO8`, `0000h` transparent, STP->128, no texture
-  window); `TextureDecodeTests` 136. ODT spike (temp-only): OpenDriver2Tools master @
-  `89009f7f4f48f37a886b376292432cdab4a136` built headless, full Chicago export + `CHICAGO_HEAD.glb`.
-- World mesh build + multi-primitive GLB (block 2 item 3, follow-up A+B): `utils/WorldMeshBuilder.{h,cpp}` builds a
-  `GltfMeshData` from `SourceMesh` (flat per-triangle normals; 3 dedicated vertices per triangle; base colour =
-  mean stored face colours or neutral white; identity node transform; deterministic; named-error bounds validation,
-  zero partial output); `BuildMulti` maps each submesh to one `GltfPrimitiveData` and validates a contiguous,
-  ordered, complete index partition. `GltfWriter`/`GltfLoader` add `GltfPrimitiveData`/`GltfMultiMeshData` and
-  `Gltf_WriteFileMulti`/`Gltf_LoadFileMulti` (deterministic layout; strict pre-write validation, partial file
-  removed); the single writer is byte-identical by construction and by a dedicated test, the single loader keeps its
-  tolerant image-retaining contract, and the multi loader is strict and rejects texture references.
-  `Game/C/assetcatalog_game.c` `ConvertModelSlot` builds with `BuildMulti` and publishes via a local transactional
-  `PublishMultiMesh` (follow-up: promote into `AssetConverter`). Limits (superseded by the texture phase below): no
-  textures; flat normals only; one material = mean face colour.
-- Per-instance draw + game camera (block 2 item 4): `native/NativeRenderer.*` adds bounded resources/instances
-  (`NATIVE_MAX_RESOURCES`/`NATIVE_MAX_INSTANCES`, raised to 64/4096 for the region path) with a residency API,
-  `SetInstances`/`ClearInstances` (copied; unresolved keys skipped with a counter), `SetClipPlanes`,
-  `GetInstanceStats` and no-fallback semantics. Projection is +Z-forward [0,1] depth and +Y-down (the F-A fix
-  negates camera-space Y, cancelled by `CULL_MODE_BACK`+`FrontCounterClockwise=False`). New pure
-  `utils/NativeInstanceTransform.*` (392) and `utils/NativeCameraView.*` (9); `redriver2_psxpc.cpp` feeds the real
-  camera via `NativeCameraView_Compose` (clip planes 100/125000) with a gated one-shot report/dump.
-  `Game/C/assetcatalog_game.{h,c}` adds the slot registry + placements collector and `-drawmodel <slot> [count]`.
-  Limits: one slot + bounded K; FOV 1.0472 vs 0.9265 deferred; GLB node transform ignored.
-- Full-region native draw (block 2 item 5, 2026-10-10; full detail/evidence in CHANGELOG): capacities raised for the
-  region path (`NATIVE_MAX_RESOURCES` 64, `NATIVE_MAX_INSTANCES` 4096,
-  `ASSET_CATALOG_GAME_MAX_MODEL_RESOURCES` 64, new `ASSET_CATALOG_GAME_MAX_REGION_PLACEMENTS` 4096).
-  `Game/C/assetcatalog_game.{h,c}` prepares once after `SpoolSYNC`: the walker collects all resident placements
-  (bounded 4096, truncation flagged), derives the distinct referenced slots (bounded 64, truncation flagged) and
-  converts each once via `ConvertModelSlot` (a failed slot is a named warning, skipped while the rest continue),
-  exposing bounded accessors; cleared at `BeginLevel`; non-Windows/PSX stubs. `redriver2_psxpc.cpp` registers every
-  converted resource (logs R/T), builds the full instance list in a static `NativeInstance[4096]` buffer (~1 MB
-  BSS; never on the stack), calls `SetInstances` once and reuses the camera-validity gate and one-shot report +
-  `native_region_draw.rgba` 640x360 dump; `main.c` accepts `-drawregion`. Caps truncate the level's full content
-  (E02 counted 6740 unique placements); no LOD/streaming; a dev run is not visual acceptance.
-- Texture phase T1-T3 (2026-10-10): pipeline images (`GltfPrimitiveData.imageRgba`/`imageWidth`/`imageHeight`; the
-  multi writer embeds a deterministic stored-block PNG per material - 8-bit RGBA, filter None, zlib stored blocks,
-  CRC32/Adler-32, 4-byte-padded image bufferViews, named-error validation - the multi loader decodes it with named
-  errors for unsupported variants, the single writer/path stays byte-identical; `WorldSubmeshImage` with defaulted
-  params on `BuildMulti`); game-side bake (NEW `Game/C/texturebake.{h,c}` reads VRAM once via `GR_ReadVRAM`, extracts
-  page+CLUT per `(textureSet, textureId)`, decodes/dedupes, caps 64 images/16 MiB, full-page upload;
-  `ConvertModelSlot` bakes before building; additive `texture-bake:` diagnostics, single VRAM snapshot at prepare so
-  pages resident only later stay untextured; cache keyed on baked pixels `HashBakedImages` = 0 when untextured);
-  renderer sampling (per-primitive RGBA8_UNORM NEAREST/CLAMP texture in the SRB, untextured keeps the 1x1 white
-  texel, UVs scaled 1/256 once at upload, shaders/pipeline unchanged).
-- Finalize-rendering block F1+F3+F4 (2026-10-10): F1 alpha/cutout - the scene pipelines sample the baked texture
-  alpha with one straight-alpha blend state (RGB SRC_ALPHA/INV_SRC_ALPHA, alpha ONE/INV_SRC_ALPHA, ADD; 255 opaque,
-  128 = 50%, 0 = hole); the shared white texel (alpha 255) makes it a no-op for untextured paths; depth writes stay
-  on (no ordered transparency pass yet, documented). Explicit deviation: a texel with STP=1 inside a primitive the
-  game draws opaquely appears at 50% natively, since the slice applies one blend state to every primitive (no
-  per-primitive mode). F3 loader robustness - a missing zlib Adler-32 trailer is a
-  named error, PNG chunk CRCs are recomputed/verified (named error on mismatch),
-  `MaterialReferencesUnsupportedTexture` now rejects texture references inside material `extensions` (recursive key
-  scan, e.g. KHR spec-gloss) instead of dropping them, and the texture-bake warning labels the image-cap overlap
-  honestly (`N submeshes untextured (M by image cap)`). F4 instanced-model decode - `MODEL.instance_number` is a
-  base-model slot owning the shared vertex/normal arrays (indices absolute into the base array, no duplication);
-  the decoder accepts a caller-supplied base span + base counts (vertices/normals from the base span, validated
-  against the base's numVertices/numPointNormals and bounds-checked inside the base span; the instance's own span
-  supplies the poly block/num_polys and its own vertex/normal fields are ignored); a missing/invalid base is the
-  named `SOURCE_MODEL_ERROR_INSTANCE_BASE` ("instance-base") with zero partial output. `ConvertModelSlot` resolves
-  the base via `modelpointers[instance_number]` (resident, != dummyModel) and the catalog span (the base may not be
-  among the converted slots), with named diagnostics; other slots continue.
-- Evidence after the block (2026-10-10): all inspector suites green (`SourceModelDecoderTests` 1211,
-  `GltfRoundTripTests` 160, others unchanged; `WorldMeshBuilderTests` 239); native renderer smoke 222 checks/0
-  failures; `Release_dev` and `Release_dev_native` builds exit 0. Real region run (`-drawregion`): prepare `4096
-  placements (placement-truncated), 64 distinct slots, 64 converted, 0 failed (resource-truncated)` (was 46/18);
-  `registered 64/64 resources`; report `submitted 4096, drawn 3147, skippedUnresolved 949, residentResources 64,
-  level-generation 1; diag: unresolved instance slot 206 src 2638`; offscreen 640x360 frame with 177140 non-clear
-  pixels (~77%) and 11325 distinct colours (before: 64174 pixels / 8 colours untextured; 400 after textures).
-  Honest wording: the instanced decode converts all 64 capped slots (0 failures); the remaining 949 unresolved
-  placements belong to slots beyond the 64-resource cap (bounded dev limits), not decode failures. The bounded
-  region snapshot now renders textured and alpha-blended with the game camera; it does NOT prove colour parity with
-  the legacy renderer (no ordered transparency pass, depth writes on, blend on the sRGB swap chain may differ from
-  the UNORM readback, no per-primitive PSX blend modes BM_ADD/SUBTRACT, base-colour maps only, no LOD/streaming, no
-  lighting); the caps remain; a dev run is not visual acceptance.
-- Not yet done: the native scene draws the converted, textured, alpha-blended region but not the game's lighting,
-  player, LOD or streaming, so E03 still has no visually accepted or playable original-world native slice. Debug
-  configs are not wired (only Release Diligent libraries exist). Headless native mode does not run the F11 ImGui
-  overlay; a possible PAL double-aspect in the camera seam needs a PAL probe. Must not claim: no "region renders
-  correctly"; no texture colour parity; no all-model/all-slot coverage; no LOD/streaming/cars/animation/
-  performance; single-vs-multi byte identity is by construction plus empirical verification and the dedicated
-  test. Next: E04 remaining consumer slices; E05/E06 pending.
+- Diligent Vulkan (`API256019`, static Release, C++17) is gated by `RED2_NATIVE_RENDERER`;
+  `Release_dev_native` uses PsyCross headless presentation and the post-frame camera hook.
+  `native/NativeRenderer.*` owns device/swapchain/resources and bounded instance submission;
+  missing resources are diagnosed/skipped, never replaced by the legacy world. Debug-library
+  configurations and native F11 overlay remain unwired.
+- Windows operational path also uses `src_rebuild/bin/Release_dev/REDRIVER2_dev.exe`:
+  from root PowerShell, set `$env:RED2_NATIVE_RENDERER = '1'` and invoke
+  `& .\scripts\run_debug_start.ps1 -Mission 1 -ExtraArgs @('-drawregion')` (fire-and-forget).
+  Simulation/game/services still depend on PsyCross; its presentation is headless while
+  Diligent presents the native window, resident `native_cache` GLBs and live camera/LOD.
+  This prepares a resident-world snapshot, not full driving streaming or full-game acceptance.
+  [Launch/capture/reset instructions](RECENT_CONTEXT.md#native-launch-and-capture-operations)
+  include the optional bounded `-drawmodel <slot>` probe and legacy next-launch reset.
+- `SourceModelDecoder.*` validates explicit MODEL spans with zero partial output, supports
+  `{10,11,20,21,22,23}`, and resolves instanced shared vertex/normal arrays from validated base
+  spans. Building policy is strict or skip-unsupported; the Chicago histogram found 516 slots /
+  5538 records (two outside the allowlist, ptype 9). Source instance transforms were verified.
+- `WorldMeshBuilder.*` expands triangle corners and builds one primitive per submesh;
+  `GltfWriter.*`/`GltfLoader.*` retain multi-primitive geometry, node transforms, RGBA8 COLOR_0
+  and embedded images with bounded validation. PNG handling verifies CRC/Adler and diagnoses
+  unsupported material texture references. Single-writer compatibility remains separately tested.
+  `ConvertModelSlot` publishes transactionally through local `PublishMultiMesh`.
+- `TextureDecode.*` handles 4/8-bit CLUT and direct BGR555 pages; `texturebake.*` snapshots
+  resident VRAM at prepare, deduplicates page/CLUT images (64 images / 16 MiB), and keys baked
+  pixels. Native sampling is RGBA8_UNORM NEAREST/CLAMP, raw UVs scaled once by 1/256, with a
+  white untextured texel. Later-resident pages and full streaming remain outside this snapshot.
+- Uncommitted parity corrections: world draws use `CULL_NONE`, opaque alpha with `0000h`
+  discard, and LEQUAL depth. Legacy world shading is baked into COLOR_0, with scale 2 in the
+  shader; shading bytes participate in conversion hashes. This supersedes the earlier universal
+  straight-alpha world blend and mean-face-colour description; dynamic/per-frame lighting and
+  PSX additive/subtractive modes are not accepted by this bounded bake.
+- Region capacities are now 1024 resources / 8192 placements, with explicit truncation and
+  failed-resource diagnostics. Camera projection consumes live GTE `scr_z`/`ofx`/`ofy` rather
+  than a fixed FOV. The observed scenario prepares six distinct LOD and four tile high-detail
+  variants; per-frame legacy-Z thresholds choose resource keys. This is implemented bounded
+  tier selection, not complete LOD/streaming or scene acceptance.
+- Diagnostics are default-off; the magenta-background environment diagnostic currently enables
+  when its variable is present. Source-bounded content/cutout probes are diagnostic only.
+  Debug captures can freeze at `DelayTicks=600`; both baseline logs reached tick 600, with
+  dropped ticks legacy 0 / native 397. Equal tick numbers do not prove equal interpolation
+  phase or full deterministic state. Earlier wall-clock comparisons are confounded.
+- Pre-quad-fix matched-tick baseline: clear-background count 102440 (11.1%); no-cutout count
+  99811 (10.8%). Magenta confirmed untouched background. These are bounded diagnostic
+  observations, not a stage acceptance metric.
+- Source-proven quad correction: cyclic raw A,B,C,D remains stored A,B,D,C with unchanged
+  UV/colour/shade mapping; indices `012,132` cover legacy ABD+BCD with consistent winding,
+  replacing overlapping `012,023`. Triangle paths/counts are unchanged. `HashSourceMesh`
+  hashes index bytes (`assetcatalog_game.c`), so corrected sourceHash invalidates old world
+  cache entries; global schema remains 1 (no unrelated car-cache bump).
+- Parent validation: the actual inspector runner passed all 16 suites (1271 decoder / 347
+  builder checks, others unchanged); `Release_dev|x64` MSBuild succeeded with existing
+  LNK4075/LNK4098 warnings. The parent owns final validation; no new native-smoke result is implied.
+- Fresh `-DelayTicks 600` captures in `build/debug-tick-quadfix` were verified by its
+  Pillow/NumPy `verify_artifacts.py` (exit 0, `verification.json`): bounded Chicago mission 1,
+  at 1280x720, clear pixels
+  fell from 102440 (11.115451%) to 1733 (0.188043%) for each override, a reduction of 100707;
+  override RGB images were identical (MAE 0). Full-image RGB MAE against legacy fell from
+  33.696842 to 17.917348. Mean RGB-delta bins <20 / [20,60) / >=60 were 78.370877% /
+  13.863281% / 7.765842% (all 921600 pixels; no exclusions). Observer inspection confirmed
+  large navy wedges disappeared at bottom pavement/right wall/top fire escape; broad alignment
+  improved, but textures/shading differ and HUD/car/player remain absent.
+- Actual GLB position/UV sample: new sourceHash `043b5f9ac2fa7a9a` versus old
+  `3cda93cb69ffadda`, same optionsHash `f3121675359b72cb`, mods 0, schema 1: new ABD+BCD
+  versus old ABD+ADC. There are 160 newly timestamped cache entries; 288 old entries remain.
+  This sample is not exhaustive. One-shot logs report 160 converted / 0 failed / 6740 drawn /
+  0 unresolved, not capture-tick statistics. New saved logs do not retain a tick-anchored line:
+  invocation requests tick 600 but independently matched state/interpolation is not certified.
+- Acceptance remains open: no PAL graphics validation, full-scene/cars/pedestrians/UI/VFX/
+  streaming parity, broad performance or full determinism claim. E04 remaining consumers are
+  still pending; the user blocks E05/E06 until parity. No commits were made for this block.
 
 ## Engine migration E04 (in progress)
 
@@ -215,7 +192,8 @@ accepted.
   39/0 and 216/0 are historical.
 - Game-target wiring (2026-10-09): premake links `fmod_vc.lib`, defines `RED2_AUDIO_FMOD` and copies `fmod.dll`
   beside the executables when the SDK is present (otherwise the service unit is excluded, so a default build is
-  unchanged); `Release_dev`/`Release_dev_native` build and link with it, and no game system calls the service yet.
+  unchanged); `Release_dev`/`Release_dev_native` build and link with it; the bounded FESound
+  consumer routing is described below, while remaining game audio consumers still need migration.
 - Menu-bank PCM decode + registration seam (P0, oracle-approved attempt 1 with F1-F4): `Game/C/sounddecode.{h,c}`
   is an SDK-free PSX SPU ADPCM (VAG) decoder (16 B -> 28 frames, cross-block predictor carry, filter-nibble
   validation, inclusive block-aligned loop frames, zero partial output, deterministic); loop start uses the PSX
@@ -242,7 +220,7 @@ accepted.
   FMOD handles (samples 0/2/3, voices 1-2, 0 warnings; switch off inactive). Gate-accepted informational items:
   linear per-voice master gain (SPU ~1.4x pre-saturation curve) and the dormant lower pitch clamp. No
   audible-fidelity/tick-coverage/master-bus claim.
-- Next: E04 remaining consumer slices; E05/E06 pending.
+- Next: E04 remaining consumer slices; E05/E06 are user-blocked until parity.
 
 ## Project and current services
 
@@ -309,7 +287,8 @@ govern support.
   [runtime settings](product/runtime-settings-gui.md) hold the detail.
 - Content/language/loading/dynamic-light/widescreen controls describe reload requirements;
   `DeveloperSettingsFile_WriteKeys` preserves unknown keys/comments with transactional temp/backup files.
-- FMOD/PopcornFX, RmlUi, supplementary physics and in-game authoring editors are not implemented;
+- FMOD has the bounded E04 service/menu routing above, not full audio migration. PopcornFX, RmlUi,
+  supplementary physics and in-game authoring editors are not implemented;
   ImGui/input/window dependencies must migrate before E07.
 
 ## Knowledge and validation state

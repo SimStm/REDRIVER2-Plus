@@ -164,6 +164,72 @@ short ReadInt16(const unsigned char* begin, long long offset)
 	const unsigned int raw = (unsigned int)begin[offset] | ((unsigned int)begin[offset + 1] << 8);
 	return (short)raw;
 }
+
+// Reads one signed 16-bit component from an SVECTOR at `index` in the vertex
+// array whose first byte is at `vertexArrayOffset`.
+int ReadVertexComponent(const unsigned char* begin, long long vertexArrayOffset,
+	unsigned int index, long long componentOffset)
+{
+	return (int)ReadInt16(begin, vertexArrayOffset + (long long)index * 8 + componentOffset);
+}
+
+// Exact mirror of draw.c `normalIndex` (draw.c:631-693): the legacy shading
+// bucket of a polygon's first three stored vertices, used to index
+// f4colourTable. The runtime passes `*(u_int*)&polys->v0`, i.e. the record's
+// v0/v1/v2 bytes (draw.c:742), and returns `th23 | 0x80`; the table index uses
+// `th & 31`. This returns that bucket. All arithmetic is signed int, matching
+// the original.
+unsigned char NormalIndexBucket(const unsigned char* begin, long long vertexArrayOffset,
+	unsigned int v0, unsigned int v1, unsigned int v2)
+{
+	const int pvx = ReadVertexComponent(begin, vertexArrayOffset, v1, 0) - ReadVertexComponent(begin, vertexArrayOffset, v0, 0);
+	const int pvy = ReadVertexComponent(begin, vertexArrayOffset, v1, 2) - ReadVertexComponent(begin, vertexArrayOffset, v0, 2);
+	const int pvz = ReadVertexComponent(begin, vertexArrayOffset, v1, 4) - ReadVertexComponent(begin, vertexArrayOffset, v0, 4);
+
+	const int qvx = ReadVertexComponent(begin, vertexArrayOffset, v2, 0) - ReadVertexComponent(begin, vertexArrayOffset, v0, 0);
+	const int qvy = ReadVertexComponent(begin, vertexArrayOffset, v2, 2) - ReadVertexComponent(begin, vertexArrayOffset, v0, 2);
+	const int qvz = ReadVertexComponent(begin, vertexArrayOffset, v2, 4) - ReadVertexComponent(begin, vertexArrayOffset, v0, 4);
+
+	int nx = pvy * qvz - pvz * qvy;
+	int nz = pvx * qvy - pvy * qvx;
+
+	int x = nx + (nz >> 3);
+	int y = nz - (x >> 2);
+	x += (y >> 3);
+
+	int th23;
+	if (x < y)
+	{
+		if (x + y < 1)
+			th23 = y < 0 ? 5 : 4;
+		else
+			th23 = x < 0 ? 3 : 2;
+	}
+	else
+	{
+		if (x + y < 1)
+			th23 = x < 0 ? 6 : 7;
+		else
+			th23 = y > 0 ? 1 : 0;
+	}
+
+	th23 *= 4;
+
+	const int ny = pvz * qvx - pvx * qvz;
+
+	nx = nx < 0 ? -nx : nx;
+	nz = nz < 0 ? -nz : nz;
+
+	if (nx + nz < ny)
+		th23 += 1;
+
+	if (nx + nz < -ny)
+		th23 = (th23 & 31) | 2;
+	else
+		th23 = th23 & 31;
+
+	return (unsigned char)(th23 & 31);
+}
 } // namespace
 
 bool SourceModelDecoder_IsSupportedType(unsigned int ptype)
@@ -340,6 +406,11 @@ SourceModelDecoderResult DecodeSourceModel(const unsigned char* begin, const uns
 		SourcePrimitiveClass primitiveClass = SourcePrimitiveClass::TexturedFlatQuad;
 		bool storesColor = true;
 
+		// The record's first three vertex bytes, as the runtime's normalIndex
+		// reads them (`*(u_int*)&polys->v0`, draw.c:742). They are the shading
+		// input for the normal-shaded types; the combo types leave them zero.
+		unsigned char recordV0 = 0, recordV1 = 0, recordV2 = 0;
+
 		if (ptype == 10)
 		{
 			// PL 3-vertex record in the 16-byte stride; no RGB. ODT decodes
@@ -348,6 +419,7 @@ SourceModelDecoderResult DecodeSourceModel(const unsigned char* begin, const uns
 			memcpy(&record, begin + offset, sizeof(record));
 			vertexIndex[0] = record.v0; vertexIndex[1] = record.v1; vertexIndex[2] = record.v2;
 			uv[0] = record.uv0; uv[1] = record.uv1; uv[2] = record.uv2;
+			recordV0 = record.v0; recordV1 = record.v1; recordV2 = record.v2;
 			cornerCount = 3;
 			primitiveClass = SourcePrimitiveClass::TexturedPlTriangle;
 			storesColor = false;
@@ -360,6 +432,7 @@ SourceModelDecoderResult DecodeSourceModel(const unsigned char* begin, const uns
 			vertexIndex[0] = record.v0; vertexIndex[1] = record.v1;
 			vertexIndex[2] = record.v3; vertexIndex[3] = record.v2;
 			uv[0] = record.uv0; uv[1] = record.uv1; uv[2] = record.uv3; uv[3] = record.uv2;
+			recordV0 = record.v0; recordV1 = record.v1; recordV2 = record.v2;
 			cornerCount = 4;
 			primitiveClass = SourcePrimitiveClass::TexturedPlQuad;
 			storesColor = false;
@@ -393,6 +466,7 @@ SourceModelDecoderResult DecodeSourceModel(const unsigned char* begin, const uns
 			uv[0] = record.uv0; uv[1] = record.uv1; uv[2] = record.uv2;
 			normalIndex[0] = record.n0; normalIndex[1] = record.n1; normalIndex[2] = record.n2;
 			color = record.color;
+			recordV0 = record.v0; recordV1 = record.v1; recordV2 = record.v2;
 			cornerCount = 3;
 			primitiveClass = SourcePrimitiveClass::TexturedGouraudTriangle;
 			sawGouraud = true;
@@ -407,6 +481,7 @@ SourceModelDecoderResult DecodeSourceModel(const unsigned char* begin, const uns
 			normalIndex[0] = record.n0; normalIndex[1] = record.n1;
 			normalIndex[2] = record.n3; normalIndex[3] = record.n2;
 			color = record.color;
+			recordV0 = record.v0; recordV1 = record.v1; recordV2 = record.v2;
 			cornerCount = 4;
 			primitiveClass = SourcePrimitiveClass::TexturedGouraudQuad;
 			sawGouraud = true;
@@ -433,6 +508,19 @@ SourceModelDecoderResult DecodeSourceModel(const unsigned char* begin, const uns
 				return Failure(SOURCE_MODEL_ERROR_NORMAL_INDEX, message, error, capacity,
 					(int)i, ptype, offset);
 			}
+		}
+
+		// Legacy shading bucket (draw.c:740-743): the normal-shaded types
+		// {10,11,22,23} use the stored `th` when its 0x80 flag is set, otherwise
+		// the recomputed normal index; the combo types {20,21} use 0.
+		unsigned char shade = 0;
+		if (ptype == 10 || ptype == 11 || ptype == 22 || ptype == 23)
+		{
+			const unsigned char storedTh = begin[offset + 3];
+			shade = (storedTh & 0x80)
+				? (unsigned char)(storedTh & 31)
+				: NormalIndexBucket(vertexSpanBegin, (long long)vertexArrayOffset,
+					recordV0, recordV1, recordV2);
 		}
 
 		const unsigned int baseVertex = (unsigned int)(mesh.positions.size() / 3);
@@ -479,17 +567,20 @@ SourceModelDecoderResult DecodeSourceModel(const unsigned char* begin, const uns
 				mesh.colors.push_back(0);
 				mesh.colors.push_back(0);
 			}
+
+			mesh.shadeIndices.push_back(shade);
 		}
 
-		// Triangle list: the world quad (v0,v1,v3,v2) as (0,1,2)+(0,2,3).
+		// Raw cyclic corners A,B,C,D are stored as A,B,D,C. Cover ABD+BCD
+		// with matching winding; the triangle path remains (0,1,2).
 		mesh.indices.push_back(baseVertex + 0);
 		mesh.indices.push_back(baseVertex + 1);
 		mesh.indices.push_back(baseVertex + 2);
 		if (cornerCount == 4)
 		{
-			mesh.indices.push_back(baseVertex + 0);
-			mesh.indices.push_back(baseVertex + 2);
+			mesh.indices.push_back(baseVertex + 1);
 			mesh.indices.push_back(baseVertex + 3);
+			mesh.indices.push_back(baseVertex + 2);
 		}
 
 		const unsigned int addedIndices = (unsigned int)mesh.indices.size() - firstIndex;
