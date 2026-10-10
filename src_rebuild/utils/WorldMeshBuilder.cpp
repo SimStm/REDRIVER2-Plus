@@ -106,6 +106,7 @@ const char* WorldMeshBuilder_ErrorName(WorldMeshBuilderError error)
 	case WORLD_MESH_ERROR_ATTRIBUTE_SIZE: return "attribute-size";
 	case WORLD_MESH_ERROR_INDEX_RANGE: return "index-range";
 	case WORLD_MESH_ERROR_UNCOVERED_INDICES: return "uncovered-indices";
+	case WORLD_MESH_ERROR_IMAGE: return "image";
 	default: return "unknown";
 	}
 }
@@ -271,7 +272,8 @@ int WorldMeshBuilder_Build(const SourceMesh& source, GltfMeshData* out,
 }
 
 int WorldMeshBuilder_BuildMulti(const SourceMesh& source, GltfMultiMeshData* out,
-	WorldMeshBuilderResult* result, char* error, int capacity)
+	WorldMeshBuilderResult* result, char* error, int capacity,
+	const WorldSubmeshImage* images, int imageCount)
 {
 	if (error && capacity > 0)
 		error[0] = '\0';
@@ -348,6 +350,38 @@ int WorldMeshBuilder_BuildMulti(const SourceMesh& source, GltfMultiMeshData* out
 				"a triangle index is outside the vertex range");
 	}
 
+	// Optional per-submesh images: validate the whole array before any output is
+	// produced, so a bad image leaves an empty record. A null entry is
+	// untextured; a non-null entry needs positive dimensions whose
+	// width*height*4 size matches the declared byte count.
+	if (imageCount != 0)
+	{
+		if (!images || imageCount != (int)source.submeshes.size())
+			return (int)Fail(result, error, capacity, WORLD_MESH_ERROR_ARGUMENT,
+				"the submesh image array must have one entry per submesh");
+
+		for (size_t s = 0; s < source.submeshes.size(); ++s)
+		{
+			const WorldSubmeshImage& image = images[s];
+			if (!image.rgba)
+				continue; // untextured submesh
+
+			if (image.width <= 0 || image.height <= 0)
+				return (int)Fail(result, error, capacity, WORLD_MESH_ERROR_IMAGE,
+					"a submesh image has non-positive dimensions");
+
+			const size_t w = (size_t)image.width;
+			const size_t h = (size_t)image.height;
+			if (w > (size_t)-1 / 4u || w * 4u > (size_t)-1 / h)
+				return (int)Fail(result, error, capacity, WORLD_MESH_ERROR_IMAGE,
+					"a submesh image is too large");
+
+			if (image.byteCount != w * h * 4u)
+				return (int)Fail(result, error, capacity, WORLD_MESH_ERROR_IMAGE,
+					"a submesh image byte count does not match its dimensions");
+		}
+	}
+
 	const bool hasUvs = !source.uvs.empty();
 
 	out->primitives.reserve(source.submeshes.size());
@@ -422,6 +456,17 @@ int WorldMeshBuilder_BuildMulti(const SourceMesh& source, GltfMultiMeshData* out
 			primitive.baseColorFactor[1] = 1.0f;
 			primitive.baseColorFactor[2] = 1.0f;
 			primitive.baseColorFactor[3] = 1.0f;
+		}
+
+		// Attach this submesh's baked image, if any. The array was validated
+		// above, so the copy is bounded and cannot fail here.
+		if (images && images[s].rgba)
+		{
+			const WorldSubmeshImage& image = images[s];
+			const size_t imageBytes = (size_t)image.width * (size_t)image.height * 4u;
+			primitive.imageRgba.assign(image.rgba, image.rgba + imageBytes);
+			primitive.imageWidth = image.width;
+			primitive.imageHeight = image.height;
 		}
 
 		totalVertices += primitive.vertexCount;

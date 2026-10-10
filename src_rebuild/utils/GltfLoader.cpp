@@ -341,6 +341,212 @@ int WriteTempFile(const unsigned char* data, size_t size, char* path, int pathCa
 #endif
 }
 
+// --- embedded PNG decoding (writer's stored-block subset) --------------------
+//
+// The multi record's image is the PNG GltfWriter embeds: 8-bit RGBA, no
+// interlace, filter type None per scanline, and an IDAT zlib stream built only
+// from stored (uncompressed) deflate blocks. This decoder supports exactly that
+// subset so the writer and multi loader land together; any other PNG variant
+// (dynamic/fixed Huffman, other colour types/bit depths, interlacing, non-None
+// filters) is a named error, never a silent drop.
+
+inline unsigned int ReadU32BE(const unsigned char* p)
+{
+	return ((unsigned int)p[0] << 24) | ((unsigned int)p[1] << 16) | ((unsigned int)p[2] << 8) | (unsigned int)p[3];
+}
+
+unsigned int Adler32Of(const unsigned char* data, size_t length)
+{
+	unsigned int a = 1, b = 0;
+	for (size_t i = 0; i < length; i++)
+	{
+		a = (a + data[i]) % 65521u;
+		b = (b + a) % 65521u;
+	}
+	return (b << 16) | a;
+}
+
+// Inflates a zlib stream that uses only stored deflate blocks. Writes a named
+// reason and returns false for any other block type or a malformed stream.
+bool InflateStoredBlocks(const unsigned char* data, size_t size, std::vector<unsigned char>& out,
+	char* error, int errorCapacity)
+{
+	if (size < 2)
+	{
+		snprintf(error, errorCapacity, "the PNG zlib stream is truncated");
+		return false;
+	}
+	if ((data[0] & 0x0f) != 8)
+	{
+		snprintf(error, errorCapacity, "unsupported PNG compression method");
+		return false;
+	}
+
+	size_t pos = 2;
+	bool final = false;
+	while (!final)
+	{
+		if (pos >= size)
+		{
+			snprintf(error, errorCapacity, "the PNG deflate stream is truncated");
+			return false;
+		}
+		const unsigned char header = data[pos++];
+		final = (header & 1) != 0;
+		const unsigned int blockType = (header >> 1) & 3;
+		if (blockType != 0)
+		{
+			snprintf(error, errorCapacity,
+				"unsupported PNG deflate block type %u (only stored blocks are supported)", blockType);
+			return false;
+		}
+		if (pos + 4 > size)
+		{
+			snprintf(error, errorCapacity, "the PNG stored block is truncated");
+			return false;
+		}
+		const unsigned int length = (unsigned int)data[pos] | ((unsigned int)data[pos + 1] << 8);
+		const unsigned int nlength = (unsigned int)data[pos + 2] | ((unsigned int)data[pos + 3] << 8);
+		pos += 4;
+		if ((length ^ 0xffffu) != nlength)
+		{
+			snprintf(error, errorCapacity, "the PNG stored block length is inconsistent");
+			return false;
+		}
+		if (pos + length > size)
+		{
+			snprintf(error, errorCapacity, "the PNG stored block is truncated");
+			return false;
+		}
+		out.insert(out.end(), data + pos, data + pos + length);
+		pos += length;
+	}
+
+	if (pos + 4 <= size)
+	{
+		const unsigned int stored = ReadU32BE(data + pos);
+		if (stored != Adler32Of(out.data(), out.size()))
+		{
+			snprintf(error, errorCapacity, "the PNG zlib checksum does not match");
+			return false;
+		}
+	}
+	return true;
+}
+
+// Decodes a PNG from memory into RGBA8. Returns false, clears `outRGBA` and
+// writes a named reason for anything outside the supported subset.
+bool DecodePngRgba(const unsigned char* data, size_t size, std::vector<unsigned char>& outRGBA,
+	int& width, int& height, char* error, int errorCapacity)
+{
+	outRGBA.clear();
+	width = 0;
+	height = 0;
+
+	static const unsigned char signature[8] = { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A };
+	if (size < 8 || memcmp(data, signature, 8) != 0)
+	{
+		snprintf(error, errorCapacity, "the embedded image is not a PNG");
+		return false;
+	}
+
+	size_t pos = 8;
+	bool haveHeader = false;
+	unsigned int imageWidth = 0, imageHeight = 0;
+	int bitDepth = 0, colorType = 0, compression = 0, filterMethod = 0, interlace = 0;
+	std::vector<unsigned char> idat;
+
+	while (pos + 8 <= size)
+	{
+		const unsigned int length = ReadU32BE(data + pos);
+		const unsigned char* type = data + pos + 4;
+		pos += 8;
+		if (pos + length + 4 > size)
+		{
+			snprintf(error, errorCapacity, "a PNG chunk is truncated");
+			return false;
+		}
+		const unsigned char* chunkData = data + pos;
+
+		if (memcmp(type, "IHDR", 4) == 0)
+		{
+			if (length < 13)
+			{
+				snprintf(error, errorCapacity, "the PNG header is truncated");
+				return false;
+			}
+			imageWidth = ReadU32BE(chunkData);
+			imageHeight = ReadU32BE(chunkData + 4);
+			bitDepth = chunkData[8];
+			colorType = chunkData[9];
+			compression = chunkData[10];
+			filterMethod = chunkData[11];
+			interlace = chunkData[12];
+			haveHeader = true;
+		}
+		else if (memcmp(type, "IDAT", 4) == 0)
+		{
+			idat.insert(idat.end(), chunkData, chunkData + length);
+		}
+		else if (memcmp(type, "IEND", 4) == 0)
+		{
+			break;
+		}
+		pos += length + 4;
+	}
+
+	if (!haveHeader)
+	{
+		snprintf(error, errorCapacity, "the PNG has no header chunk");
+		return false;
+	}
+	if (bitDepth != 8 || colorType != 6 || compression != 0 || filterMethod != 0 || interlace != 0)
+	{
+		snprintf(error, errorCapacity,
+			"unsupported PNG variant (bit depth %d, colour type %d, interlace %d)",
+			bitDepth, colorType, interlace);
+		return false;
+	}
+	if (imageWidth == 0 || imageHeight == 0 || imageWidth > 65535 || imageHeight > 65535)
+	{
+		snprintf(error, errorCapacity, "unsupported PNG dimensions");
+		return false;
+	}
+	if (idat.empty())
+	{
+		snprintf(error, errorCapacity, "the PNG has no image data");
+		return false;
+	}
+
+	std::vector<unsigned char> raw;
+	if (!InflateStoredBlocks(idat.data(), idat.size(), raw, error, errorCapacity))
+		return false;
+
+	const size_t rowBytes = (size_t)imageWidth * 4u;
+	if (raw.size() != (rowBytes + 1u) * (size_t)imageHeight)
+	{
+		snprintf(error, errorCapacity, "the PNG data size does not match its dimensions");
+		return false;
+	}
+
+	outRGBA.resize(rowBytes * (size_t)imageHeight);
+	for (unsigned int y = 0; y < imageHeight; y++)
+	{
+		const unsigned char* row = raw.data() + (rowBytes + 1u) * (size_t)y;
+		if (row[0] != 0)
+		{
+			outRGBA.clear();
+			snprintf(error, errorCapacity, "unsupported PNG filter type %u", row[0]);
+			return false;
+		}
+		memcpy(outRGBA.data() + rowBytes * (size_t)y, row + 1, rowBytes);
+	}
+
+	width = (int)imageWidth;
+	height = (int)imageHeight;
+	return true;
+}
+
 // --- base64 (for data: image URIs) ------------------------------------------
 
 int DecodeBase64(const std::string& text, std::vector<unsigned char>& out)
@@ -756,23 +962,96 @@ void BuildBufferViews(const JsonValue& root, std::vector<BufferView>& views)
 	}
 }
 
-bool MaterialReferencesTexture(const JsonValue& material)
+// True when a material references a texture the multi record cannot represent
+// (anything other than the optional base-colour image it now holds).
+bool MaterialReferencesUnsupportedTexture(const JsonValue& material)
 {
 	const JsonValue* pbr = material.Find("pbrMetallicRoughness");
-	if (pbr && (pbr->Find("baseColorTexture") || pbr->Find("metallicRoughnessTexture")))
+	if (pbr && pbr->Find("metallicRoughnessTexture"))
 		return true;
 	return material.Find("normalTexture") || material.Find("emissiveTexture") || material.Find("occlusionTexture");
+}
+
+// Decodes the base-colour image referenced by a glTF textureInfo into RGBA8.
+// The multi record only holds the writer's embedded stored-block PNG; a data:
+// URI, an external file, a missing image or an unsupported PNG variant is a
+// named reason, never a silent drop.
+bool DecodeBaseColorTexture(const JsonValue& root, const std::vector<unsigned char>& bin,
+	const std::vector<BufferView>& views, const JsonValue* textureInfo,
+	std::vector<unsigned char>& outRGBA, int& outWidth, int& outHeight,
+	char* error, int errorCapacity)
+{
+	outRGBA.clear();
+	outWidth = 0;
+	outHeight = 0;
+
+	if (!textureInfo)
+	{
+		snprintf(error, errorCapacity, "the base-colour texture reference is missing");
+		return false;
+	}
+
+	const JsonValue* textures = root.Find("textures");
+	if (!textures || textures->type != JsonValue::Array)
+	{
+		snprintf(error, errorCapacity, "the base-colour texture is not defined");
+		return false;
+	}
+	const JsonValue* texture = GetArrayEntry(textures, (int)NumberField(textureInfo, "index", -1));
+	if (!texture)
+	{
+		snprintf(error, errorCapacity, "the base-colour texture index is missing");
+		return false;
+	}
+
+	const JsonValue* source = texture->Find("source");
+	const JsonValue* image = source ? GetArrayEntry(root.Find("images"), (int)source->NumberOr(-1)) : NULL;
+	if (!image)
+	{
+		snprintf(error, errorCapacity, "the base-colour texture image is missing");
+		return false;
+	}
+
+	const JsonValue* imageView = image->Find("bufferView");
+	if (!imageView || imageView->type != JsonValue::Number)
+	{
+		snprintf(error, errorCapacity, "the base-colour texture image is not embedded in the binary chunk");
+		return false;
+	}
+	const int viewIndex = (int)imageView->number;
+	if (viewIndex < 0 || (size_t)viewIndex >= views.size())
+	{
+		snprintf(error, errorCapacity, "the base-colour texture image points to a missing bufferView");
+		return false;
+	}
+	const BufferView& view = views[viewIndex];
+	if (view.byteOffset + view.byteLength > bin.size())
+	{
+		snprintf(error, errorCapacity, "the base-colour texture image reads outside the binary chunk");
+		return false;
+	}
+
+	const JsonValue* mimeType = image->Find("mimeType");
+	if (mimeType && mimeType->type == JsonValue::String && mimeType->str != "image/png")
+	{
+		snprintf(error, errorCapacity, "unsupported base-colour texture mime type '%s'", mimeType->str.c_str());
+		return false;
+	}
+
+	return DecodePngRgba(bin.data() + view.byteOffset, view.byteLength, outRGBA, outWidth, outHeight,
+		error, errorCapacity);
 }
 
 // Reads one primitive's geometry and material factors. `strict` adds the
 // bounds/count checks the multi-primitive consumer needs (attribute counts agree
 // with POSITION, indices are in range and form whole triangles); the single
-// historical loader keeps its tolerant contract by passing false. A material
-// texture reference is rejected only when `rejectTextures` is set, because the
-// multi record cannot hold an image.
+// historical loader keeps its tolerant contract by passing false.
+// `loadBaseColorImage` is set by the multi loader: it decodes the material's
+// embedded base-colour PNG into the primitive and rejects any other texture
+// reference. The single loader passes false and retains images through WIC.
 bool LoadPrimitiveCore(const JsonValue& root, const std::vector<unsigned char>& bin,
 	const std::vector<BufferView>& views, int primitiveIndex, const JsonValue& primitive,
-	bool strict, bool rejectTextures, GltfPrimitiveData& out, int& materialIndex,
+	bool strict, bool loadBaseColorImage, GltfPrimitiveData& out, int& materialIndex,
 	char* error, int errorCapacity)
 {
 	out = GltfPrimitiveData();
@@ -886,10 +1165,24 @@ bool LoadPrimitiveCore(const JsonValue& root, const std::vector<unsigned char>& 
 			out.metallicFactor = (float)(pbr->Find("metallicFactor") ? pbr->Find("metallicFactor")->NumberOr(1.0) : 1.0);
 			out.roughnessFactor = (float)(pbr->Find("roughnessFactor") ? pbr->Find("roughnessFactor")->NumberOr(1.0) : 1.0);
 		}
-		if (rejectTextures && MaterialReferencesTexture(*material))
+		if (loadBaseColorImage)
 		{
-			snprintf(error, errorCapacity, "primitive %d references a texture that the multi-primitive record cannot hold", primitiveIndex);
-			return false;
+			const JsonValue* base = pbr ? pbr->Find("baseColorTexture") : NULL;
+			if (base)
+			{
+				char textureDetail[192] = "";
+				if (!DecodeBaseColorTexture(root, bin, views, base, out.imageRgba, out.imageWidth, out.imageHeight,
+						textureDetail, sizeof(textureDetail)))
+				{
+					snprintf(error, errorCapacity, "primitive %d base-colour texture: %s", primitiveIndex, textureDetail);
+					return false;
+				}
+			}
+			if (MaterialReferencesUnsupportedTexture(*material))
+			{
+				snprintf(error, errorCapacity, "primitive %d references a texture that the multi-primitive record cannot hold", primitiveIndex);
+				return false;
+			}
 		}
 	}
 	return true;

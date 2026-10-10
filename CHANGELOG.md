@@ -284,6 +284,64 @@ where release policy permits it.
   convert; the placement/resource caps remain bounded dev limits; promote `PublishMultiMesh`
   into `AssetConverter` (from the previous block).
 
+- E03 texture phase (T1-T3): the native world pipeline now carries and samples textures end
+  to end. **T1 - pipeline images (pure):** `GltfPrimitiveData` gains `imageRgba` (RGBA8
+  row-major, `imageWidth*imageHeight*4`; empty means untextured), `imageWidth` and
+  `imageHeight`. The multi GLB writer (`Gltf_WriteFileMulti`) embeds one deterministic PNG
+  per material through a minimal dependency-free encoder (8-bit RGBA, filter None, zlib with
+  stored deflate blocks, CRC32/Adler-32, image bufferViews 4-byte padded); images, textures
+  and samplers are numbered in primitive order and the dimensions/data are validated with
+  named errors and zero partial output. A conversion with no images stays byte-identical (the
+  single-primitive path is unchanged). The multi loader (`Gltf_LoadFileMulti`) decodes the
+  embedded stored-block PNG back into `imageRgba`, returning a named error for unsupported
+  variants (dynamic/fixed Huffman, other colour types or bit depths, interlace, non-None
+  filters, non-embedded data, non-image/png); the single loader keeps its historical tolerant
+  WIC path. `WorldSubmeshImage { const unsigned char* rgba; int width; int height; size_t
+  byteCount; }` is added as a defaulted trailing parameter of `WorldMeshBuilder_BuildMulti`;
+  whole-array validation runs up front and the result is deterministic. **T2 - game-side
+  bake:** new `Game/C/texturebake.{h,c}` (guarded by `#ifndef PSX`) reads VRAM once per
+  conversion through `GR_ReadVRAM` (1024x512 halfwords) and extracts the page and CLUT for
+  each `(textureSet, textureId)` (`format=(tpage>>7)&3; pageX=(tpage&0x0f)<<6;
+  pageY=(tpage&0x10)?256:0; clutX=(clut&0x3f)<<4; clutY=clut>>6; rowStrideHalfwords=1024`;
+  16/256 CLUT entries; 256x256 full page), decodes it with `TextureDecode`, dedupes identical
+  (page,CLUT) pairs and caps unique images at 64 per model (16 MiB). The `TEXINF` sub-rect is
+  deliberately not cropped (full-page upload) and the raw 8-bit texel UVs keep their meaning
+  (the renderer scales by 1/256). `ConvertModelSlot` bakes before building and passes the
+  images to `BuildMulti`; additive `texture-bake:` info/warning diagnostics report the result
+  (existing conversion wording unchanged), and per-submesh failures are named reasons
+  (texture-not-declared, page-not-resident, unsupported-format, region-out-of-vram,
+  decode-error, image-cap) that leave that submesh untextured while the conversion continues.
+  The bake is a single VRAM snapshot at prepare, so pages that become resident later (streaming)
+  stay untextured for the run and are not re-baked.
+  Residency uses the loader's bookkeeping (tpageloaded/tpageslots; sentinel = never
+  assigned); a known limit is that if a page's VRAM slot were reused without the bookkeeping
+  updating, stale pixels could decode (documented, not guessed). The conversion cache options
+  hash is keyed on the baked pixels (`HashBakedImages`; 0 when nothing baked, so the legacy
+  untextured key/output stays byte-identical). **T3 - renderer sampling:**
+  `native/NativeRenderer` creates a per-primitive RGBA8_UNORM texture from `imageRgba` with a
+  NEAREST/NEAREST/CLAMP_TO_EDGE sampler (PSX look, no mips) and binds it in the primitive's
+  SRB; untextured primitives keep the shared 1x1 white texel and the UVs are scaled by 1/256
+  once at upload (`kContentTexelUvScale`; shaders/pipeline unchanged); no-fallback/stats
+  semantics are unchanged. Smoke additions: a stored-block textured GLB now loads and renders
+  (the old rejection boundary moved), an unsupported PNG variant is still rejected with a
+  named diagnostic, a textured multi-primitive test (a 2x1 red/green image plus an untextured
+  blue primitive) asserts the expected regions, and the UV-scale discrimination check
+  (scale=1 fails the test) is recorded. Evidence: all inspector suites green
+  (`GltfRoundTripTests` 144, `WorldMeshBuilderTests` 239, others unchanged); native renderer
+  smoke 214 checks / 0 failures; `Release_dev` and `Release_dev_native` builds exit 0
+  (`texturebake.c` in the generated project). A real textured region run (Release_dev,
+  `RED2_NATIVE_RENDERER=1 -nointro -nofmv -mission 1 -drawregion`) logged texture-bake lines
+  such as `slot 627, 9/9 submeshes textured (7 deduped, 2 images)` and `slot 149, 1/1
+  submeshes textured (0 deduped, 1 images)`; the region report is unchanged geometrically
+  (46/46 resources, 4096 submitted, 2913 drawn, 1183 unresolved), and the offscreen 640x360
+  frame has 64174 non-clear pixels and 400 distinct colours (was 8 untextured), the top
+  colours being textured greys/browns. Honest wording: the bounded region now renders
+  textured (base-colour sampling, unlit) with the game camera; this does not prove texture
+  colour parity with the legacy renderer (no alpha blending, no `TEXINF` sub-rect cropping,
+  full-page upload, only base-colour maps consumed, and only the stored-block PNG subset - a
+  general compressed PNG is rejected by the loader); the same bounded caps/instanced-slot
+  gaps as the region block remain; a dev run is not visual acceptance.
+
 - ODT-to-GLB tooling spike (bounded, external, temp-only; no repository
   integration): OpenDriver2Tools master @
   `89009f7f4f48f37a886b376292432cdab4a136` (2025-10-28) was built headless (Win32)

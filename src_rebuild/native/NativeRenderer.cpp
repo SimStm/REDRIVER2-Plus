@@ -296,6 +296,52 @@ void AddCube(std::vector<SceneVertex>& out, float cx, float cz, float size)
 	AddQuad(out, top0, top1, top2, top3); // +Y face
 }
 
+// Converted-content UVs are raw 8-bit texel coordinates (the E03 builder keeps
+// the decoder's texel UVs; see WorldMeshBuilder.h). A PSX texture page is
+// 256x256 texels, so sampling a full page needs the raw UV divided by 256. The
+// scale is applied once at upload time, so the shaders stay unchanged and the
+// built-in placeholder (which uses normalised 0..1 UVs) is unaffected.
+const float kContentTexelUvScale = 1.0f / 256.0f;
+
+// Uploads an RGBA8 row-major image (`width * height * 4` bytes, `width * 4` per
+// row) as an immutable 2D texture.
+int CreateRgbaTexture(const char* name, const unsigned char* rgba, int width, int height,
+	ITexture** out)
+{
+	TextureDesc desc;
+	desc.Name = name;
+	desc.Type = RESOURCE_DIM_TEX_2D;
+	desc.Width = (Uint32)width;
+	desc.Height = (Uint32)height;
+	desc.Format = TEX_FORMAT_RGBA8_UNORM;
+	desc.BindFlags = BIND_SHADER_RESOURCE;
+	desc.Usage = USAGE_IMMUTABLE;
+	TextureSubResData subResource;
+	subResource.pData = rgba;
+	subResource.Stride = (Uint64)width * 4u;
+	TextureData textureData;
+	textureData.pSubResources = &subResource;
+	textureData.NumSubresources = 1;
+	g_device->CreateTexture(desc, &textureData, out);
+	return *out != nullptr;
+}
+
+// PSX-look sampler for converted content: nearest min/mag (no bilinear
+// smoothing) with clamp-to-edge addressing, so a raw texel UV never wraps. Only
+// one mip level is uploaded, so the mip filter is never exercised.
+int CreateContentSampler(ISampler** out)
+{
+	SamplerDesc desc;
+	desc.MinFilter = FILTER_TYPE_POINT;
+	desc.MagFilter = FILTER_TYPE_POINT;
+	desc.MipFilter = FILTER_TYPE_POINT;
+	desc.AddressU = TEXTURE_ADDRESS_CLAMP;
+	desc.AddressV = TEXTURE_ADDRESS_CLAMP;
+	desc.AddressW = TEXTURE_ADDRESS_CLAMP;
+	g_device->CreateSampler(desc, out);
+	return *out != nullptr;
+}
+
 // Creates the per-primitive shader resource bindings for both scene pipelines
 // and binds the shared constant buffer, the primitive texture and its sampler.
 int CreatePrimitiveShaderBindings(ScenePrimitive& primitive)
@@ -535,10 +581,12 @@ int CreatePlaceholderItem()
 // Builds a draw item from a converted multi-primitive GLB record: one
 // ScenePrimitive per glTF primitive, each with its own immutable vertex/index
 // buffers, its own base-colour factor and its own shader bindings for both scene
-// pipelines. The multi record carries no embedded image, so every primitive
-// samples a shared white texel and its base-colour factor is what is visible.
-// Everything is created into a local item so a failure releases it without
-// touching the live content.
+// pipelines. A primitive whose record carries an embedded base-colour image gets
+// its own RGBA8 texture and samples it with the shared PSX-look sampler;
+// primitives without an image sample a shared 1x1 white texel so their
+// base-colour factor is what is visible. UVs are raw texel coordinates and are
+// scaled by 1/256 once here (kContentTexelUvScale). Everything is created into a
+// local item so a failure releases it without touching the live content.
 int CreateContentItem(const GltfMultiMeshData& mesh, SceneDrawItem& out,
 	char* error, int errorCapacity)
 {
@@ -550,36 +598,18 @@ int CreateContentItem(const GltfMultiMeshData& mesh, SceneDrawItem& out,
 
 	SceneDrawItem item;
 
-	// No embedded image in the multi record: one shared white texel keeps each
-	// primitive's base-colour factor visible.
+	// One shared white texel for untextured primitives and one shared PSX-look
+	// sampler for every primitive of the item.
 	RefCntAutoPtr<ITexture> whiteTexture;
-	RefCntAutoPtr<ISampler> whiteSampler;
+	RefCntAutoPtr<ISampler> contentSampler;
 	{
 		const unsigned char white[4] = { 255, 255, 255, 255 };
-		TextureDesc textureDesc;
-		textureDesc.Name = "ContentWhite";
-		textureDesc.Type = RESOURCE_DIM_TEX_2D;
-		textureDesc.Width = 1;
-		textureDesc.Height = 1;
-		textureDesc.Format = TEX_FORMAT_RGBA8_UNORM;
-		textureDesc.BindFlags = BIND_SHADER_RESOURCE;
-		textureDesc.Usage = USAGE_IMMUTABLE;
-		TextureSubResData subResource;
-		subResource.pData = white;
-		subResource.Stride = 4;
-		TextureData textureData;
-		textureData.pSubResources = &subResource;
-		textureData.NumSubresources = 1;
-		g_device->CreateTexture(textureDesc, &textureData, &whiteTexture);
-		if (!whiteTexture)
+		if (!CreateRgbaTexture("ContentWhite", white, 1, 1, &whiteTexture))
 		{
 			SetError(error, errorCapacity, "the converted base-colour texture could not be created");
 			return 0;
 		}
-
-		SamplerDesc samplerDesc;
-		g_device->CreateSampler(samplerDesc, &whiteSampler);
-		if (!whiteSampler)
+		if (!CreateContentSampler(&contentSampler))
 		{
 			SetError(error, errorCapacity, "the converted content sampler could not be created");
 			return 0;
@@ -609,8 +639,8 @@ int CreateContentItem(const GltfMultiMeshData& mesh, SceneDrawItem& out,
 			// block.
 			if (source.uvs.size() >= (i + 1) * 2)
 			{
-				vertex.u = source.uvs[i * 2 + 0];
-				vertex.v = source.uvs[i * 2 + 1];
+				vertex.u = source.uvs[i * 2 + 0] * kContentTexelUvScale;
+				vertex.v = source.uvs[i * 2 + 1] * kContentTexelUvScale;
 			}
 			else
 			{
@@ -622,7 +652,31 @@ int CreateContentItem(const GltfMultiMeshData& mesh, SceneDrawItem& out,
 		item.primitives.push_back(ScenePrimitive());
 		ScenePrimitive& primitive = item.primitives.back();
 		primitive.texture = whiteTexture;
-		primitive.sampler = whiteSampler;
+		primitive.sampler = contentSampler;
+
+		// A primitive with an embedded base-colour image gets its own immutable
+		// RGBA8 texture. The loader guarantees the image is exactly
+		// width*height*4 bytes, but the size is re-checked here so a malformed
+		// record fails with a named error instead of reading out of bounds.
+		if (!source.imageRgba.empty())
+		{
+			const size_t expected =
+				(size_t)source.imageWidth * (size_t)source.imageHeight * 4u;
+			if (source.imageWidth <= 0 || source.imageHeight <= 0 ||
+				source.imageRgba.size() != expected)
+			{
+				SetError(error, errorCapacity,
+					"a converted primitive image does not match its dimensions");
+				return 0;
+			}
+			if (!CreateRgbaTexture("ContentBaseColor", source.imageRgba.data(),
+					source.imageWidth, source.imageHeight, &primitive.texture))
+			{
+				SetError(error, errorCapacity,
+					"a converted base-colour image could not be created");
+				return 0;
+			}
+		}
 
 		BufferDesc vertexDesc;
 		vertexDesc.Name = "ContentVertices";

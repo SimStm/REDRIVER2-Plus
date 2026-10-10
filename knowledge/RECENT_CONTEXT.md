@@ -8,7 +8,7 @@ tags: [okf, status, agents]
 # Recent engineering context
 
 > Updated: 2026-10-10.
-> Read the handoff below first: E03 region native draw (block 2 item 5) done; E04 consumer slices next.
+> Read the handoff below first: E03 region native draw (block 2 item 5) + texture phase done; E04 consumer slices next.
 > Older task narratives are condensed; their change records
 > hold the detail.
 
@@ -22,9 +22,10 @@ PopcornFX optional, only on explicit request). User scope: at least through E06.
 Preserve Driver 2 simulation/math/mission/cutscene/replay/regional semantics;
 fixed ticks independent of presentation FPS and CPU speed.
 
-**Current step: E03 (Diligent playable slice) — region native draw done; E04
-consumer slices next.** Detail lives in [`CURRENT_STATUS.md`](CURRENT_STATUS.md) and
-`CHANGELOG.md`; the notes below are the handoff summary.
+**Current step: E03 (Diligent playable slice) — region native draw and the
+texture phase (T1-T3) done; E04 consumer slices next.** Detail lives in
+[`CURRENT_STATUS.md`](CURRENT_STATUS.md) and `CHANGELOG.md`; the notes below are
+the handoff summary.
 
 E03 (done and verified):
 
@@ -37,46 +38,33 @@ E03 (done and verified):
   headless (`PsyX_SetHeadless`) with a generic post-frame hook (`PsyX_SetPostFrameHandler`);
   fork changes committed/pushed as `99950a7`. `RED2_NATIVE_RENDERER` gates it and
   `Release_dev_native` builds `REDRIVER2_native.exe` with `-nointro -nofmv`.
-- Source MODEL decoder (block 1): `utils/SourceModelDecoder.*` is a pure, asset-free decoder
-  of the MODEL poly block from an explicit `[begin,end)` span. Allowlist
+- Source decode + policy (blocks 1, 2.1, 2a, 2.5): `utils/SourceModelDecoder.*` is a pure,
+  asset-free decoder of the MODEL poly block from an explicit `[begin,end)` span (allowlist
   `{10,11,20,21,22,23}`, stride `PolySizes[ptype&0x1f]`, world quad vertex/UV order, named
-  validation with zero output, instanced models rejected; `SourceModelDecoderTests` 1186.
-- Block 2a: `model_byte_sizes[]` captured at both size-live sites (`models.c`, `spool.c`)
-  and exposed as `ModelRecord.spanBytes` (`AssetCatalog_RegisterModelWithSpan`/
-  `GetModelSpan`), cleared on invalidation; `AssetCatalogPlacement.sourceObjectIndex` from
-  the walker's 14-bit index. Pure `Game/C/modelptypeprobe.{h,c}` + the `-modelptypes` flag;
-  Chicago histogram 516 slots/5538 records; `ModelPtypeProbeTests` 68, `AssetCatalogTests`
-  278.
-- Block 2.1: `ConvertPolygonTypes` (draw.c:721-730) draws `{11,21,23}`; `SourceModelDecoder`
-  `Strict` (default) vs `SkipUnsupported` (advance by `PolySizes`; zero-stride is
-  `UNSKIPPABLE_PTYPE`) for building-class models only; tile/sprite stay `Strict`.
-- Block 2.5: pure fixtures pin yang == `RotMatrixY(yang*64)`, view =
-  `R_cam*(R_obj*p + pos - cam)`, the decoder's NDC winding and the raw-unit policy; scene
-  pipelines use `CULL_MODE_BACK` with the `FrontCounterClockwise` pin re-derived in item 4.
-- Block 2.4: `utils/TextureDecode.{h,c}` decodes indexed 4/8-bit + CLUT and 16-bit direct
-  pages into RGBA8 (BGR555 `E5TO8`, `0000h` transparent, STP->128; texture window not
-  applied); `TextureDecodeTests` 136.
+  validation with zero output, instanced models rejected); `Strict` vs `SkipUnsupported` for
+  building-class models only. Loader `model_byte_sizes[]` exposes `ModelRecord.spanBytes`;
+  `AssetCatalogPlacement.sourceObjectIndex` from the 14-bit index. Pure
+  `Game/C/modelptypeprobe.{h,c}` + `-modelptypes`; Chicago histogram 516 slots/5538 records;
+  `SourceModelDecoderTests` 1186, `ModelPtypeProbeTests` 68, `AssetCatalogTests` 278. Pure
+  fixtures pin `RotMatrixY(yang*64)`, the view/NDC winding and the raw-unit policy.
+- CPU texture decode (block 2.4): `utils/TextureDecode.{h,c}` decodes indexed 4/8-bit + CLUT
+  and 16-bit direct pages into RGBA8 (BGR555 `E5TO8`, `0000h` transparent, STP->128; texture
+  window not applied); `TextureDecodeTests` 136.
 - Item 3 (world mesh build + multi-primitive GLB, follow-up A+B): pure C++11
   `utils/WorldMeshBuilder.{h,cpp}` builds a `GltfMeshData` from `SourceMesh` (flat
   per-triangle normals with a degenerate `(0,0,1)` fallback; 3 dedicated vertices per
-  triangle; base colour = mean stored face colours or neutral white for PL records; identity
-  node transform; deterministic; named-error bounds validation with zero partial output);
-  `WorldMeshBuilder_BuildMulti` maps each submesh to one `GltfPrimitiveData` and validates a
-  contiguous, ordered, complete index partition (the game call site uses `BuildMulti`).
-  `utils/GltfWriter.*`/`utils/GltfLoader.*` add `Gltf_WriteFileMulti`/`Gltf_LoadFileMulti`
-  (deterministic layout; strict pre-write validation with partial file removed); the single
-  writer is byte-identical by construction and by a dedicated test, and the multi loader is
-  strict and rejects texture references. `native/NativeRenderer` represents a
-  multi-primitive resource and an instance draws every primitive; `drawn` still counts
-  instances. `assetcatalog_game.c` `ConvertModelSlot` builds with `BuildMulti` and publishes
-  via a local transactional `PublishMultiMesh`; `LoadContent`/`RegisterResource` now reject
-  texture references, so an embedded-image GLB is no longer accepted (the E02 writer never
-  embeds images). Evidence: inspector suites green (`GltfRoundTripTests` 116;
-  `WorldMeshBuilderTests` 211); smoke 154, 0 failures; builds exit 0; slot 1150 (referenced)
-  published 3 primitives / 3 materials, 22 placements, submitted/drawn 22, residentResources
-  1, offscreen 640x360 with 42 non-clear pixels. Follow-ups: promote `PublishMultiMesh` into
-  `AssetConverter`; `MaterialReferencesTexture` misses `extensions` references. Limits: no
-  textures/embedded images; flat normals only; one material = mean face colour.
+  triangle; base colour = mean stored face colours or neutral white; identity node transform;
+  deterministic; named-error bounds validation with zero partial output); `BuildMulti` maps
+  each submesh to one `GltfPrimitiveData` and validates a contiguous, ordered, complete index
+  partition. `GltfWriter`/`GltfLoader` add `Gltf_WriteFileMulti`/`Gltf_LoadFileMulti`
+  (deterministic layout; strict pre-write validation, partial file removed); the single writer
+  is byte-identical by construction and by a dedicated test. `native/NativeRenderer`
+  represents a multi-primitive resource and an instance draws every primitive.
+  `assetcatalog_game.c` `ConvertModelSlot` builds with `BuildMulti` and publishes via a local
+  transactional `PublishMultiMesh`. Evidence: `GltfRoundTripTests` 116,
+  `WorldMeshBuilderTests` 211, smoke 154/0; slot 1150 (referenced) published 3 primitives /
+  3 materials, 22/22 drawn. Limits (superseded by the texture phase): no textures; flat
+  normals only; one material = mean face colour.
 - Item 4 (per-instance draw + game camera): `native/NativeRenderer.*` adds bounded resources
   (`NATIVE_MAX_RESOURCES`/`NATIVE_MAX_INSTANCES`, raised to 64/4096 for the region path) with
   `SetInstances`/`ClearInstances` (copied; unresolved keys skipped with a counter), a
@@ -116,21 +104,41 @@ E03 (done and verified):
   camera-z first 14956.2, min -49875.2, max 80857.4, inFrustum 2588/4096, laterallyVisible
   1919/4096`; offscreen 640x360 with 64174 non-clear pixels (~28%), full-frame bbox, 8
   distinct colours. This proves the full converted region is drawn with the real game
-  camera (2913 instances, 46 resident resources); it is untextured (base colours only), the
-  caps truncate the level's full content (E02 counted 6740 unique placements) and 18
-  referenced slots are instanced models the single-span decoder rejects (follow-up:
-  base-instance vertex resolution); no LOD/streaming, no texture/lighting parity; a dev run
-  is not visual acceptance.
+  camera (2913 instances, 46 resident resources); it now renders textured (base-colour
+  sampling, unlit; texture phase below), the caps truncate the level's full content (E02
+  counted 6740 unique placements) and 18 referenced slots are instanced models the
+  single-span decoder rejects (follow-up: base-instance vertex resolution); no LOD/streaming,
+  no texture/lighting parity; a dev run is not visual acceptance.
+- Texture phase T1-T3 (2026-10-10): pipeline images (`GltfPrimitiveData.imageRgba`/
+  `imageWidth`/`imageHeight`; the multi writer embeds a deterministic stored-block PNG per
+  material, the multi loader decodes it with named errors for unsupported variants, the
+  single writer/path stays byte-identical; `WorldSubmeshImage` with defaulted params on
+  `BuildMulti`); game-side bake (NEW `Game/C/texturebake.{h,c}` reads VRAM once via
+  `GR_ReadVRAM`, extracts page+CLUT per `(textureSet, textureId)`, decodes/dedupes, caps 64
+  images/16 MiB, full-page upload; `ConvertModelSlot` bakes before building; additive
+  `texture-bake:` diagnostics (single VRAM snapshot at prepare: pages resident only later stay
+  untextured and are not re-baked); cache keyed on baked pixels `HashBakedImages` = 0 when
+  untextured); renderer sampling (per-primitive RGBA8_UNORM NEAREST/CLAMP texture in the SRB,
+  untextured keeps the 1x1 white texel, UVs scaled 1/256 once at upload, shaders/pipeline
+  unchanged). Evidence: all inspector suites green (`GltfRoundTripTests` 144,
+  `WorldMeshBuilderTests` 239, others unchanged); smoke 214/0; `Release_dev`/
+  `Release_dev_native` exit 0; real region run texture-bake lines e.g. `slot 627, 9/9
+  submeshes textured (7 deduped, 2 images)`, region report unchanged geometrically, offscreen
+  640x360 with 64174 non-clear pixels and 400 distinct colours (was 8 untextured). Limits: no
+  texture colour parity with the legacy renderer (no alpha blending, no TEXINF sub-rect crop,
+  full-page upload, base-colour maps only, stored-block PNG subset only); bounded
+  caps/instanced-slot gaps remain; a dev run is not visual acceptance.
 - ODT spike (temp-only, no repo integration): OpenDriver2Tools master @
   `89009f7f4f48f37a886b376292432cdab4a136` (2025-10-28) built headless (Win32), full
   Chicago export (498 model OBJs, 159 pages, 135 region OBJs) plus `CHICAGO_HEAD.glb`;
   adaptation surface and divergences in the discussion. Informs B2.4.
 
 E03 must-not-claim: no "region/building renders correctly" (the region dev run is not
-visual acceptance); the renderer no longer accepts embedded-image GLBs; no all-model/
-all-slot coverage; no LOD/streaming/cars/animation/performance; single-vs-multi byte
-identity is by construction plus empirical verification and the dedicated test. E03 still
-has no playable original-world native slice.
+visual acceptance); no texture colour parity with the legacy renderer (unlit base-colour
+sampling, full-page upload, no alpha blending or TEXINF sub-rect crop, stored-block PNG
+subset only); no all-model/all-slot coverage; no LOD/streaming/cars/animation/performance;
+single-vs-multi byte identity is by construction plus empirical verification and the
+dedicated test. E03 still has no playable original-world native slice.
 
 E04 (in progress):
 
@@ -188,7 +196,8 @@ is a source-union diagnostic, not conversion/world acceptance. Full metrics and 
 1. E04 remaining consumer slices — A1 (FESound routing + service lifecycle) is complete;
    migrate the remaining audio consumers. Gate approval does not authorize audible
    acceptance.
-2. E03 original-world conversion seam (blocked on the E02 city conversion slice); debug
+2. E03 remaining world work — the region now draws textured (base-colour, unlit), but
+   lighting/materials, the player, LOD/streaming and instanced-model decode remain; debug
    configurations are not wired (only the Release Diligent libraries exist).
 3. E02 other cities/variants and dynamic/streamed categories (E06 coverage).
 
@@ -198,7 +207,7 @@ work. E05/E06 remain pending.
 **Commands:** build `Release_dev|x64` or `Release_dev_native|x64` with `premake5.exe vs2022`
 + MSBuild (env `SDL2_DIR`/`OPENAL_DIR`/`JPEG_DIR`, `RED2_BUILD_DIR=build_e00`,
 `RED2_BIN_DIR=bin/Release_dev`); `pwsh -NoProfile -File
-scripts/run_native_renderer_smoke.ps1` (202 checks). Do not treat bounded SDK-isolated
+scripts/run_native_renderer_smoke.ps1` (214 checks). Do not treat bounded SDK-isolated
 service approval as consumer or audible correctness.
 
 ## Checkpoint commit and current uncommitted work (2026-10-10)
@@ -215,8 +224,9 @@ Uncommitted after that checkpoint: the E02 inventory; the E04 blocks
 `knowledge/rules/fmod-integration.md`), the E04 P0 seam (`Game/C/sounddecode.{h,c}`,
 `Game/C/sound.c`, `tests/AudioServiceSmoke.cpp`, `scripts/run_audio_service_smoke.ps1`) and
 E04 A1 (`Game/C/audiofmod_adapter.{h,c}`, `redriver2_psxpc.cpp`); the E03 Block 1-4
-decoder, probe, world-mesh builder, item-4 draw path, multi-primitive writer and the item-5
-region draw (`utils/SourceModelDecoder.{h,c}`, `utils/WorldMeshBuilder.{h,cpp}`,
+decoder, probe, world-mesh builder, item-4 draw path, multi-primitive writer, the item-5
+region draw and the texture phase (`utils/SourceModelDecoder.{h,c}`,
+`utils/WorldMeshBuilder.{h,cpp}`,
 `utils/GltfWriter.{h,cpp}`, `utils/GltfLoader.{h,cpp}`,
 `utils/NativeInstanceTransform.{h,c}`, `utils/NativeCameraView.{h,c}`,
 `Game/C/modelptypeprobe.{h,c}`, `Game/C/assetcatalog*`, `Game/C/models.*`, `Game/C/spool.c`,
@@ -224,7 +234,8 @@ region draw (`utils/SourceModelDecoder.{h,c}`, `utils/WorldMeshBuilder.{h,cpp}`,
 `tests/ModelPtypeProbeTests.cpp`, `tests/WorldMeshBuilderTests.cpp`,
 `tests/GltfRoundTripTests.cpp`, `tests/AssetCatalogTests.cpp`,
 `tests/NativeRendererSmoke.cpp` plus the new NativeInstanceTransform/NativeCameraView test
-suites, `scripts/run_inspector_tests.ps1`, `tests/README.md`); and the suite
+suites, `Game/C/texturebake.{h,c}`, `scripts/run_inspector_tests.ps1`,
+`tests/README.md`); and the suite
 registration/README plus the status/handoff/changelog updates. The ignored FMOD SDK is
 present locally at `src_rebuild/dependencies/fmod/core`; its local version metadata
 identifies 2.03.15.
@@ -306,12 +317,12 @@ E00/E01 implementation details and bounded validation are summarized in
 [`CURRENT_STATUS.md`](CURRENT_STATUS.md) and the dated records linked there. E02 inventory
 findings and limitations are in
 [`chicago-inventory.md`](engine-migration/e02/chicago-inventory.md). E03 Block 1 and Block 2
-(2a/2.1/2.4/2.5, item 3, item 4, the multi-primitive follow-up A+B and the item-5
-region draw) are done; E03 still has no playable original-world native slice. E04 has
-the PCM decode + registration seam (P0) and A1 routing; neither is audible acceptance — do
-not describe historical smoke/contract results as accepted correctness. Continue only the
-requested implementation block; E05/E06 remain pending. The wall-collision replay route
-remains deferred by the user
+(2a/2.1/2.4/2.5, item 3, item 4, the multi-primitive follow-up A+B, the item-5 region draw
+and the texture phase T1-T3) are done; E03 still has no playable original-world native slice.
+E04 has the PCM decode + registration seam (P0) and A1 routing; neither is audible
+acceptance — do not describe historical smoke/contract results as accepted correctness.
+Continue only the requested implementation block; E05/E06 remain pending. The wall-collision
+replay route remains deferred by the user
 ([evidence](changes/2026-10-09/effect-timing-replay-regression/index.md)).
 
 Night/rain follow-up: ATTRACT.401 first froze at 857 due to a static `cyclecluts` packet

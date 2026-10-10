@@ -17,9 +17,14 @@
 // instance mode, checking that every primitive and its base colour reaches the
 // target while the instance still counts once.
 //
-// Part 5: rejects a single-record GLB with an embedded base-colour image (the
-// multi-primitive record has no image), checking the named diagnostic and that
-// the previously loaded content and the scene draw are unaffected.
+// Part 5: a converted resource with one textured and one untextured primitive
+// draws the textured primitive's own image (a red/green split, proving the raw
+// texel UVs are scaled by 1/256) and the untextured primitive's base colour.
+//
+// Part 6: loads a stored-block textured GLB through the multi record (the
+// renderer samples the primitive's own image) and rejects a PNG outside the
+// stored-block subset with a named diagnostic, leaving the loaded content and
+// the scene draw unaffected.
 //
 // It requires a Vulkan-capable GPU/driver and the Diligent libraries built by
 // scripts/fetch_diligent.ps1; it needs no game assets. Build and run
@@ -871,6 +876,11 @@ static bool IsGreen(const unsigned char* pixel)
 	return pixel[1] >= 200 && pixel[0] <= 64 && pixel[2] <= 64;
 }
 
+static bool IsBlue(const unsigned char* pixel)
+{
+	return pixel[2] >= 200 && pixel[0] <= 64 && pixel[1] <= 64;
+}
+
 static bool IsClear(const unsigned char* pixel)
 {
 	return pixel[0] >= 9 && pixel[0] <= 17 &&
@@ -1160,12 +1170,141 @@ static void TestMultiPrimitiveResource()
 	NativeRenderer_ClearResources();
 }
 
+// Writes a multi-primitive GLB with one textured and one untextured primitive.
+// The left primitive carries a 2x1 base-colour image (texel 0 red, texel 1
+// green) and raw page texel UVs 64 and 192; the renderer's 1/256 scale maps them
+// to 0.25 and 0.75, so nearest sampling splits the quad at its midpoint (the
+// texture's texel boundary is at u = 0.5): red on the screen-left half, green on
+// the screen-right half. Without the scale the whole quad would clamp to the
+// green texel. The right primitive has no image and a blue base-colour factor,
+// so it samples the shared white texel and shows pure blue. Front winding, the
+// same (0,1,2)+(0,2,3) fan the decoder emits.
+static bool WriteTexturedMultiFixture(const char* path, char* error, int errorCapacity)
+{
+	GltfMultiMeshData multi;
+
+	const float halfX = 3500.0f;
+	const float halfZ = 3000.0f;
+
+	GltfPrimitiveData left;
+	left.positions = {
+		-5000.0f - halfX, 0, -halfZ,  -5000.0f + halfX, 0, -halfZ,
+		-5000.0f + halfX, 0, halfZ,  -5000.0f - halfX, 0, halfZ,
+	};
+	left.uvs = { 64, 0,  192, 0,  192, 128,  64, 128 };
+	left.indices = { 0, 1, 2,  0, 2, 3 };
+	left.vertexCount = 4;
+	left.triangleCount = 2;
+	left.imageRgba = { 255, 0, 0, 255,  0, 255, 0, 255 };
+	left.imageWidth = 2;
+	left.imageHeight = 1;
+	multi.primitives.push_back(left);
+
+	GltfPrimitiveData right;
+	right.positions = {
+		5000.0f - halfX, 0, -halfZ,  5000.0f + halfX, 0, -halfZ,
+		5000.0f + halfX, 0, halfZ,   5000.0f - halfX, 0, halfZ,
+	};
+	right.uvs = { 0, 0,  1, 0,  1, 1,  0, 1 };
+	right.indices = { 0, 1, 2,  0, 2, 3 };
+	right.vertexCount = 4;
+	right.triangleCount = 2;
+	right.baseColorFactor[0] = 0.0f;
+	right.baseColorFactor[1] = 0.0f;
+	right.baseColorFactor[2] = 1.0f;
+	right.baseColorFactor[3] = 1.0f;
+	multi.primitives.push_back(right);
+
+	return Gltf_WriteFileMulti(path, multi, error, errorCapacity) == 0;
+}
+
+// E03 texture phase 3: a multi-primitive resource with one textured and one
+// untextured primitive. The textured primitive samples its own image (a
+// red/green split reached only when the raw texel UVs are scaled by 1/256); the
+// untextured primitive samples the shared white texel times its blue base
+// colour. Both must land in their expected screen regions through the real
+// offscreen pipeline, while the instance still counts once.
+static void TestTexturedMultiPrimitiveResource()
+{
+	char error[256];
+	NativeRenderer_ClearInstances();
+	NativeRenderer_ClearResources();
+
+	Check(WriteTexturedMultiFixture("textured-multi.glb", error, sizeof(error)),
+		"textured multi-primitive fixture written");
+	Check(NativeRenderer_RegisterResource("textured-multi", "textured-multi.glb", error, sizeof(error)) == 1,
+		"textured multi-primitive resource registered");
+
+	float view[16];
+	BuildTopDownView(20000.0f, view);
+	NativeRenderer_SetCamera(view, 1.0472f);
+	NativeRenderer_SetClipPlanes(100.0f, 125000.0f);
+
+	NativeInstance instance;
+	const float pos[3] = { 0.0f, 0.0f, 0.0f };
+	MakeInstance(instance, "textured-multi", pos, 0, 1, 0, 70, 9, 1);
+	Check(NativeRenderer_SetInstances(&instance, 1, error, sizeof(error)) == 1,
+		"textured multi-primitive instance set");
+
+	unsigned char image[64 * 64 * 4] = {};
+	Check(NativeRenderer_RenderSceneToRGBA(image, 64, 64, error, sizeof(error)) == 1,
+		"textured multi-primitive instance rendered offscreen");
+
+	int drawn = 0, skipped = 0;
+	NativeRenderer_GetInstanceStats(nullptr, &drawn, &skipped, nullptr);
+	Check(drawn == 1 && skipped == 0,
+		"the textured multi-primitive instance counts as one drawn instance");
+
+	int redLeft = 0, greenLeft = 0, blueLeft = 0;
+	long long redX = 0, greenX = 0;
+	int redRight = 0, greenRight = 0, blueRight = 0;
+	for (int y = 0; y < 64; ++y)
+	{
+		for (int x = 0; x < 64; ++x)
+		{
+			const unsigned char* pixel = image + ((size_t)y * 64 + x) * 4;
+			if (x < 32)
+			{
+				if (IsRed(pixel)) { ++redLeft; redX += x; }
+				if (IsGreen(pixel)) { ++greenLeft; greenX += x; }
+				if (IsBlue(pixel)) ++blueLeft;
+			}
+			else
+			{
+				if (IsRed(pixel)) ++redRight;
+				if (IsGreen(pixel)) ++greenRight;
+				if (IsBlue(pixel)) ++blueRight;
+			}
+		}
+	}
+
+	if (!(redLeft > 10 && greenLeft > 10))
+		printf("    (left region red %d, green %d; expected both image texels)\n",
+			redLeft, greenLeft);
+	Check(redLeft > 10 && greenLeft > 10,
+		"the textured primitive shows both image texels in the left region");
+	Check(redLeft > greenLeft / 2 && greenLeft > redLeft / 2,
+		"the red and green halves are balanced (raw texel UVs were scaled by 1/256)");
+	Check(redLeft > 0 && greenLeft > 0 &&
+		(float)redX / redLeft < (float)greenX / greenLeft,
+		"red samples appear left of green samples within the textured primitive");
+	Check(blueRight > 10,
+		"the untextured primitive shows its blue base colour in the right region");
+	Check(redRight == 0 && greenRight == 0,
+		"no textured colour leaks into the right region");
+	Check(blueLeft == 0,
+		"the untextured base colour does not leak into the left region");
+
+	NativeRenderer_ClearInstances();
+	NativeRenderer_ClearResources();
+}
+
 // ---------------------------------------------------------------------------
-// E03 gate follow-up (capacity-change boundary): the renderer's LoadContent and
-// RegisterResource both go through Gltf_LoadFileMulti, which rejects a texture
-// reference the multi-primitive record cannot hold. A single-record GLB with an
-// embedded base-colour image must be refused with a named diagnostic, and the
-// renderer must stay in its previous state.
+// E03 texture phase 3: converted content with an embedded base-colour image.
+// The multi record now holds the writer's stored-block PNG, so a stored-block
+// textured GLB must load and render through the primitive's own texture. A PNG
+// outside that subset (here a fixed-Huffman variant) is still a named error, and
+// the renderer must stay in its previous state.
 // ---------------------------------------------------------------------------
 
 static void AppendU32(std::vector<unsigned char>& out, unsigned int value)
@@ -1178,9 +1317,9 @@ static void AppendU32(std::vector<unsigned char>& out, unsigned int value)
 
 // Writes a minimal single-record GLB whose one primitive references a material
 // with a base-colour texture. A real 1x1 PNG is embedded as images[0] (a
-// bufferView in the shared BIN chunk) and textures[0] points at it, so this is a
-// genuine textured GLB, not just a texture reference. The multi-primitive record
-// cannot hold that image, so Gltf_LoadFileMulti must reject it.
+// bufferView in the shared BIN chunk) and textures[0] points at it. The PNG uses
+// fixed Huffman coding, which the multi loader's stored-block-only decoder
+// rejects as an unsupported PNG variant; this fixture is the negative case.
 static bool WriteTexturedGlb(const char* path, char* error, int errorCapacity)
 {
 	// A valid 1x1 red PNG (120 bytes).
@@ -1248,6 +1387,10 @@ static bool WriteTexturedGlb(const char* path, char* error, int errorCapacity)
 	return true;
 }
 
+// E03 texture phase 3: a stored-block textured GLB (the writer's own PNG
+// subset) must now load and render through the multi record, sampling the
+// primitive's own image. A PNG outside that subset is still refused with a
+// named diagnostic, and the loaded content and the scene draw must stay intact.
 static void TestTexturedContentRejected()
 {
 	char error[256];
@@ -1255,70 +1398,81 @@ static void TestTexturedContentRejected()
 	NativeRenderer_ClearInstances();
 	NativeRenderer_ClearResources();
 
-	// A valid, untextured content record first: the rejected textured load must
-	// leave it intact (the strongest form of "renderer state stays clean").
-	GltfMeshData quad;
-	quad.positions = { -1, -1, 0,  1, -1, 0,  1, 1, 0,  -1, 1, 0 };
-	quad.uvs = { 0, 0,  1, 0,  1, 1,  0, 1 };
-	quad.indices = { 0, 1, 2,  0, 2, 3 };
-	quad.vertexCount = 4;
-	quad.triangleCount = 2;
-	quad.baseColorFactor[0] = 1.0f;
-	quad.baseColorFactor[1] = 0.0f;
-	quad.baseColorFactor[2] = 0.0f;
-	quad.baseColorFactor[3] = 1.0f;
-	quad.transform[14] = 5.0f; // the only placement: ahead of the identity camera (+Z forward)
-	Check(Gltf_WriteFile("textured-guard.glb", quad, error, sizeof(error)) == 0,
-		"untextured guard content written");
-	Check(NativeRenderer_LoadContent("textured-guard.glb", error, sizeof(error)) == 1,
-		"untextured guard content loaded");
-
-	int vertices = 0, triangles = 0;
-	NativeRenderer_GetContentStats(&vertices, &triangles);
-	Check(vertices == 4 && triangles == 2, "guard content stats report 4 vertices / 2 triangles");
-
 	const float identity[16] = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
 	NativeRenderer_SetCamera(identity, 1.0472f);
-	// The guard quad is metre-scale (z = +5), so use metre-scale clip planes:
+	// The fixtures are metre-scale (z = +5), so use metre-scale clip planes:
 	// an earlier test leaves the raw-unit pair (100 / 125000) in place.
 	NativeRenderer_SetClipPlanes(0.02f, 300.0f);
 
-	// A single-record GLB with an embedded base-colour image is outside the
-	// multi-primitive record the renderer loads through.
+	// A stored-block textured GLB must load and render: the 1x1 blue image
+	// proves the primitive sampled its own texture rather than the white texel.
+	GltfMultiMeshData textured;
+	GltfPrimitiveData texturedPrimitive;
+	texturedPrimitive.positions = { -1, -1, 0,  1, -1, 0,  1, 1, 0,  -1, 1, 0 };
+	texturedPrimitive.uvs = { 0, 0,  1, 0,  1, 1,  0, 1 };
+	texturedPrimitive.indices = { 0, 1, 2,  0, 2, 3 };
+	texturedPrimitive.vertexCount = 4;
+	texturedPrimitive.triangleCount = 2;
+	texturedPrimitive.imageRgba = { 0, 0, 255, 255 }; // 1x1 opaque blue
+	texturedPrimitive.imageWidth = 1;
+	texturedPrimitive.imageHeight = 1;
+	textured.primitives.push_back(texturedPrimitive);
+	textured.transform[14] = 5.0f; // ahead of the identity camera (+Z forward)
+	Check(Gltf_WriteFileMulti("textured-stored.glb", textured, error, sizeof(error)) == 0,
+		"stored-block textured GLB written");
+	Check(NativeRenderer_LoadContent("textured-stored.glb", error, sizeof(error)) == 1,
+		"LoadContent loads a stored-block textured GLB");
+
+	int vertices = 0, triangles = 0;
+	NativeRenderer_GetContentStats(&vertices, &triangles);
+	Check(vertices == 4 && triangles == 2, "textured content stats report 4 vertices / 2 triangles");
+
+	unsigned char image[64 * 64 * 4] = {};
+	Check(NativeRenderer_RenderSceneToRGBA(image, 64, 64, error, sizeof(error)) == 1,
+		"stored-block textured content rendered offscreen");
+	const unsigned char* centre = &image[((32 * 64) + 32) * 4];
+	const bool blue = centre[2] >= 239 && centre[0] <= 16 && centre[1] <= 16 && centre[3] == 255;
+	if (!blue)
+		printf("    (centre pixel %u,%u,%u,%u, expected the 1x1 blue texture)\n",
+			centre[0], centre[1], centre[2], centre[3]);
+	Check(blue, "the stored-block textured primitive sampled its own image");
+
+	// A PNG outside the stored-block subset is still rejected with a named
+	// diagnostic, and the loaded textured content stays intact.
 	Check(WriteTexturedGlb("textured-content.glb", error, sizeof(error)),
-		"textured GLB written with an embedded base-colour image");
+		"unsupported-variant GLB written with an embedded base-colour image");
 	char loadError[256] = "";
 	Check(NativeRenderer_LoadContent("textured-content.glb", loadError, sizeof(loadError)) == 0,
-		"LoadContent rejects a textured GLB");
-	Check(loadError[0] != '\0', "the textured-GLB rejection has a diagnostic");
-	Check(strstr(loadError, "texture") != nullptr, "the diagnostic names the texture reference");
+		"LoadContent rejects an unsupported PNG variant");
+	Check(loadError[0] != '\0' && strstr(loadError, "deflate block type") != nullptr,
+		"the rejection names the unsupported PNG deflate variant");
 
-	// State stays clean: the previous content and its stats are untouched, and
+	// State stays clean: the loaded content and its stats are untouched, and
 	// the scene still draws it.
-	Check(NativeRenderer_HasContent() == 1, "the rejected load left the guard content loaded");
+	Check(NativeRenderer_HasContent() == 1, "the rejected load left the textured content loaded");
 	vertices = 0;
 	triangles = 0;
 	NativeRenderer_GetContentStats(&vertices, &triangles);
 	Check(vertices == 4 && triangles == 2, "the rejected load left the content stats intact");
 
-	unsigned char image[64 * 64 * 4] = {};
-	Check(NativeRenderer_RenderSceneToRGBA(image, 64, 64, error, sizeof(error)) == 1,
-		"the scene still renders after the textured rejection");
-	const unsigned char* centre = &image[((32 * 64) + 32) * 4];
-	Check(centre[0] >= 239 && centre[1] <= 16 && centre[2] <= 16 && centre[3] == 255,
-		"the guard content still draws after the textured rejection");
+	unsigned char guard[64 * 64 * 4] = {};
+	Check(NativeRenderer_RenderSceneToRGBA(guard, 64, 64, error, sizeof(error)) == 1,
+		"the scene still renders after the unsupported-variant rejection");
+	const unsigned char* guardCentre = &guard[((32 * 64) + 32) * 4];
+	Check(guardCentre[2] >= 239 && guardCentre[0] <= 16 && guardCentre[1] <= 16,
+		"the textured guard content still draws after the rejection");
 
 	// RegisterResource goes through the same loader and must reject it too,
 	// leaving no resident resource.
 	char registerError[256] = "";
 	Check(NativeRenderer_RegisterResource("textured", "textured-content.glb",
-		registerError, sizeof(registerError)) == 0, "RegisterResource rejects a textured GLB");
-	Check(registerError[0] != '\0' && strstr(registerError, "texture") != nullptr,
-		"the register rejection names the texture reference");
+		registerError, sizeof(registerError)) == 0, "RegisterResource rejects an unsupported PNG variant");
+	Check(registerError[0] != '\0' && strstr(registerError, "deflate block type") != nullptr,
+		"the register rejection names the unsupported PNG deflate variant");
 	Check(NativeRenderer_ResourceResident("textured") == 0, "the rejected resource is not resident");
 
 	NativeRenderer_ClearContent();
-	Check(NativeRenderer_HasContent() == 0, "guard content cleared after the textured checks");
+	Check(NativeRenderer_HasContent() == 0, "textured content cleared after the checks");
 }
 
 // Acceptance (c)/(d): residency, set/clear/re-register transitions, unresolved
@@ -1600,6 +1754,7 @@ int main()
 	TestWindingCullPolicy();
 	TestInstanceScreenRegions();
 	TestMultiPrimitiveResource();
+	TestTexturedMultiPrimitiveResource();
 	TestTexturedContentRejected();
 	TestInstanceResidencyAndDiagnostics();
 	TestCameraConventionAndPlaceholder();

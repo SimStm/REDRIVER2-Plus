@@ -637,6 +637,109 @@ static void TestMultiDeterminismAndReload()
 	}
 }
 
+// The multi path attaches an optional baked image per submesh: submesh 0 is
+// textured, submesh 1 is untextured. The image is copied verbatim into the
+// matching primitive, two builds write byte-identical multi GLB, and the image
+// survives the multi GLB round trip.
+static void TestMultiSubmeshImages()
+{
+	SourceMesh source = MakeMultiSubmeshMesh();
+	const int width = 2, height = 2;
+	std::vector<unsigned char> image((size_t)width * height * 4);
+	for (size_t i = 0; i < image.size(); ++i)
+		image[i] = (unsigned char)((i * 11 + 5) & 0xff);
+
+	WorldSubmeshImage images[2];
+	images[0].rgba = image.data();
+	images[0].width = width;
+	images[0].height = height;
+	images[0].byteCount = image.size();
+	images[1].rgba = NULL;
+	images[1].width = 0;
+	images[1].height = 0;
+	images[1].byteCount = 0;
+
+	GltfMultiMeshData mesh;
+	WorldMeshBuilderResult result;
+	char error[256];
+	CHECK(WorldMeshBuilder_BuildMulti(source, &mesh, &result, error, sizeof(error),
+		images, 2) == WORLD_MESH_ERROR_NONE);
+	CHECK(result.error == WORLD_MESH_ERROR_NONE);
+	CHECK(mesh.primitives.size() == 2);
+	CHECK(mesh.primitives[0].imageWidth == width && mesh.primitives[0].imageHeight == height);
+	CHECK(mesh.primitives[0].imageRgba == image);
+	CHECK(mesh.primitives[1].imageRgba.empty());
+	CHECK(mesh.primitives[1].imageWidth == 0 && mesh.primitives[1].imageHeight == 0);
+
+	// Determinism: two builds write byte-identical multi GLB files.
+	GltfMultiMeshData second;
+	WorldMeshBuilderResult secondResult;
+	CHECK(WorldMeshBuilder_BuildMulti(source, &second, &secondResult, error, sizeof(error),
+		images, 2) == WORLD_MESH_ERROR_NONE);
+	CHECK(Gltf_WriteFileMulti("world_img_a.glb", mesh, error, sizeof(error)) == 0);
+	CHECK(Gltf_WriteFileMulti("world_img_b.glb", second, error, sizeof(error)) == 0);
+	std::vector<unsigned char> bytesA, bytesB;
+	CHECK(ReadFileBytes("world_img_a.glb", &bytesA));
+	CHECK(ReadFileBytes("world_img_b.glb", &bytesB));
+	CHECK(!bytesA.empty() && bytesA.size() == bytesB.size());
+	CHECK(bytesA.size() == bytesB.size() && memcmp(bytesA.data(), bytesB.data(), bytesA.size()) == 0);
+
+	// The image survives the multi GLB round trip.
+	GltfMultiMeshData loaded;
+	CHECK(Gltf_LoadFileMulti("world_img_a.glb", &loaded, error, sizeof(error)) == 0);
+	CHECK(loaded.primitives.size() == 2);
+	if (loaded.primitives.size() == 2)
+	{
+		CHECK(loaded.primitives[0].imageWidth == width && loaded.primitives[0].imageHeight == height);
+		CHECK(loaded.primitives[0].imageRgba == image);
+		CHECK(loaded.primitives[1].imageRgba.empty());
+	}
+}
+
+static void TestImageErrors()
+{
+	char error[256];
+	WorldMeshBuilderResult result;
+	GltfMultiMeshData mesh;
+	SourceMesh source = MakeMultiSubmeshMesh();
+	const unsigned char pixel[4] = { 1, 2, 3, 4 };
+	WorldSubmeshImage images[2];
+
+	// An image array length that does not match the submesh count.
+	images[0].rgba = pixel;
+	images[0].width = 1;
+	images[0].height = 1;
+	images[0].byteCount = 4;
+	CHECK(WorldMeshBuilder_BuildMulti(source, &mesh, &result, error, sizeof(error), images, 1)
+		== WORLD_MESH_ERROR_ARGUMENT);
+	CHECK(mesh.primitives.empty());
+	CHECK(strcmp(WorldMeshBuilder_ErrorName(result.error), "argument") == 0);
+
+	// A byte count that disagrees with the dimensions.
+	images[0].rgba = pixel;
+	images[0].width = 2;
+	images[0].height = 2;
+	images[0].byteCount = 4;
+	images[1].rgba = NULL;
+	images[1].width = 0;
+	images[1].height = 0;
+	images[1].byteCount = 0;
+	CHECK(WorldMeshBuilder_BuildMulti(source, &mesh, &result, error, sizeof(error), images, 2)
+		== WORLD_MESH_ERROR_IMAGE);
+	CHECK(mesh.primitives.empty());
+	CHECK(strcmp(WorldMeshBuilder_ErrorName(result.error), "image") == 0);
+	CHECK(error[0] != '\0');
+
+	// Non-positive dimensions.
+	images[0].rgba = pixel;
+	images[0].width = 0;
+	images[0].height = 1;
+	images[0].byteCount = 0;
+	CHECK(WorldMeshBuilder_BuildMulti(source, &mesh, &result, error, sizeof(error), images, 2)
+		== WORLD_MESH_ERROR_IMAGE);
+	CHECK(mesh.primitives.empty());
+}
+
 int main()
 {
 	TestFlatNormals();
@@ -650,6 +753,8 @@ int main()
 	TestMultiMixedColors();
 	TestMultiErrors();
 	TestMultiDeterminismAndReload();
+	TestMultiSubmeshImages();
+	TestImageErrors();
 
 	printf("%d checks, %d failures\n", g_checks, g_failures);
 	return g_failures == 0 ? 0 : 1;

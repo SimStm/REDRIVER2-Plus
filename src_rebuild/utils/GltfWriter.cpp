@@ -39,6 +39,149 @@ void WriteU32(std::vector<unsigned char>& out, unsigned int value)
 	out.push_back((unsigned char)((value >> 24) & 0xff));
 }
 
+// --- minimal deterministic PNG encoder (stored deflate blocks) --------------
+//
+// PNG is a sequence of big-endian length + type + data + CRC32 chunks around a
+// zlib stream. The zlib stream here is a header, one or more stored
+// (uncompressed) deflate blocks and an Adler-32 trailer; no entropy coding is
+// used, so the bytes are a pure function of the RGBA input and every scanline
+// uses filter type None. This is exactly the subset GltfLoader's multi record
+// decodes, so the writer and loader land together without an external codec.
+
+void WriteU32BETo(unsigned char* out, unsigned int value)
+{
+	out[0] = (unsigned char)((value >> 24) & 0xff);
+	out[1] = (unsigned char)((value >> 16) & 0xff);
+	out[2] = (unsigned char)((value >> 8) & 0xff);
+	out[3] = (unsigned char)(value & 0xff);
+}
+
+const unsigned int* Crc32Table()
+{
+	static unsigned int table[256];
+	static bool initialised = false;
+	if (!initialised)
+	{
+		for (unsigned int i = 0; i < 256; i++)
+		{
+			unsigned int c = i;
+			for (int bit = 0; bit < 8; bit++)
+				c = (c & 1) ? (0xEDB88320u ^ (c >> 1)) : (c >> 1);
+			table[i] = c;
+		}
+		initialised = true;
+	}
+	return table;
+}
+
+unsigned int Crc32(const unsigned char* data, size_t length)
+{
+	const unsigned int* table = Crc32Table();
+	unsigned int crc = 0xFFFFFFFFu;
+	for (size_t i = 0; i < length; i++)
+		crc = table[(crc ^ data[i]) & 0xFFu] ^ (crc >> 8);
+	return crc ^ 0xFFFFFFFFu;
+}
+
+unsigned int Adler32(const unsigned char* data, size_t length)
+{
+	unsigned int a = 1, b = 0;
+	for (size_t i = 0; i < length; i++)
+	{
+		a = (a + data[i]) % 65521u;
+		b = (b + a) % 65521u;
+	}
+	return (b << 16) | a;
+}
+
+void AppendPngChunk(std::vector<unsigned char>& png, const char type[4],
+	const unsigned char* data, size_t length)
+{
+	unsigned char header[4];
+	WriteU32BETo(header, (unsigned int)length);
+	png.insert(png.end(), header, header + 4);
+
+	const size_t crcStart = png.size();
+	png.push_back((unsigned char)type[0]);
+	png.push_back((unsigned char)type[1]);
+	png.push_back((unsigned char)type[2]);
+	png.push_back((unsigned char)type[3]);
+	if (length > 0)
+		png.insert(png.end(), data, data + length);
+
+	unsigned char crcBytes[4];
+	WriteU32BETo(crcBytes, Crc32(png.data() + crcStart, png.size() - crcStart));
+	png.insert(png.end(), crcBytes, crcBytes + 4);
+}
+
+// Encodes `rgba` (width*height*4 bytes, RGBA8 row-major) as a PNG. Returns false
+// only for invalid dimensions or an overflowing size; validation upstream keeps
+// this defensive.
+bool EncodePngRgba(const unsigned char* rgba, int width, int height, std::vector<unsigned char>& png)
+{
+	if (!rgba || width <= 0 || height <= 0)
+		return false;
+	const size_t w = (size_t)width;
+	const size_t h = (size_t)height;
+	if (w > (size_t)-1 / 4u || w * 4u > ((size_t)-1 - 1u) / h)
+		return false;
+	const size_t rowBytes = w * 4u;
+	const size_t rawSize = (rowBytes + 1u) * h;
+
+	// Filtered scanlines: one filter-type byte (None = 0) then the row bytes.
+	std::vector<unsigned char> raw;
+	raw.reserve(rawSize);
+	for (int y = 0; y < height; y++)
+	{
+		raw.push_back(0);
+		const unsigned char* row = rgba + (size_t)y * rowBytes;
+		raw.insert(raw.end(), row, row + rowBytes);
+	}
+
+	// zlib stream: header, stored deflate blocks, Adler-32 trailer.
+	std::vector<unsigned char> zlib;
+	zlib.push_back(0x78); // CM=8 (deflate), CINFO=7 (32K window)
+	zlib.push_back(0x01); // FCHECK so (0x78 << 8 | 0x01) % 31 == 0, no dictionary
+
+	size_t offset = 0;
+	do
+	{
+		const size_t remaining = raw.size() - offset;
+		const size_t block = remaining > 65535u ? 65535u : remaining;
+		const bool final = (offset + block >= raw.size());
+		zlib.push_back(final ? 1 : 0);
+		zlib.push_back((unsigned char)(block & 0xff));
+		zlib.push_back((unsigned char)((block >> 8) & 0xff));
+		const unsigned int nlen = (~(unsigned int)block) & 0xffffu;
+		zlib.push_back((unsigned char)(nlen & 0xff));
+		zlib.push_back((unsigned char)((nlen >> 8) & 0xff));
+		if (block > 0)
+			zlib.insert(zlib.end(), raw.begin() + offset, raw.begin() + offset + block);
+		offset += block;
+	} while (offset < raw.size());
+
+	unsigned char adlerBytes[4];
+	WriteU32BETo(adlerBytes, Adler32(raw.data(), raw.size()));
+	zlib.insert(zlib.end(), adlerBytes, adlerBytes + 4);
+
+	png.clear();
+	static const unsigned char signature[8] = { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A };
+	png.insert(png.end(), signature, signature + 8);
+
+	unsigned char ihdr[13];
+	WriteU32BETo(ihdr, (unsigned int)width);
+	WriteU32BETo(ihdr + 4, (unsigned int)height);
+	ihdr[8] = 8;  // bit depth
+	ihdr[9] = 6;  // colour type: RGBA
+	ihdr[10] = 0; // compression: deflate
+	ihdr[11] = 0; // filter method: adaptive
+	ihdr[12] = 0; // interlace: none
+	AppendPngChunk(png, "IHDR", ihdr, sizeof(ihdr));
+	AppendPngChunk(png, "IDAT", zlib.data(), zlib.size());
+	AppendPngChunk(png, "IEND", NULL, 0);
+	return true;
+}
+
 // One primitive that has passed validation, with the exact element counts and
 // pointers the serializer uses. `hasNormals`/`hasUvs` mean the array covers
 // every vertex; `hasIndices` means a triangle list is present.
@@ -56,6 +199,10 @@ struct PrimitivePlan
 	float baseColorFactor[4];
 	float metallicFactor;
 	float roughnessFactor;
+	bool hasImage;
+	int imageWidth;
+	int imageHeight;
+	const unsigned char* imageRgba;
 };
 
 // Validates one primitive and records how it will be laid out. Returns false
@@ -86,6 +233,47 @@ bool PlanPrimitive(const GltfPrimitiveData& primitive, size_t index, PrimitivePl
 		plan->baseColorFactor[i] = primitive.baseColorFactor[i];
 	plan->metallicFactor = primitive.metallicFactor;
 	plan->roughnessFactor = primitive.roughnessFactor;
+
+	// Optional baked base-colour image: an empty image means untextured, and the
+	// dimensions must be zero then. A non-empty image must be RGBA8 with exactly
+	// width*height*4 bytes (checked overflow-safe), so a bad image is a named
+	// rejection before any file is written.
+	plan->hasImage = false;
+	plan->imageWidth = 0;
+	plan->imageHeight = 0;
+	plan->imageRgba = NULL;
+	if (primitive.imageRgba.empty())
+	{
+		if (primitive.imageWidth != 0 || primitive.imageHeight != 0)
+		{
+			snprintf(error, errorCapacity, "primitive %u has image dimensions but no image data", (unsigned)index);
+			return false;
+		}
+	}
+	else
+	{
+		if (primitive.imageWidth <= 0 || primitive.imageHeight <= 0)
+		{
+			snprintf(error, errorCapacity, "primitive %u has image data but no valid dimensions", (unsigned)index);
+			return false;
+		}
+		const size_t w = (size_t)primitive.imageWidth;
+		const size_t h = (size_t)primitive.imageHeight;
+		if (w > (size_t)-1 / 4u || w * 4u > (size_t)-1 / h)
+		{
+			snprintf(error, errorCapacity, "primitive %u has image dimensions that overflow their size", (unsigned)index);
+			return false;
+		}
+		if (primitive.imageRgba.size() != w * h * 4u)
+		{
+			snprintf(error, errorCapacity, "primitive %u has an image size that disagrees with its dimensions", (unsigned)index);
+			return false;
+		}
+		plan->hasImage = true;
+		plan->imageWidth = primitive.imageWidth;
+		plan->imageHeight = primitive.imageHeight;
+		plan->imageRgba = primitive.imageRgba.data();
+	}
 
 	if (plan->hasIndices)
 	{
@@ -128,9 +316,25 @@ int Gltf_WriteFileMulti(const char* path, const GltfMultiMeshData& mesh, char* e
 			return -1;
 	}
 
+	// Encode each textured primitive's image as one PNG. This is deterministic and
+	// happens before any byte is written, so an encoding failure (impossible after
+	// PlanPrimitive, but kept explicit) leaves no file.
+	std::vector<std::vector<unsigned char> > pngs(plans.size());
+	for (size_t i = 0; i < plans.size(); i++)
+	{
+		if (!plans[i].hasImage)
+			continue;
+		if (!EncodePngRgba(plans[i].imageRgba, plans[i].imageWidth, plans[i].imageHeight, pngs[i]))
+		{
+			snprintf(error, errorCapacity, "primitive %u image could not be encoded as PNG", (unsigned)i);
+			return -1;
+		}
+	}
+
 	// One shared BIN buffer: per primitive, POSITION, then NORMAL/TEXCOORD_0 when
-	// present, then the index list. This is the same fixed order the historical
-	// single-primitive writer used, so a one-primitive mesh is byte-identical.
+	// present, then the index list, then the PNG image when present. This is the
+	// same fixed order the historical single-primitive writer used, so a
+	// one-primitive mesh with no image is byte-identical.
 	std::vector<unsigned char> bin;
 	std::vector<int> viewOffsets, viewLengths;
 
@@ -140,6 +344,7 @@ int Gltf_WriteFileMulti(const char* path, const GltfMultiMeshData& mesh, char* e
 		int normal;
 		int uv;
 		int index;
+		int image;
 	};
 	std::vector<PrimitiveViews> primitiveViews(plans.size());
 
@@ -179,7 +384,29 @@ int Gltf_WriteFileMulti(const char* path, const GltfMultiMeshData& mesh, char* e
 			AppendU32s(bin, plan.indices, plan.indexCount);
 			viewLengths.push_back((int)bin.size() - viewOffsets.back());
 		}
+
+		view.image = -1;
+		if (plan.hasImage)
+		{
+			view.image = (int)viewOffsets.size();
+			viewOffsets.push_back((int)bin.size());
+			bin.insert(bin.end(), pngs[i].begin(), pngs[i].end());
+			viewLengths.push_back((int)bin.size() - viewOffsets.back());
+			// Keep the next view 4-byte aligned: PNG bytes are not, and glTF
+			// accessors require a 4-byte-aligned bufferView offset.
+			while (bin.size() % 4 != 0)
+				bin.push_back(0);
+		}
 	}
+
+	// The k-th textured primitive owns image/texture/sampler k; untextured
+	// primitives map to -1. This keeps the three arrays in primitive order.
+	std::vector<int> textureForPrimitive(plans.size(), -1);
+	int textureCount = 0;
+	for (size_t i = 0; i < plans.size(); i++)
+		if (plans[i].hasImage)
+			textureForPrimitive[i] = textureCount++;
+	const bool anyImage = textureCount > 0;
 
 	// Accessors are emitted in the same per-primitive attribute order and are
 	// numbered from zero. Each primitive references its own material (index i).
@@ -246,9 +473,50 @@ int Gltf_WriteFileMulti(const char* path, const GltfMultiMeshData& mesh, char* e
 		AppendFloat(json, plan.metallicFactor);
 		json += ",\"roughnessFactor\":";
 		AppendFloat(json, plan.roughnessFactor);
+		if (plan.hasImage)
+		{
+			json += ",\"baseColorTexture\":{\"index\":";
+			json += std::to_string(textureForPrimitive[i]);
+			json += "}";
+		}
 		json += "}}";
 	}
 	json += "]";
+
+	// Image/texture/sampler arrays exist only when at least one primitive is
+	// textured, so an untextured mesh keeps its historical JSON byte for byte.
+	if (anyImage)
+	{
+		json += ",\"images\":[";
+		bool firstImage = true;
+		for (size_t i = 0; i < plans.size(); i++)
+		{
+			if (!plans[i].hasImage)
+				continue;
+			if (!firstImage) json += ",";
+			firstImage = false;
+			json += "{\"bufferView\":" + std::to_string(primitiveViews[i].image) + ",\"mimeType\":\"image/png\"}";
+		}
+		json += "]";
+
+		json += ",\"textures\":[";
+		for (int t = 0; t < textureCount; t++)
+		{
+			if (t) json += ",";
+			json += "{\"sampler\":" + std::to_string(t) + ",\"source\":" + std::to_string(t) + "}";
+		}
+		json += "]";
+
+		// Nearest filtering and clamped edges match the PSX look; mipmaps are not
+		// generated, so minFilter is NEAREST too.
+		json += ",\"samplers\":[";
+		for (int t = 0; t < textureCount; t++)
+		{
+			if (t) json += ",";
+			json += "{\"magFilter\":9728,\"minFilter\":9728,\"wrapS\":33071,\"wrapT\":33071}";
+		}
+		json += "]";
+	}
 
 	json += ",\"accessors\":[";
 	bool firstAccessor = true;

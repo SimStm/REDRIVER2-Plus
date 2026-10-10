@@ -14,13 +14,18 @@
  * silently wrong geometry.
  *
  * Two records exist. `Gltf_LoadFile` keeps the historical single-primitive
- * contract (first primitive only, images retained) unchanged for existing
- * callers. `Gltf_LoadFileMulti` reads every primitive of the first mesh into
- * `GltfMultiMeshData`, each with its own base-colour material and no embedded
- * image; it is strict (vertex/index bounds, attribute count agreement, triangle
- * completeness) and rejects a texture reference the multi record cannot hold
- * rather than dropping it silently. On failure the destination is reset to an
- * empty record (no partial output).
+ * contract (first primitive only, images retained through WIC) unchanged for
+ * existing callers. `Gltf_LoadFileMulti` reads every primitive of the first mesh
+ * into `GltfMultiMeshData`, each with its own base-colour material and an
+ * optional embedded base-colour image; it is strict (vertex/index bounds,
+ * attribute count agreement, triangle completeness) and rejects a texture
+ * reference the multi record cannot hold rather than dropping it silently. On
+ * failure the destination is reset to an empty record (no partial output).
+ *
+ * The multi record's image is the writer's embedded PNG: it is decoded from the
+ * writer's stored-block (uncompressed deflate) subset. A PNG outside that subset
+ * (dynamic/fixed Huffman, non-RGBA colour type, interlacing, non-None filter) is
+ * a named error, never a silent drop.
  *
  * The importer never mutates game state; the caller owns the returned data.
  */
@@ -76,14 +81,26 @@ struct GltfMeshData
 	}
 };
 
-/* One primitive: geometry plus its own base-colour material factors. No image
-   is represented; the multi-primitive record has no texture fields. */
+/* One primitive: geometry plus its own base-colour material factors and an
+   optional baked base-colour image.
+
+   Image contract (E03 texture phase 1): `imageRgba` is RGBA8, row-major, exactly
+   `imageWidth * imageHeight * 4` bytes with 4 bytes per texel. It is empty (and
+   `imageWidth`/`imageHeight` are 0) when the primitive is untextured. The writer
+   embeds a non-empty image as one deterministic PNG per material and the multi
+   loader decodes that same stored-block subset back; the single loader keeps its
+   historical WIC path. The UVs stay raw 8-bit texel coordinates (see the
+   builder); the renderer scales them by 1/256 when sampling a full page. */
 struct GltfPrimitiveData
 {
 	std::vector<float> positions;			// 3 floats per vertex
 	std::vector<float> normals;				// 3 floats per vertex (may be empty)
 	std::vector<float> uvs;					// 2 floats per vertex (may be empty)
 	std::vector<unsigned int> indices;		// triangle list (may be empty -> non-indexed)
+
+	std::vector<unsigned char> imageRgba;	// RGBA8 row-major, width*height*4, may be empty
+	int imageWidth;
+	int imageHeight;
 
 	float baseColorFactor[4];
 	float metallicFactor;
@@ -93,7 +110,8 @@ struct GltfPrimitiveData
 	int triangleCount;
 
 	GltfPrimitiveData()
-		: metallicFactor(1.0f), roughnessFactor(1.0f),
+		: imageWidth(0), imageHeight(0),
+		  metallicFactor(1.0f), roughnessFactor(1.0f),
 		  vertexCount(0), triangleCount(0)
 	{
 		baseColorFactor[0] = baseColorFactor[1] = baseColorFactor[2] = baseColorFactor[3] = 1.0f;
@@ -101,8 +119,8 @@ struct GltfPrimitiveData
 };
 
 /* A mesh with N primitives sharing one node transform, each primitive carrying
-   its own base-colour material. This is the record the E03 multi-submesh
-   building path consumes; it deliberately has no embedded images. */
+   its own base-colour material and an optional embedded base-colour image. This
+   is the record the E03 multi-submesh building path consumes. */
 struct GltfMultiMeshData
 {
 	std::vector<GltfPrimitiveData> primitives;

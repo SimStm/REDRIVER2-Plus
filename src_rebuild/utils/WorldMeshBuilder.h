@@ -44,7 +44,9 @@
  *    (1,1,1,1) is used. No per-vertex colour attribute exists in this pipeline.
  *
  *  - UVs are the raw 8-bit texel coordinates the decoder produced, left
- *    unnormalised. Textures and embedded images are out of scope for this block.
+ *    unnormalised. The multi path can attach a baked base-colour image per
+ *    submesh (see `WorldSubmeshImage`); the UV convention is unchanged, so the
+ *    renderer scales the raw texels by 1/256 when it samples a full page.
  *
  *  - The node transform stays identity: this builds the source geometry record;
  *    per-instance placement is a later concern.
@@ -64,6 +66,20 @@ enum WorldMeshBuilderError
 	WORLD_MESH_ERROR_ATTRIBUTE_SIZE,      /* an attribute array disagrees with vertexCount */
 	WORLD_MESH_ERROR_INDEX_RANGE,         /* an index is outside the vertex range or not a triangle */
 	WORLD_MESH_ERROR_UNCOVERED_INDICES,   /* the single submesh does not cover every index */
+	WORLD_MESH_ERROR_IMAGE,               /* a submesh image has invalid dimensions or byte count */
+};
+
+/* One optional baked base-colour image for a submesh, in the multi build path.
+   `rgba` is RGBA8, row-major, `width * height * 4` bytes (4 bytes per texel).
+   A null `rgba` means the submesh is untextured and `width`/`height`/`byteCount`
+   are ignored. `byteCount` is the number of valid bytes at `rgba` and must equal
+   `width * height * 4`, so the copy is bounded rather than trusting the caller. */
+struct WorldSubmeshImage
+{
+	const unsigned char* rgba;
+	int width;
+	int height;
+	size_t byteCount;
 };
 
 /* Outcome detail for the log/report. All counts are zero on failure. */
@@ -114,6 +130,17 @@ int WorldMeshBuilder_Build(const SourceMesh& source, GltfMeshData* out,
  *
  *  - The node transform stays identity, exactly as the single path.
  *
+ *  - Optional per-submesh images. `images` is either null (or `imageCount` zero)
+ *    for a purely geometric build, or an array of exactly one `WorldSubmeshImage`
+ *    per submesh, parallel to `source.submeshes`. Each non-null entry is copied
+ *    verbatim into the matching primitive's `imageRgba`/`imageWidth`/
+ *    `imageHeight`; a null entry leaves that primitive untextured. The copy is
+ *    bounded: positive dimensions are required and `byteCount` must equal
+ *    `width * height * 4`, otherwise the build fails with WORLD_MESH_ERROR_IMAGE
+ *    and zero output. The array length must match the submesh count
+ *    (WORLD_MESH_ERROR_ARGUMENT otherwise). The UV convention is unchanged: the
+ *    raw texel coordinates stay, and the renderer scales them by 1/256.
+ *
  * Deterministic and bounded: identical input produces byte-identical output
  * (via Gltf_WriteFileMulti), and any failure resets the destination to an empty
  * record (no partial output). `result` reports aggregate vertex/triangle counts
@@ -121,7 +148,8 @@ int WorldMeshBuilder_Build(const SourceMesh& source, GltfMeshData* out,
  * hasColors fields describe the first submesh (the log only uses the counts).
  */
 int WorldMeshBuilder_BuildMulti(const SourceMesh& source, GltfMultiMeshData* out,
-	WorldMeshBuilderResult* result, char* error, int capacity);
+	WorldMeshBuilderResult* result, char* error, int capacity,
+	const WorldSubmeshImage* images = NULL, int imageCount = 0);
 
 /* Human-readable name of a build error code. */
 const char* WorldMeshBuilder_ErrorName(WorldMeshBuilderError error);

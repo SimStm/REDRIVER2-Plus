@@ -13,6 +13,7 @@
 #include "cell.h"
 #include "spool.h"
 #include "draw.h"
+#include "texturebake.h"
 
 #include "../../utils/WorldMeshBuilder.h"
 #include "../../utils/AssetConverter.h"
@@ -1028,6 +1029,33 @@ static int PublishMultiMesh(const char* cacheDirectory, const ConversionCacheKey
 	return ASSET_CONVERTER_OK;
 }
 
+// Deterministic FNV-1a 64 over the baked submesh images, used as the conversion
+// key's options hash. A textured conversion must not reuse a cached untextured
+// GLB for the same source model (and a re-bake with different VRAM pixels must
+// not reuse an older one), so the key reflects the baked pixels. Returns 0 when
+// nothing was baked, which keeps the legacy untextured key exactly unchanged.
+static unsigned long long HashBakedImages(const TextureBakeResult& bake)
+{
+	if (bake.pixels.empty())
+		return 0;
+
+	std::vector<unsigned char> stream;
+	for (size_t i = 0; i < bake.images.size(); i++)
+	{
+		const WorldSubmeshImage& image = bake.images[i];
+		stream.push_back(image.rgba ? 1 : 0);
+		for (int shift = 0; shift < 32; shift += 8)
+		{
+			stream.push_back((unsigned char)((unsigned)image.width >> shift));
+			stream.push_back((unsigned char)((unsigned)image.height >> shift));
+			stream.push_back((unsigned char)((unsigned)image.byteCount >> shift));
+		}
+		if (image.rgba)
+			stream.insert(stream.end(), image.rgba, image.rgba + image.byteCount);
+	}
+	return ConversionCache_HashBytes(stream.data(), (int)stream.size());
+}
+
 // Converts one resident model slot and registers its published resource. The
 // caller owns the request gating; this is the shared core of the
 // `-convertmodel` flag and the `-drawmodel` preparation.
@@ -1087,16 +1115,42 @@ static bool ConvertModelSlot(int slot, char* status, int statusCapacity)
 	GltfMultiMeshData mesh;
 	WorldMeshBuilderResult built;
 
-	if (WorldMeshBuilder_BuildMulti(source, &mesh, &built, error, sizeof(error)) != WORLD_MESH_ERROR_NONE)
+	// Bake the model's per-submesh base-colour images from the resident VRAM
+	// before building. The decoded mesh only carries the texture set/id, so this
+	// reads VRAM once and turns each referenced (page, CLUT) pair into one RGBA
+	// image. A submesh whose page is missing or fails to decode stays untextured;
+	// the conversion still proceeds.
+	TextureBakeResult bake;
+	TextureBake_BakeModel(source, &bake);
+
+	if (WorldMeshBuilder_BuildMulti(source, &mesh, &built, error, sizeof(error),
+			bake.images.empty() ? NULL : bake.images.data(), (int)bake.images.size()) != WORLD_MESH_ERROR_NONE)
 	{
 		snprintf(status, statusCapacity, "convert-model: slot %d build failed: %s (%s)",
 			slot, WorldMeshBuilder_ErrorName(built.error), error);
 		return false;
 	}
 
+	// Additive texture-bake diagnostics; the conversion/publish wording below is
+	// unchanged. A missing/evicted page, an unsupported format or a decode
+	// failure is a named warning and leaves only that submesh untextured.
+	if (bake.submeshCount > 0)
+	{
+		if (bake.untexturedCount == 0 && bake.truncatedCount == 0)
+			printInfo("AssetCatalog: texture-bake: slot %d, %d/%d submeshes textured (%d deduped, %d images)\n",
+				slot, bake.bakedCount, bake.submeshCount, bake.dedupedCount, (int)bake.pixels.size());
+		else
+			printWarning("AssetCatalog: texture-bake: slot %d, %d/%d submeshes textured (%d deduped), "
+				"%d untextured, %d truncated; first %s (%s)\n",
+				slot, bake.bakedCount, bake.submeshCount, bake.dedupedCount,
+				bake.untexturedCount, bake.truncatedCount,
+				TextureBake_ReasonName(bake.firstReason), bake.firstDetail);
+	}
+
 	const unsigned long long sourceHash = HashSourceMesh(source);
+	const unsigned long long optionsHash = HashBakedImages(bake);
 	ConversionCacheKey key;
-	ConversionCache_MakeKey(&key, "world-mesh", sourceHash, 0ULL, 0ULL, CONVERSION_CACHE_SCHEMA_VERSION);
+	ConversionCache_MakeKey(&key, "world-mesh", sourceHash, optionsHash, 0ULL, CONVERSION_CACHE_SCHEMA_VERSION);
 
 	const char* cacheDirectory = "native_cache";
 	_mkdir(cacheDirectory); // an existing directory is fine; a real failure surfaces in the publish step

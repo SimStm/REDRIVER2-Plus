@@ -16,9 +16,13 @@
  * NativeRenderer_LoadContent, otherwise a built-in placeholder.
  * Converted content may carry several primitives (the E03 multi-submesh GLB):
  * each primitive owns its immutable vertex/index buffers, its own base-colour
- * factor and its own shader bindings, and an instance draws all of them.
- * RenderSceneToRGBA runs the same draw into an offscreen readback target for
- * tests and evidence capture.
+ * factor and its own shader bindings, and an instance draws all of them. A
+ * primitive whose record carries an embedded base-colour image gets its own
+ * RGBA8_UNORM texture sampled with a nearest/clamp PSX-look sampler; primitives
+ * without an image sample a shared 1x1 white texel. Converted UVs are raw texel
+ * coordinates and are scaled by 1/256 at upload time, so a full 256-texel page
+ * samples correctly. RenderSceneToRGBA runs the same draw into an offscreen
+ * readback target for tests and evidence capture.
  *
  * Coordinate/unit policy (pinned by tests/SourceModelDecoderTests.cpp): the
  * camera `view` matrix, decoded vertices and the projection near/far must share
@@ -123,14 +127,17 @@ int NativeRenderer_RenderScene(char* error, int errorCapacity);
 
 /* Loads converted content from a .glb (the E03 record: one mesh with one or
    more primitives, each with positions, optional UVs, 16/32-bit indices and its
-   own base-colour factor; the multi record carries no embedded image, so each
-   primitive samples a white texel and its base-colour factor is what is
-   visible) and uploads immutable GPU buffers plus the shader bindings for both
-   scene pipelines. The node transform places the mesh in the world; world units
-   stay raw game units (4096 per metre), no conversion is applied. Returns 1 on
-   success; returns 0 with a diagnostic in `error` and leaves previously loaded
-   content untouched. Re-loading replaces and releases the old content
-   resources. Requires an active renderer. */
+   own base-colour factor plus an optional embedded base-colour image) and
+   uploads immutable GPU buffers plus the shader bindings for both scene
+   pipelines. A textured primitive gets its own RGBA8_UNORM texture sampled with
+   a nearest/clamp PSX-look sampler; a primitive without an image samples a
+   shared 1x1 white texel, so its base-colour factor is what is visible. UVs are
+   raw texel coordinates and are scaled by 1/256 at upload time. The node
+   transform places the mesh in the world; world units stay raw game units (4096
+   per metre), no conversion is applied. Returns 1 on success; returns 0 with a
+   diagnostic in `error` and leaves previously loaded content untouched.
+   Re-loading replaces and releases the old content resources. Requires an
+   active renderer. */
 int NativeRenderer_LoadContent(const char* glbPath, char* error, int errorCapacity);
 
 /* Releases the loaded content and returns the scene to its placeholder. Safe to

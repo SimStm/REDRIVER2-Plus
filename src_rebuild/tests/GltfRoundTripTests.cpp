@@ -443,6 +443,132 @@ static void TestMultiPrimitiveLoaderRejections()
 	CHECK(loaded.primitives.empty());
 }
 
+// A synthetic RGBA8 image (4x3, a distinct byte per channel byte) round-trips
+// through the multi writer/loader byte-for-byte with its dimensions, and two
+// writes with an image are byte-identical.
+static void TestImageRoundTrip()
+{
+	const int width = 4, height = 3;
+	std::vector<unsigned char> image((size_t)width * height * 4);
+	for (size_t i = 0; i < image.size(); i++)
+		image[i] = (unsigned char)((i * 7 + 3) & 0xff);
+
+	GltfMultiMeshData source;
+	source.primitives.push_back(MakePrimitive(
+		{ 0, 0, 0, 1, 0, 0, 0, 1, 0 },
+		{ 0, 0, 1, 0, 0, 1, 0, 0, 1 },
+		{ 0, 0, 1, 0, 0, 1 },
+		{ 0, 1, 2 },
+		0.25f, 0.5f, 0.75f, 1.0f));
+	source.primitives[0].imageRgba = image;
+	source.primitives[0].imageWidth = width;
+	source.primitives[0].imageHeight = height;
+
+	char error[256];
+	CHECK(Gltf_WriteFileMulti("image.glb", source, error, sizeof(error)) == 0);
+
+	GltfMultiMeshData loaded;
+	CHECK(Gltf_LoadFileMulti("image.glb", &loaded, error, sizeof(error)) == 0);
+	CHECK(loaded.primitives.size() == 1);
+	if (loaded.primitives.size() == 1)
+	{
+		CHECK(loaded.primitives[0].imageWidth == width);
+		CHECK(loaded.primitives[0].imageHeight == height);
+		CHECK(loaded.primitives[0].imageRgba.size() == image.size());
+		CHECK(loaded.primitives[0].imageRgba == image);
+	}
+
+	// Deterministic: a second write with the same image is byte-identical.
+	CHECK(Gltf_WriteFileMulti("image_b.glb", source, error, sizeof(error)) == 0);
+	std::vector<unsigned char> a, b;
+	CHECK(ReadFileBytes("image.glb", &a));
+	CHECK(ReadFileBytes("image_b.glb", &b));
+	CHECK(!a.empty() && a.size() == b.size());
+	CHECK(a.size() == b.size() && memcmp(a.data(), b.data(), a.size()) == 0);
+}
+
+// A multi mesh where primitive 0 is textured and the others are untextured: the
+// image is present on exactly one primitive, and every primitive's geometry
+// still round-trips.
+static void TestMultiMixedImage()
+{
+	const int width = 2, height = 2;
+	std::vector<unsigned char> image((size_t)width * height * 4);
+	for (size_t i = 0; i < image.size(); i++)
+		image[i] = (unsigned char)(255 - (int)i);
+
+	GltfMultiMeshData source = MakeMultiMesh();
+	source.primitives[0].imageRgba = image;
+	source.primitives[0].imageWidth = width;
+	source.primitives[0].imageHeight = height;
+
+	char error[256];
+	CHECK(Gltf_WriteFileMulti("mixed.glb", source, error, sizeof(error)) == 0);
+
+	GltfMultiMeshData loaded;
+	CHECK(Gltf_LoadFileMulti("mixed.glb", &loaded, error, sizeof(error)) == 0);
+	CHECK(loaded.primitives.size() == source.primitives.size());
+	if (loaded.primitives.size() == source.primitives.size())
+	{
+		CHECK(loaded.primitives[0].imageWidth == width && loaded.primitives[0].imageHeight == height);
+		CHECK(loaded.primitives[0].imageRgba == image);
+		CHECK(loaded.primitives[1].imageRgba.empty());
+		CHECK(loaded.primitives[1].imageWidth == 0 && loaded.primitives[1].imageHeight == 0);
+		CHECK(loaded.primitives[2].imageRgba.empty());
+
+		CHECK(loaded.primitives[0].positions == source.primitives[0].positions);
+		CHECK(loaded.primitives[0].indices == source.primitives[0].indices);
+		CHECK(memcmp(loaded.primitives[0].baseColorFactor, source.primitives[0].baseColorFactor,
+			sizeof(source.primitives[0].baseColorFactor)) == 0);
+	}
+}
+
+// A PNG outside the writer's stored-block subset (a real WIC-encoded PNG whose
+// IDAT uses Huffman coding) must be a named rejection with zero output, not a
+// silent drop.
+static void TestUnsupportedPngRejection()
+{
+	// A valid 1x1 red PNG (120 bytes), IDAT compressed with fixed Huffman.
+	static const unsigned char png[120] = {
+		0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D,
+		0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+		0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4, 0x89, 0x00, 0x00, 0x00,
+		0x01, 0x73, 0x52, 0x47, 0x42, 0x00, 0xAE, 0xCE, 0x1C, 0xE9, 0x00, 0x00,
+		0x00, 0x04, 0x67, 0x41, 0x4D, 0x41, 0x00, 0x00, 0xB1, 0x8F, 0x0B, 0xFC,
+		0x61, 0x05, 0x00, 0x00, 0x00, 0x09, 0x70, 0x48, 0x59, 0x73, 0x00, 0x00,
+		0x0E, 0xC3, 0x00, 0x00, 0x0E, 0xC3, 0x01, 0xC7, 0x6F, 0xA8, 0x64, 0x00,
+		0x00, 0x00, 0x0D, 0x49, 0x44, 0x41, 0x54, 0x18, 0x57, 0x63, 0xF8, 0xCF,
+		0xC0, 0xF0, 0x1F, 0x00, 0x05, 0x00, 0x01, 0xFF, 0xA6, 0x5C, 0x9B, 0x5D,
+		0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+	};
+
+	const unsigned int positionBytes = 36; // 3 * VEC3 float32
+	std::vector<unsigned char> bin(positionBytes, 0);
+	bin.insert(bin.end(), png, png + sizeof(png));
+	const unsigned int imageLength = (unsigned int)sizeof(png);
+
+	std::string json =
+		"{\"asset\":{\"version\":\"2.0\"},"
+		"\"meshes\":[{\"primitives\":[{\"attributes\":{\"POSITION\":0},\"material\":0}]}],"
+		"\"materials\":[{\"pbrMetallicRoughness\":{\"baseColorTexture\":{\"index\":0}}}],"
+		"\"textures\":[{\"source\":0}],"
+		"\"images\":[{\"bufferView\":1,\"mimeType\":\"image/png\"}],"
+		"\"accessors\":[{\"bufferView\":0,\"componentType\":5126,\"count\":3,\"type\":\"VEC3\"}],"
+		"\"bufferViews\":[{\"buffer\":0,\"byteOffset\":0,\"byteLength\":36},"
+		"{\"buffer\":0,\"byteOffset\":36,\"byteLength\":" + std::to_string(imageLength) + "}],"
+		"\"buffers\":[{\"byteLength\":" + std::to_string(positionBytes + imageLength) + "}]}";
+
+	CHECK(WriteGlbFromJsonBin("unsupported-png.glb", json.c_str(), bin));
+
+	char error[256];
+	GltfMultiMeshData loaded;
+	loaded.primitives.push_back(GltfPrimitiveData());
+	CHECK(Gltf_LoadFileMulti("unsupported-png.glb", &loaded, error, sizeof(error)) == -1);
+	CHECK(error[0] != '\0');
+	CHECK(strstr(error, "PNG") != NULL);
+	CHECK(loaded.primitives.empty()); // zero partial output
+}
+
 int main()
 {
 	TestRoundTrip();
@@ -453,6 +579,9 @@ int main()
 	TestSingleVsMultiByteIdentity();
 	TestMultiPrimitiveWriterRejections();
 	TestMultiPrimitiveLoaderRejections();
+	TestImageRoundTrip();
+	TestMultiMixedImage();
+	TestUnsupportedPngRejection();
 
 	printf("%d checks, %d failures\n", g_checks, g_failures);
 	return g_failures == 0 ? 0 : 1;
