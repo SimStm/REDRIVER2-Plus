@@ -58,6 +58,12 @@ static bool s_regionDrawRequested = false;
 // bridge reads it to detect a level change even when the resource registry is
 // already repopulated by the same frame's preparation.
 static unsigned int s_levelGeneration = 0;
+static unsigned int s_regionDrawRevision = 0;
+
+unsigned int AssetCatalogGame_RegionDrawRevision(void)
+{
+	return s_regionDrawRevision;
+}
 
 #define ASSET_CATALOG_GAME_DEFAULT_DRAW_COUNT 32
 
@@ -157,7 +163,7 @@ int s_modelResourceCount = 0;
 AssetCatalogGameDrawPlacement s_drawPlacements[ASSET_CATALOG_GAME_MAX_DRAW_PLACEMENTS];
 int s_drawPlacementCount = 0;
 
-// Full-region placement store and its capacity diagnostics. Populated once by
+// Full-region placement store and its capacity diagnostics. Republished by
 // AssetCatalogGame_PrepareRegionDraw and read by the native-draw bridge; the
 // store is sized to the renderer's instance bound so it never overflows.
 AssetCatalogGameDrawPlacement s_regionPlacements[ASSET_CATALOG_GAME_MAX_REGION_PLACEMENTS];
@@ -168,6 +174,24 @@ int s_regionConvertedSlotCount = 0;
 int s_regionFailedSlotCount = 0;
 int s_regionLodSlotCount = 0;
 int s_regionHighDetailSlotCount = 0;
+
+// Local filesystem spooling runs on the game thread. This adapter samples only
+// its completed state; volatile CD-thread flags are not synchronization.
+struct ResidentRegionState
+{
+	int regions[4];
+	int area;
+	unsigned int modelRevision;
+	unsigned char pageSlots[19];
+	unsigned char loadedPages[128];
+};
+ResidentRegionState s_preparedRegionState = {};
+bool s_preparedRegionStateValid = false;
+bool s_regionPrepareSucceeded = false;
+char s_regionPrepareError[512] = {};
+unsigned int s_regionModelRevision = 0;
+std::vector<AssetCatalogGameModelResource> s_reusableRegionResources;
+int s_regionReusedSlotCount = 0;
 
 // Per-slot probe record. The loader reports each model once at its size-live
 // site; a reused slot replaces its record in place.
@@ -243,6 +267,9 @@ void AssetCatalogGame_BeginLevel(void)
 	// and the post-SpoolSYNC preparation can run in the same frame, so the
 	// registry may already be repopulated when the bridge frame handler runs.
 	s_levelGeneration++;
+	s_preparedRegionStateValid = false;
+	s_regionPrepareSucceeded = false;
+	s_regionDrawRevision++;
 
 	// A new level starts a fresh probe: discard the previous level's per-slot
 	// records so a multi-level session reports only the current level. This is
@@ -267,6 +294,7 @@ void AssetCatalogGame_RegisterModel(int modelIndex)
 {
 	if (modelIndex < 0 || modelIndex >= MAX_MODEL_SLOTS)
 		return;
+	s_regionModelRevision++;
 
 	MODEL* model = modelpointers[modelIndex];
 
@@ -892,6 +920,14 @@ static unsigned long long HashSourceMesh(const SourceMesh& mesh)
 // Stores (or replaces) the published resource of a slot. The registry is
 // capacity-limited; a full table is a named warning and drops the new entry
 // rather than evicting a resident one.
+static unsigned int SharedModelRevision(int slot)
+{
+	const MODEL* model = modelpointers[slot];
+	if (!model || model == &dummyModel || model->instance_number < 0 || model->instance_number >= MAX_MODEL_SLOTS)
+		return 0;
+	return AssetCatalog_GetModelHandle(AssetCatalog_FindModel(model->instance_number)).revision;
+}
+
 static void StoreModelResource(int slot, const char* resourceKey, const char* glbPath,
 	const char* contentHash, unsigned long long sourceHash)
 {
@@ -905,6 +941,8 @@ static void StoreModelResource(int slot, const char* resourceKey, const char* gl
 		snprintf(entry.glbPath, sizeof(entry.glbPath), "%s", glbPath);
 		snprintf(entry.contentHash, sizeof(entry.contentHash), "%s", contentHash);
 		entry.sourceHash = sourceHash;
+		entry.modelRevision = AssetCatalog_GetModelHandle(AssetCatalog_FindModel(slot)).revision;
+		entry.baseModelRevision = SharedModelRevision(slot);
 		return;
 	}
 
@@ -921,6 +959,8 @@ static void StoreModelResource(int slot, const char* resourceKey, const char* gl
 	snprintf(entry.glbPath, sizeof(entry.glbPath), "%s", glbPath);
 	snprintf(entry.contentHash, sizeof(entry.contentHash), "%s", contentHash);
 	entry.sourceHash = sourceHash;
+	entry.modelRevision = AssetCatalog_GetModelHandle(AssetCatalog_FindModel(slot)).revision;
+	entry.baseModelRevision = SharedModelRevision(slot);
 }
 
 // Reads a whole file into `out`. Returns false for a missing/empty/unreadable
@@ -1319,6 +1359,18 @@ static bool ConvertModelSlot(int slot, char* status, int statusCapacity)
 	}
 
 	const unsigned char* begin = (const unsigned char*)model;
+	const unsigned int revision = AssetCatalog_GetModelHandle(record).revision;
+	for (size_t i = 0; i < s_reusableRegionResources.size(); ++i)
+	{
+		const AssetCatalogGameModelResource& resource = s_reusableRegionResources[i];
+		if (resource.modelSlot != slot || resource.modelRevision != revision ||
+			resource.baseModelRevision != SharedModelRevision(slot))
+			continue;
+		StoreModelResource(slot, resource.resourceKey, resource.glbPath, resource.contentHash, resource.sourceHash);
+		++s_regionReusedSlotCount;
+		snprintf(status, statusCapacity, "convert-model: slot %d reuses its unchanged resident resource", slot);
+		return true;
+	}
 	const unsigned char* end = begin + span;
 
 	SourceModelView view = {};
@@ -1881,7 +1933,7 @@ static int RegionHighDetailSlotFor(int modelSlot)
 // capacity overflow of placements or resources is a named truncation. No source
 // model is decoded here beyond the conversion itself, so the draw never
 // re-decodes.
-bool AssetCatalogGame_PrepareRegionDraw(char* status, int statusCapacity)
+static bool PrepareResidentRegionDraw(char* status, int statusCapacity)
 {
 	if (status == NULL || statusCapacity <= 0)
 		return false;
@@ -1895,6 +1947,9 @@ bool AssetCatalogGame_PrepareRegionDraw(char* status, int statusCapacity)
 	}
 
 	s_regionPlacementCount = 0;
+	// Only this snapshot's resources belong in the published registry. A failed
+	// conversion of a reused slot must never retain its previous model/texture.
+	s_modelResourceCount = 0;
 	s_regionPlacementsTruncated = false;
 	s_regionResourcesTruncated = false;
 	s_regionConvertedSlotCount = 0;
@@ -2309,6 +2364,89 @@ bool AssetCatalogGame_PrepareRegionDraw(char* status, int statusCapacity)
 	return true;
 }
 
+static ResidentRegionState ReadResidentRegionState()
+{
+	ResidentRegionState state = {};
+	for (int i = 0; i < 4; ++i)
+		state.regions[i] = regions_unpacked[i];
+	state.area = LoadedArea;
+	state.modelRevision = s_regionModelRevision;
+	memcpy(state.pageSlots, tpageslots, sizeof(state.pageSlots));
+	memcpy(state.loadedPages, tpageloaded, sizeof(state.loadedPages));
+	return state;
+}
+
+static bool SameResidentRegionState(const ResidentRegionState& a, const ResidentRegionState& b)
+{
+	return a.area == b.area && a.modelRevision == b.modelRevision &&
+		memcmp(a.regions, b.regions, sizeof(a.regions)) == 0 &&
+		memcmp(a.pageSlots, b.pageSlots, sizeof(a.pageSlots)) == 0 &&
+		memcmp(a.loadedPages, b.loadedPages, sizeof(a.loadedPages)) == 0;
+}
+
+bool AssetCatalogGame_PrepareRegionDraw(char* status, int statusCapacity)
+{
+	if (!status || statusCapacity <= 0 || !s_regionDrawRequested)
+		return false;
+	const ResidentRegionState current = ReadResidentRegionState();
+	s_reusableRegionResources.clear();
+	s_regionReusedSlotCount = 0;
+	if (s_preparedRegionStateValid && s_regionPrepareSucceeded &&
+		current.area == s_preparedRegionState.area &&
+		memcmp(current.pageSlots, s_preparedRegionState.pageSlots, sizeof(current.pageSlots)) == 0 &&
+		memcmp(current.loadedPages, s_preparedRegionState.loadedPages, sizeof(current.loadedPages)) == 0)
+	{
+		s_reusableRegionResources.assign(s_modelResources, s_modelResources + s_modelResourceCount);
+	}
+	s_preparedRegionState = current;
+	s_preparedRegionStateValid = true;
+	s_regionPrepareSucceeded = PrepareResidentRegionDraw(status, statusCapacity);
+	snprintf(s_regionPrepareError, sizeof(s_regionPrepareError), "%s", s_regionPrepareSucceeded ? "" : status);
+	s_reusableRegionResources.clear();
+	s_regionDrawRevision++;
+	printInfo("AssetCatalog: native publication %u reuses %d converted slots\n",
+		s_regionDrawRevision, s_regionReusedSlotCount);
+	return s_regionPrepareSucceeded;
+}
+
+int AssetCatalogGame_UpdateRegionDraw(char* status, int statusCapacity)
+{
+	if (!status || statusCapacity <= 0)
+		return -1;
+	status[0] = '\0';
+	if (!s_regionDrawRequested)
+		return 0;
+	if (!AssetCatalog_IsValid() || !cell_objects || !cell_ptrs || !cells)
+		return 1;
+	// UpdateSpoolPC is synchronous only with a local level file. Never inspect
+	// the asynchronously rewritten CD buffers through this compatibility bridge.
+#if USE_PC_FILESYSTEM
+	extern char g_CurrentLevelFileName[64];
+	if (g_CurrentLevelFileName[0] == '\0')
+#endif
+	{
+		snprintf(status, statusCapacity, "native region streaming requires a local level file");
+		return -1;
+	}
+	if (spoolactive || LoadingArea)
+		return 1;
+	for (int i = 0; i < 4; ++i)
+		if (loading_region[i] != -1)
+			return 1;
+	const ResidentRegionState current = ReadResidentRegionState();
+	if (s_preparedRegionStateValid && SameResidentRegionState(current, s_preparedRegionState))
+	{
+		if (!s_regionPrepareSucceeded)
+			snprintf(status, statusCapacity, "%s", s_regionPrepareError);
+		return s_regionPrepareSucceeded ? 0 : -1;
+	}
+	const bool success = AssetCatalogGame_PrepareRegionDraw(status, statusCapacity);
+	printInfo("AssetCatalog: native resident revision %u: regions [%d,%d,%d,%d], area %d: %s\n",
+		s_regionDrawRevision, current.regions[0], current.regions[1], current.regions[2],
+		current.regions[3], current.area, status);
+	return success ? 0 : -1;
+}
+
 #else // !_WIN32
 
 bool AssetCatalogGame_ReconcileLevel(char* status, int statusCapacity)
@@ -2361,6 +2499,13 @@ bool AssetCatalogGame_PrepareRegionDraw(char* status, int statusCapacity)
 		snprintf(status, statusCapacity, "Region draw preparation is currently available on Windows only");
 
 	return false;
+}
+
+int AssetCatalogGame_UpdateRegionDraw(char* status, int statusCapacity)
+{
+	if (status && statusCapacity > 0)
+		status[0] = '\0';
+	return 0;
 }
 
 #endif // _WIN32
@@ -2573,6 +2718,18 @@ bool AssetCatalogGame_RegionDrawRequested(void)
 
 unsigned int AssetCatalogGame_LevelGeneration(void)
 {
+	return 0;
+}
+
+unsigned int AssetCatalogGame_RegionDrawRevision(void)
+{
+	return 0;
+}
+
+int AssetCatalogGame_UpdateRegionDraw(char* status, int statusCapacity)
+{
+	if (status && statusCapacity > 0)
+		status[0] = '\0';
 	return 0;
 }
 

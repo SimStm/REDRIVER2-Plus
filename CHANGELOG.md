@@ -10,6 +10,10 @@ where release policy permits it.
 
 ### Changed
 
+- Native resident-world snapshots now refresh after local filesystem sector/area
+  streaming, retaining unchanged converted/GPU resources and retiring obsolete keys.
+  Dense-sector submission supports the source inventory's 16384-placement bound;
+  loading clears the window instead of drawing the renderer's test fixture.
 - Graphics startup reads `[render] presentationFps` from `config.ini`; omitted
   developer override keys retain the baseline, including the presentation cap.
 - Diligent material filtering follows the live bilinear setting for resident

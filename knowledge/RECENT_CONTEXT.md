@@ -50,10 +50,23 @@ Actual base-config inheritance startup logged cap=144 when config.ini specified 
 the developer FPS key was omitted. Both INI files restored byte-for-byte afterwards.
 Release_dev `-opengl` mission 1 startup passed (OpenGL 3.3.0). Sessions stopped; VS
 restored to Release_dev_native|x64. Generated native debugger no longer auto-opens F9.
-Next: interactive F9/input/display verification where available; native draw distance,
-world materials/model coverage and streaming beyond the initial region. Registry/native
-submission currently invalidates on level generation, not camera region changes: cached
-6740 placements are not whole-city streaming. No playable actor yet.
+Resident streaming now observes local-file sectors, area, model revisions and texture-page
+residency. Publications rebuild transforms/LOD provenance, retain unchanged GPU keys and
+retire removed keys; loading clears without the renderer fixture. Source/native placement
+bounds agree at 16384. ATTRACT.400 changed to regions [198,199,214,215] (8594 placements,
+206 resources) then [198,199,182,183] (10167/185); zero conversion failures/truncations.
+Reused 152/166 conversions. Initial synchronous reconversion dropped 107 ticks; reuse
+reduced this to 37 in the second run, still unacceptable for acceptance. New content must
+be prepared without blocking the game loop. Local-file spooling is synchronous; no CD-thread
+buffers are inspected. Inspector 16 suites passed, native smoke 1213/0 including the last
+instance at capacity and clear-frame diagnostics. Evidence under native-performance/
+resident-refresh-*. Final VS Release_dev_native|x64 and Release_dev|x64 builds passed;
+OpenGL mission 1 startup passed. Debug args restored byte-for-byte; VS native x64 selected.
+RenderDoc replay/export inspected: 5904 draws, zero replay messages; capture added 13
+dropped ticks (runtime total 50), separate from the 37 transition drops above.
+Next: async/budgeted content preparation with immutable source ownership, then draw
+distance/world corrections and player vehicle/on-foot presentation. No playable
+actor or whole-city acceptance yet; interactive F9/input/display validation remains open.
 
 - Fixed dynamic constant updates (Map/Discard), wired configured VSync and added
   conservative AABB culling against the exact homogeneous MVP. Local mission 1 baseline

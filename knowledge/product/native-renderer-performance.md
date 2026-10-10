@@ -108,3 +108,23 @@ a matched-state parity comparison.
 Window 0 selection/FPS overlay is not yet verified.
 Only one SDL game window is created in source. Native parity, dynamic actors, HUD/menus,
 VFX, lighting and full streaming remain open. No E03 acceptance is implied.
+
+## Resident sector refresh (2026-10-10)
+
+The local-file bridge observes completed sector IDs, loaded area, model registration
+revisions and page residency. Changes republish placements and resource keys. It does
+not schedule gameplay IO or read asynchronous CD-thread buffers. Reused model/shared-base
+revisions and unchanged page/area state permit conversion reuse; content-addressed GPU
+keys survive while removed keys are retired. Loading clears with the native overlay.
+The bounded source/native instance capacity is 16384, rather than mission 1's 8192.
+
+ATTRACT.400 reached 8594/10167 placements and 206/185 resources without truncation or
+conversion failures. The second run reused 152/166 converted slots. Tick drops fell from
+107 to 37 over the observed two transitions, but synchronous new conversions still block
+the loop. Async content preparation is required before driving/streaming acceptance.
+Native smoke passes 1213 checks, including a visible instance at the final capacity index
+and loading-frame counters; all 16 inspector suites pass. These tests do not establish
+whole-city coverage or deterministic replay parity through conversion stalls.
+The final RenderDoc replay/export has 5904 draws and zero replay messages; the PNG
+shows the new-sector street/buildings. Capture introduced 13 additional dropped ticks
+(runtime total 50), separate from the 37 drops observed across the two transitions.

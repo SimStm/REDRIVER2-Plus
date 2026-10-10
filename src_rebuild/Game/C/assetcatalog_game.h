@@ -122,6 +122,8 @@ typedef struct AssetCatalogGameModelResource
 	char glbPath[CONVERSION_CACHE_PATH_CAPACITY];
 	char contentHash[CONVERSION_CACHE_HASH_CAPACITY];
 	unsigned long long sourceHash;
+	unsigned int modelRevision;
+	unsigned int baseModelRevision;
 } AssetCatalogGameModelResource;
 
 /* One bounded resident placement of the native-draw target model slot. The
@@ -202,9 +204,8 @@ int AssetCatalogGame_GetDrawPlacements(AssetCatalogGameDrawPlacement* out, int c
    instance bound (NATIVE_MAX_INSTANCES); the bridge asserts the relation so a
    change to either limit fails loudly instead of truncating silently. Reaching
    the bound is a named truncation diagnostic, never an overflow. Sized to the
-   whole resident region (E03 visual-parity P4): the E02 inventory counts 6740
-   unique placements, so 8192 covers them with headroom. */
-#define ASSET_CATALOG_GAME_MAX_REGION_PLACEMENTS 8192
+   full source inventory bound, including sectors denser than mission 1. */
+#define ASSET_CATALOG_GAME_MAX_REGION_PLACEMENTS 16384
 
 /* True when the developer `-drawregion` flag requested the full resident
    region's native draw. The flag takes no value. */
@@ -222,10 +223,19 @@ bool AssetCatalogGame_RegionDrawRequested(void);
    diagnostic. A declared LOD variant or high-detail sibling that is not
    resident, or whose conversion fails, falls back to its placement's detail key
    with a named (once) diagnostic. Reuses the level inventory walker without the
-   report path and never re-decodes a source model at draw time. Warn-only: a
+   report path; stable frames consume the published store without decoding. Warn-only: a
    failure leaves a named diagnostic in `status` and never interrupts the game.
    Windows-only like the other developer reports. */
 bool AssetCatalogGame_PrepareRegionDraw(char* status, int statusCapacity);
+
+/* Refreshes the converted resident snapshot after local filesystem streaming.
+   Returns 0 when ready, 1 while loading, -1 on preparation failure. Does not
+   schedule gameplay IO. CD-thread streaming is not read by this adapter. */
+int AssetCatalogGame_UpdateRegionDraw(char* status, int statusCapacity);
+
+/* Changes on every attempted publication, including an explicit empty/error
+   snapshot. Independent of the level generation and camera/LOD selection. */
+unsigned int AssetCatalogGame_RegionDrawRevision(void);
 
 /* Number of placements collected by AssetCatalogGame_PrepareRegionDraw (0 when
    none were collected or the flag is off). */

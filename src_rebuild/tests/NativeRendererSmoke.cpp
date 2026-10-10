@@ -1736,6 +1736,23 @@ static void TestInstanceResidencyAndDiagnostics()
 	Check(submitted == 2 && drawn == 1 && skipped == 0,
 		"frustum culling excludes a draw without reporting a missing resource");
 
+	// A dense streamed sector must retain objects beyond the old 8192 bound.
+	// Only the final instance is visible, so clipping/truncating the tail fails
+	// an actual pixel comparison rather than just checking an advertised limit.
+	std::vector<NativeInstance> dense(NATIVE_MAX_INSTANCES, visibleAndOutside[1]);
+	dense.back() = instance;
+	Check(NativeRenderer_SetInstances(dense.data(), (int)dense.size(), error, sizeof(error)) == 1,
+		"a full dense sector is submitted without truncation");
+	Check(NativeRenderer_RenderSceneToRGBA(culledFrame, 64, 64, error, sizeof(error)) == 1,
+		"dense sector rendered with its final instance visible");
+	Check(memcmp(culledFrame, reloaded, sizeof(culledFrame)) == 0,
+		"the final dense-sector instance preserves the expected visible pixels");
+	NativeRenderer_GetInstanceStats(&submitted, &drawn, &skipped, &resident);
+	Check(submitted == NATIVE_MAX_INSTANCES && drawn == 1 && skipped == 0,
+		"the entire dense sector is retained with only its visible object drawn");
+	Check(NativeRenderer_SetInstances(dense.data(), NATIVE_MAX_INSTANCES + 1, error, sizeof(error)) == 0 && error[0],
+		"submission beyond the dense-sector bound is explicitly rejected");
+
 	// Acceptance (d): an unregistered key is skipped with a named diagnostic and
 	// the placeholder is NOT drawn.
 	NativeInstance missing;
@@ -2118,6 +2135,10 @@ int main()
 	for (int i = 0; i < 3 && presented; ++i)
 		presented = NativeRenderer_RenderClearAndPresent(0.1f, 0.2f, 0.3f, 1.0f, error, sizeof(error)) == 1;
 	Check(presented, "three frames cleared and presented");
+	NativeFrameStats loadingStats = {};
+	NativeRenderer_GetFrameStats(&loadingStats);
+	Check(loadingStats.drawCalls == 0 && loadingStats.culledInstances == 0 && loadingStats.swapChainBuffers > 0,
+		"clear-only loading frames report zero scene draws and actual buffers");
 
 	TestContentUpload();
 	TestTriangleDraw();

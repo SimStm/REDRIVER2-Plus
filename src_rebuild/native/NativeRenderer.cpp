@@ -1271,15 +1271,29 @@ int NativeRenderer_RenderClearAndPresent(float red, float green, float blue, flo
 	}
 
 	const float clearColor[4] = { red, green, blue, alpha };
+	const double drawStart = FrameMilliseconds();
+	g_frameDrawCalls = 0;
+	g_frameCulledInstances = 0;
 	g_context->SetRenderTargets(1, &renderTarget, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
 	g_context->ClearRenderTarget(renderTarget, clearColor, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+	const double drawEnd = FrameMilliseconds();
 	if (g_overlayHandler && !g_overlayHandler(g_context.RawPtr(), renderTarget))
 	{
 		SetError(error, errorCapacity, "the native developer overlay could not be drawn");
 		return 0;
 	}
+	const double overlayEnd = FrameMilliseconds();
 	g_context->Flush();
+	const double flushEnd = FrameMilliseconds();
 	g_swapChain->Present(g_syncInterval);
+	const double presentEnd = FrameMilliseconds();
+	g_frameStats.drawMilliseconds = drawEnd - drawStart;
+	g_frameStats.overlayMilliseconds = overlayEnd - drawEnd;
+	g_frameStats.flushMilliseconds = flushEnd - overlayEnd;
+	g_frameStats.presentMilliseconds = presentEnd - flushEnd;
+	g_frameStats.drawCalls = 0;
+	g_frameStats.culledInstances = 0;
+	g_frameStats.swapChainBuffers = g_swapChain->GetDesc().BufferCount;
 	return 1;
 }
 

@@ -119,7 +119,7 @@
    headroom, and the E02 inventory counts 6740 unique placements, so the
    per-frame instance bound covers them too. */
 #define NATIVE_MAX_RESOURCES 1024
-#define NATIVE_MAX_INSTANCES 8192
+#define NATIVE_MAX_INSTANCES 16384
 #define NATIVE_RESOURCE_KEY_CAPACITY 160
 #define NATIVE_INSTANCE_DIAGNOSTIC_CAPACITY 256
 

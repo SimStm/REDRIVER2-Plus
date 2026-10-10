@@ -584,6 +584,8 @@ static int s_regionDrawHighDetailSelectedCount = 0;
 // SpoolSYNC -> Prepare*), so the bridge resets on a generation change rather
 // than relying on the registry being transiently empty.
 static unsigned int s_regionDrawGeneration = 0;
+static unsigned int s_regionDrawRevision = 0;
+static int s_regionDrawRefreshFailed = 0;
 static unsigned int s_nativeDrawGeneration = 0;
 
 // E1 diagnosis: RED2_NATIVE_REGION_DELAY_MS defers the region prepare out of
@@ -916,12 +918,47 @@ static int NativeRenderer_RegionDrawPrepareDeferred(void)
 	return 1;
 }
 
-// Full-region submit: register every converted resource once, build the full
-// instance list once from the prepared region placements, and re-submit it only
-// when the per-frame LOD selection changes. The placements are camera-independent
-// world transforms, so they are never re-collected; only the selected resourceKey
-// changes (E03 visual-parity P9). A level-change generation bump drops the stale
-// list and registrations.
+// Retire keys absent from the new publication. Resource keys include converted
+// content, so unchanged GPU meshes/textures survive a sector refresh. Diligent
+// owns deferred destruction of resources referenced by submitted GPU commands.
+static void NativeRenderer_RefreshRegionDrawState(void)
+{
+	NativeRenderer_ClearInstances();
+	s_regionDrawInstancesSet = 0;
+	int kept = 0;
+	for (int old = 0; old < s_regionDrawRegisteredCount; ++old)
+	{
+		int resident = 0;
+		for (int current = 0; current < AssetCatalogGame_GetModelResourceCount(); ++current)
+		{
+			char key[CONVERSION_CACHE_KEY_CAPACITY];
+			if (AssetCatalogGame_GetModelResourceAt(current, key, sizeof(key), NULL, 0, NULL) &&
+				!strcmp(key, s_regionDrawRegisteredKeys[old]))
+			{
+				resident = 1;
+				break;
+			}
+		}
+		if (!resident)
+			NativeRenderer_UnregisterResource(s_regionDrawRegisteredKeys[old]);
+		else
+		{
+			if (kept != old)
+				memcpy(s_regionDrawRegisteredKeys[kept], s_regionDrawRegisteredKeys[old], CONVERSION_CACHE_KEY_CAPACITY);
+			++kept;
+		}
+	}
+	s_regionDrawRegisteredCount = kept;
+	s_regionDrawRegistered = 0;
+	s_regionDrawKeysBuilt = 0;
+	s_regionDrawSelectionValid = 0;
+	s_regionDrawSubmittedCount = 0;
+	s_regionDrawReported = 0;
+	s_regionDrawValidFrames = 0;
+}
+
+// World-space transforms are rebuilt for each resident publication; camera/LOD
+// selection remains per frame. Loading never draws a stale barrel snapshot.
 static int NativeRenderer_DevRegionDrawSubmit(const float view[16])
 {
 	(void)view;
@@ -930,6 +967,19 @@ static int NativeRenderer_DevRegionDrawSubmit(const float view[16])
 	// run it here once the delay elapses. Until then there is nothing to submit.
 	if (NativeRenderer_RegionDrawPrepareDeferred())
 		return 0;
+
+	char refreshStatus[512];
+	const int refresh = AssetCatalogGame_UpdateRegionDraw(refreshStatus, sizeof(refreshStatus));
+	if (refresh != 0)
+	{
+		NativeRenderer_ClearInstances();
+		s_regionDrawSelectionValid = 0;
+		if (refresh < 0 && !s_regionDrawRefreshFailed)
+			PsyX_Log_Warning("native region draw: publication unavailable: %s\n", refreshStatus);
+		s_regionDrawRefreshFailed = refresh < 0;
+		return 0;
+	}
+	s_regionDrawRefreshFailed = 0;
 
 	// A level change bumps the generation. Reset before re-registering so the
 	// previous level's instances and resources never draw under the new camera,
@@ -941,6 +991,12 @@ static int NativeRenderer_DevRegionDrawSubmit(const float view[16])
 	{
 		NativeRenderer_ResetRegionDrawState();
 		s_regionDrawGeneration = generation;
+	}
+	const unsigned int revision = AssetCatalogGame_RegionDrawRevision();
+	if (revision != s_regionDrawRevision)
+	{
+		NativeRenderer_RefreshRegionDrawState();
+		s_regionDrawRevision = revision;
 	}
 
 	if (AssetCatalogGame_GetModelResourceCount() <= 0)
@@ -969,7 +1025,14 @@ static int NativeRenderer_DevRegionDrawSubmit(const float view[16])
 				continue;
 			}
 
-			if (s_regionDrawRegisteredCount < ASSET_CATALOG_GAME_MAX_MODEL_RESOURCES)
+			int known = 0;
+			for (int registered = 0; registered < s_regionDrawRegisteredCount; ++registered)
+				if (!strcmp(key, s_regionDrawRegisteredKeys[registered]))
+				{
+					known = 1;
+					break;
+				}
+			if (!known && s_regionDrawRegisteredCount < ASSET_CATALOG_GAME_MAX_MODEL_RESOURCES)
 				snprintf(s_regionDrawRegisteredKeys[s_regionDrawRegisteredCount++],
 					CONVERSION_CACHE_KEY_CAPACITY, "%s", key);
 		}
@@ -1651,7 +1714,10 @@ static void NativeRenderer_Frame()
 		1000.0 / SDL_GetPerformanceFrequency();
 
 	char error[256];
-	if (!NativeRenderer_RenderScene(error, sizeof(error)))
+	const int presented = AssetCatalogGame_RegionDrawRequested() && devDrawInstances == 0
+		? NativeRenderer_RenderClearAndPresent(0.0f, 0.0f, 0.0f, 1.0f, error, sizeof(error))
+		: NativeRenderer_RenderScene(error, sizeof(error));
+	if (!presented)
 	{
 		// Edge-triggered: log the first failure of a streak only, so a
 		// persistent failure does not flood the log; recovery reports the
