@@ -13,7 +13,7 @@ tags: [okf, status]
 
 ## Branch and adopted plan
 
-`feat/new-engine` checkpoint `85cf0a82` is committed/pushed; native progress is documented below.
+`feat/new-engine` checkpoint `34e104ed` is committed/pushed; native progress is documented below.
 No migration-stage acceptance follows from publication. Serena selects the C++ language
 server; generated state and proprietary assets/SDKs are not included.
 
@@ -127,7 +127,8 @@ accepted.
   F9 draw distance is enabled with the original cell-count/PVS/event meaning. Selection
   tests 15/0, all 18 suites passed. At tick 30, 441/1800 selects 155/233 instances with
   the same camera; GPU captures 308/461 draws, zero messages. Independent native selection,
-  split-screen and full event-mode coverage remain open. See the performance product note.
+  split-screen and full event-mode coverage remain open. The next material correction is
+  per-instance building shading: the current bake fixes rotation at zero; source drawing does not.
 - Native performance follow-up (2026-10-10): dynamic constants use Map/Discard, window
   Present honors configured VSync, and conservative homogeneous AABB culling removes
   invisible instance draws. Opt-in `RED2_NATIVE_PERF=1` records CPU phases, draw/cull counts

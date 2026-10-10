@@ -3,7 +3,7 @@ type: Discussion
 title: Engine migration decision
 status: adopted
 created: 2026-10-08
-updated: 2026-10-09
+updated: 2026-10-10
 tags: [okf, architecture, engine]
 ---
 
@@ -198,6 +198,35 @@ default-backend change, performance fix or migration-stage acceptance is authori
 by this recommendation. See [E03](../../engine-migration/stages/03-diligent-playable-slice.md)
 and [E07](../../engine-migration/stages/07-remove-psycross.md).
 
+## Native material follow-up (2026-10-10)
+
+Inspection at `34e104ed` identifies two distinct remaining E03 material contracts:
+
+- `assetcatalog_game.c::LegacyComputeWorldColors` bakes normal-indexed building
+  colours at rotation zero, while `draw.c::PlotBuildingModel` and the subdivided
+  path use `r = (rot >> 3) * 4` and `f4colourTable[(r - th) & 31]`. The same native
+  resource is shared by differently rotated placements, with no per-instance
+  shading metadata/palette lookup. Geometry rotation alone cannot correct that
+  baked colour. This is source evidence of missing orientation semantics, not a
+  quantified contribution to full-image error. Correct this next with explicit
+  presentation metadata; preserve immutable shared geometry and gameplay state.
+- `texturebake.c::TextureBake_BakeModel` reads original CPU VRAM and embeds whole
+  page/CLUT images. It does not resolve HD manifest pixels.
+  `HdTextureOverrides.cpp::EnsureImageLoaded` couples PNG loading to
+  `PsyX_CreateRGBATexture`, which is unavailable in window-only mode; the saved
+  native startup log contains named compatibility-texture errors. A native path
+  needs GPU-independent owned pixels, palette/mod precedence, sub-rectangle UV
+  mapping, bounded memory and invalidation when enabled mods/pixels change.
+  `ResidentRegionState` currently tracks sectors/models/pages, not override state.
+  The inspected local developer setting has `hdTextureOverrides=0`; this does not
+  establish HD overrides as the cause of the last original-texture differences.
+
+Recommendation: orientation-aware building shading before the next controlled
+world comparison; implement native override consumption as a separate coherent
+material block. Neither correction is implemented by this diagnostic record.
+Static coverage, player vehicle/on-foot and city expansion remain the adopted
+goal; no E03 or full-game acceptance follows from the visibility checkpoint.
+
 ## Open implementation decisions
 
 E00 pins SDKs/compiler/targets and inventories remaining consumers; E02 chooses
@@ -206,6 +235,11 @@ regional/replay compatibility and backlog policy. Later physics changes require
 separate game/replay versioning. No unresolved choice authorizes a silent fallback.
 
 ## History
+
+2026-10-10 native material diagnosis: cell/event visibility was published as
+`34e104ed`; source inspection separated fixed-zero building shading from missing
+native HD override consumption. Recorded the next correction and its constraints;
+no new material renderer, runtime validation or stage acceptance is claimed.
 
 2026-10-09 ODT-to-GLB spike follow-up: bounded external spike produced
 validator-clean GLBs (car clean/low, mini-level) from ODT exports of the local

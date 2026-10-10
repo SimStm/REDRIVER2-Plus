@@ -69,7 +69,8 @@ Native draw distance uses preserved cell/list aliases and DrawMap's approved cel
 F9 control enabled, tests 15/0 (18 suites pass). Tick 30 selects 155/233 instances at
 441/1800 with identical camera; GPU captures 308/461 draws, zero messages. Replay through
 tick 2128 dropped zero ticks; sector swaps retained 108/38 frames, zero empty frames.
-Next: validate remaining world materials/models and visual prefetch, then player vehicle/on-foot.
+Published cell visibility as `34e104ed`. Next: correct per-instance building shading (current
+bake uses rotation zero), then remaining materials/models, prefetch and player vehicle/on-foot.
 Independent native PVS/streaming, split-screen and interactive F9/input/display remain open.
 
 - Fixed dynamic constant updates (Map/Discard), wired configured VSync and added
