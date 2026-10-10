@@ -8,7 +8,7 @@ tags: [okf, status, agents]
 # Recent engineering context
 
 > Updated: 2026-10-09.
-> Read the handoff below first: E03 Block 2 (2a/2.1/2.4/2.5, item 3, item 4) and E04 A1; next the multi-primitive writer extension.
+> Read the handoff below first: E03 Block 2 (2a/2.1/2.4/2.5, item 3, item 4, multi-primitive A+B) and E04 A1; next E04 consumer slices.
 > Older task narratives are condensed; their change records
 > hold the detail.
 
@@ -175,22 +175,67 @@ fixed ticks independent of presentation FPS and CPU speed.
   the vertical correction). This proves the end-to-end pipeline executes and rasterizes the converted
   resource at its real placements with the game camera; it does NOT prove on-screen shape/region beyond
   what the offscreen suite establishes, because the selected model is a micro-prop (POSITION bounds
-  134x130x68 raw ~3.2 cm) and larger buildings are multi-submesh. Limits: one slot + bounded K;
-  single-primitive meshes only - bigger buildings fail with the named `multiple-submeshes-unsupported`, so
-  the multi-primitive writer extension is the next mandatory item before any "visible building/region"
-  claim; unreferenced slots have no placements by data; FOV 1.0472 native vs the game's 0.9265 is deferred;
+  134x130x68 raw ~3.2 cm). Limits (single-primitive restriction lifted by the multi-primitive follow-up):
+  one slot + bounded K; unreferenced slots have no placements by data; FOV 1.0472 native vs the game's
+  0.9265 is deferred;
   the GLB node transform is ignored in instance mode (latent, resources are identity today); no
   textures/LOD/streaming/cars/animation/performance. Gate: attempt 1 verdict was commit-conditional on F-A
   (vertical) verification/fix and the docs; F-A and F-C/F-D were remediated and verified; this
   documentation update resolves F-B.
+- E03 multi-primitive GLB follow-up (A+B, 2026-10-10): `utils/GltfWriter.{h,cpp}` and
+  `utils/GltfLoader.{h,cpp}` add `GltfPrimitiveData`/`GltfMultiMeshData` records and
+  `Gltf_WriteFileMulti`/`Gltf_LoadFileMulti`. Deterministic layout: one shared BIN buffer;
+  per primitive POSITION, then NORMAL/TEXCOORD_0 when present, then the index list; material
+  i = primitive i; accessors numbered in the same order. Strict validation before writing (no
+  positions, partial triangle, out-of-range index -> named errors, partial file removed). The
+  single-primitive API is unchanged and byte-identical by construction (deterministic `%.9g`
+  floats) and empirically verified (the pre-change writer was compiled and bytes compared; a
+  dedicated byte-identity test was added with the gate follow-ups). The single loader keeps
+  its historical tolerant, image-retaining contract and reads primitive 0 of a multi file;
+  the multi loader is strict and rejects texture references with a named error.
+  `WorldMeshBuilder_BuildMulti` maps each `SourceMesh` submesh to one `GltfPrimitiveData`
+  (flat per-triangle normals; per-submesh base colour = mean of the stored face colours or
+  neutral white for PL records) and validates a contiguous, ordered, complete partition of
+  the index list (deterministic, named errors, zero partial output); the single builder keeps
+  `MULTIPLE_SUBMESHES_UNSUPPORTED` for compatibility and the game call site uses `BuildMulti`.
+  `native/NativeRenderer` represents a multi-primitive resource (`ScenePrimitive` with its own
+  vertex/index buffers, window+offscreen SRBs and base colour; one shared white texel per
+  item) and an instance draws every primitive (UpdateBuffer -> Commit -> Draw per primitive);
+  `drawn` still counts instances and the placeholder/content/no-fallback semantics are
+  unchanged. `Game/C/assetcatalog_game.c` `ConvertModelSlot` builds with `BuildMulti` and
+  publishes via a local transactional `PublishMultiMesh` (reuse/tmp/verify/rename mirroring
+  `AssetConverter`; same error codes; log line and named diagnostics unchanged). Recorded
+  follow-ups: promote `PublishMultiMesh` into `AssetConverter` (it duplicates ~80 lines and
+  its multi verify checks only the primitive count), and `MaterialReferencesTexture` does not
+  cover texture references expressed via `extensions`. Capacity change: the renderer's
+  `LoadContent`/`RegisterResource` now go through `Gltf_LoadFileMulti`, which rejects texture
+  references, so a single-record GLB with an embedded base-colour image is no longer accepted
+  by the renderer (named error); the E02 writer never embeds images, so the world-mesh
+  pipeline is unaffected (a boundary check was added to the smoke with the gate follow-ups).
+  Evidence: all inspector suites green (`GltfRoundTripTests` 116 checks; `WorldMeshBuilderTests`
+  211; others unchanged); native renderer smoke 154 checks, 0 failures;
+  `Release_dev`/`Release_dev_native` builds exit 0. Real runs:
+  slot 195 (the pack's largest model, span 2044 B) now converts as multi-submesh (it previously
+  failed `multiple-submeshes-unsupported`) but is unreferenced (no placements); slot 1150
+  (referenced) published a GLB parsed as 3 primitives / 3 materials, 22 placements, submitted
+  22 / drawn 22 / skippedUnresolved 0 / residentResources 1, offscreen 640x360 with 42
+  non-clear pixels; the model is a ~0.3 m sign (bounds 916x1265x56 raw) and the pack is modular
+  (max span 2044 B) with no large single building meshes. Honest wording: the bounded run
+  proves the multi-primitive pipeline end-to-end (conversion, publication, registration, draw
+  of all three primitives, 22/22 instances, one resident resource) with the game camera;
+  per-primitive correctness is established by the offscreen suite; it does not prove visual
+  fidelity or a large visible building, and there is no texture/lighting parity.
+  Must-not-claim: no "region/building renders correctly"; the renderer no longer accepts
+  embedded-image GLBs; no all-model/all-slot coverage; no
+  LOD/streaming/cars/animation/performance; single-vs-multi byte identity is by construction
+  plus empirical verification and the dedicated test; dev runs are not visual acceptance.
 
-**Current step: E03 Block 2 item 4 done; multi-primitive writer extension next.**
-E03 Block 2 (2a/2.1/2.4/2.5, item 3 and item 4) is complete and gate-approved on
-code (item 4 attempt 1 was commit-conditional on F-A and the docs; F-A/F-C/F-D are
-remediated and this update resolves F-B); E04 A1 is complete (below). Next mandatory
-item: the multi-primitive writer extension (larger buildings currently fail
-`multiple-submeshes-unsupported`), then E04 remaining consumer slices. E03 still has
-no playable original-world native slice, and no game consumers are migrated.
+**Current step: E03 multi-primitive follow-up done; E04 consumer slices next.**
+E03 Block 2 (2a/2.1/2.4/2.5, item 3, item 4 and the multi-primitive follow-up) is
+complete; item 4 attempt 1 was commit-conditional on F-A and the docs, and F-A/F-C/F-D are
+remediated (this update resolves F-B); E04 A1 is complete (below). Next: E04 remaining
+consumer slices. E03 still has no playable original-world native slice, and no game
+consumers are migrated.
 Evidence and boundaries:
 - Fix-5 originally reported AudioContractTests 221/0 and AudioServiceSmoke 49/0;
   the final smoke follow-up is 57/0. Implemented
@@ -269,25 +314,24 @@ Evidence and boundaries:
   limits: [inventory evidence](engine-migration/e02/chicago-inventory.md).
 
 **Remaining before full acceptance:**
-1. E03 Block 2 — item 4 (per-instance draw + game camera) is done; the next
-   mandatory item is the multi-primitive writer extension (larger buildings
-   currently fail `multiple-submeshes-unsupported`), then the original-world
-   conversion seam (blocked on the E02 city conversion slice). Block 2a loader span
-   capture, `sourceObjectIndex` identity, ptype coverage, the camera/unit/winding
-   fixture, B2.4 CPU texture decode, item 3 and item 4 are done.
+1. E03 Block 2 — item 4 (per-instance draw + game camera) and the multi-primitive
+   follow-up (A+B) are done; the original-world conversion seam remains (blocked on
+   the E02 city conversion slice). Block 2a loader span capture, `sourceObjectIndex`
+   identity, ptype coverage, the camera/unit/winding fixture, B2.4 CPU texture decode,
+   item 3, item 4 and the multi-primitive writer are done.
 2. E04 remaining consumer slices — A1 (FESound routing + service lifecycle) is
    complete; migrate the remaining audio consumers.
 3. E02 — other cities/variants and dynamic/streamed categories (E06 coverage);
    debug configurations are not wired (only the Release Diligent libraries exist).
 
-**Next concrete action:** implement the E03 multi-primitive writer extension and
-the remaining E04 consumer slices as separately scoped work. Gate approval does not
-authorize audible acceptance. E05/E06 remain pending.
+**Next concrete action:** implement the remaining E04 consumer slices as separately
+scoped work. Gate approval does not authorize audible acceptance. E05/E06 remain
+pending.
 
 **Commands:** build `Release_dev|x64` or `Release_dev_native|x64` with
 `premake5.exe vs2022` + MSBuild (env `SDL2_DIR`/`OPENAL_DIR`/`JPEG_DIR`,
 `RED2_BUILD_DIR=build_e00`, `RED2_BIN_DIR=bin/Release_dev`);
-`pwsh -NoProfile -File scripts/run_native_renderer_smoke.ps1` (130 checks);
+`pwsh -NoProfile -File scripts/run_native_renderer_smoke.ps1` (154 checks);
 Previous smoke commands/results are historical where noted; do not treat bounded
 SDK-isolated service approval as consumer or audible correctness.
 
@@ -306,18 +350,19 @@ Uncommitted after that checkpoint: the E02 inventory; the E04 blocks
 (`Game/C/sounddecode.{h,c}`, `Game/C/sound.c`, `tests/AudioServiceSmoke.cpp`,
 `scripts/run_audio_service_smoke.ps1`) and E04 A1
 (`Game/C/audiofmod_adapter.{h,c}`, `redriver2_psxpc.cpp`); the E03 Block 1-4
-decoder, probe, world-mesh builder and item-4 draw path
+decoder, probe, world-mesh builder, item-4 draw path and multi-primitive writer
 (`utils/SourceModelDecoder.{h,c}`, `utils/WorldMeshBuilder.{h,cpp}`,
+`utils/GltfWriter.{h,cpp}`, `utils/GltfLoader.{h,cpp}`,
 `utils/NativeInstanceTransform.{h,c}`, `utils/NativeCameraView.{h,c}`,
 `Game/C/modelptypeprobe.{h,c}`, `Game/C/assetcatalog*`, `Game/C/models.*`,
 `Game/C/spool.c`, `Game/C/main.c`, `native/NativeRenderer.*`,
 `tests/SourceModelDecoderTests.cpp`, `tests/ModelPtypeProbeTests.cpp`,
-`tests/WorldMeshBuilderTests.cpp`, `tests/AssetCatalogTests.cpp`,
-`tests/NativeRendererSmoke.cpp` plus the new NativeInstanceTransform/NativeCameraView
-test suites, `scripts/run_inspector_tests.ps1`, `tests/README.md`); and the suite
-registration/README plus the status/handoff/changelog updates. The ignored FMOD SDK
-is present locally at `src_rebuild/dependencies/fmod/core`; its local version
-metadata identifies 2.03.15.
+`tests/WorldMeshBuilderTests.cpp`, `tests/GltfRoundTripTests.cpp`,
+`tests/AssetCatalogTests.cpp`, `tests/NativeRendererSmoke.cpp` plus the new
+NativeInstanceTransform/NativeCameraView test suites, `scripts/run_inspector_tests.ps1`,
+`tests/README.md`); and the suite registration/README plus the status/handoff/changelog
+updates. The ignored FMOD SDK is present locally at
+`src_rebuild/dependencies/fmod/core`; its local version metadata identifies 2.03.15.
 
 Note: the goal-mode auto-continue safety limit is plugin-side; adjust it in the
 plugin/runtime for longer runs.
@@ -401,9 +446,8 @@ E00/E01 implementation details and bounded validation are summarized in
 [`CURRENT_STATUS.md`](CURRENT_STATUS.md) and the dated records linked there.
 E02 inventory findings and limitations are in
 [`chicago-inventory.md`](engine-migration/e02/chicago-inventory.md). E03 Block 1
-and Block 2 (2a/2.1/2.4/2.5, item 3 and item 4) are done; E03 still has no playable
-original-world native slice, and the multi-primitive writer extension follows (larger
-buildings currently fail `multiple-submeshes-unsupported`). E04 has the
+and Block 2 (2a/2.1/2.4/2.5, item 3, item 4 and the multi-primitive follow-up A+B)
+are done; E03 still has no playable original-world native slice. E04 has the
 PCM decode + registration seam (P0) and
 A1 routing; neither is audible acceptance — do not describe historical
 smoke/contract results as accepted correctness. Continue only the requested

@@ -6,12 +6,21 @@
 /*
  * Bounded glTF 2.0 / GLB static-mesh importer (renderer roadmap R3).
  *
- * Scope: one mesh, one primitive. Attributes POSITION/NORMAL/TEXCOORD_0 as
- * float accessors, unsigned 16/32-bit indices, one pbrMetallicRoughness
- * material with a base-colour factor and (optionally) one embedded image.
- * Images are decoded on Windows through WIC (PNG/JPEG), the same decoder the
- * override path uses. Anything outside that subset fails with a clear message
- * instead of importing silently wrong geometry.
+ * Scope: one mesh. Attributes POSITION/NORMAL/TEXCOORD_0 as float accessors,
+ * unsigned 16/32-bit indices, and a pbrMetallicRoughness material with a
+ * base-colour factor and (optionally) one embedded image. Images are decoded on
+ * Windows through WIC (PNG/JPEG), the same decoder the override path uses.
+ * Anything outside that subset fails with a clear message instead of importing
+ * silently wrong geometry.
+ *
+ * Two records exist. `Gltf_LoadFile` keeps the historical single-primitive
+ * contract (first primitive only, images retained) unchanged for existing
+ * callers. `Gltf_LoadFileMulti` reads every primitive of the first mesh into
+ * `GltfMultiMeshData`, each with its own base-colour material and no embedded
+ * image; it is strict (vertex/index bounds, attribute count agreement, triangle
+ * completeness) and rejects a texture reference the multi record cannot hold
+ * rather than dropping it silently. On failure the destination is reset to an
+ * empty record (no partial output).
  *
  * The importer never mutates game state; the caller owns the returned data.
  */
@@ -67,9 +76,57 @@ struct GltfMeshData
 	}
 };
 
+/* One primitive: geometry plus its own base-colour material factors. No image
+   is represented; the multi-primitive record has no texture fields. */
+struct GltfPrimitiveData
+{
+	std::vector<float> positions;			// 3 floats per vertex
+	std::vector<float> normals;				// 3 floats per vertex (may be empty)
+	std::vector<float> uvs;					// 2 floats per vertex (may be empty)
+	std::vector<unsigned int> indices;		// triangle list (may be empty -> non-indexed)
+
+	float baseColorFactor[4];
+	float metallicFactor;
+	float roughnessFactor;
+
+	int vertexCount;
+	int triangleCount;
+
+	GltfPrimitiveData()
+		: metallicFactor(1.0f), roughnessFactor(1.0f),
+		  vertexCount(0), triangleCount(0)
+	{
+		baseColorFactor[0] = baseColorFactor[1] = baseColorFactor[2] = baseColorFactor[3] = 1.0f;
+	}
+};
+
+/* A mesh with N primitives sharing one node transform, each primitive carrying
+   its own base-colour material. This is the record the E03 multi-submesh
+   building path consumes; it deliberately has no embedded images. */
+struct GltfMultiMeshData
+{
+	std::vector<GltfPrimitiveData> primitives;
+
+	// Node transform of the first node that references the mesh, column-major
+	// (identity when the node has none).
+	float transform[16];
+
+	GltfMultiMeshData()
+	{
+		for (int i = 0; i < 16; i++)
+			transform[i] = (i % 5 == 0) ? 1.0f : 0.0f;
+	}
+};
+
 /* Loads the first mesh primitive of a .glb or .gltf. Returns 0 on success and
-   fills `out`; returns -1 and writes a human-readable reason into `error`. */
+   fills `out`; returns -1 and writes a human-readable reason into `error`.
+   Behaviour is preserved for existing callers. */
 int Gltf_LoadFile(const char* path, GltfMeshData* out, char* error, int errorCapacity);
+
+/* Loads every primitive of the first mesh of a .glb into `out`. Returns 0 on
+   success and fills `out`; returns -1, writes a named reason into `error` and
+   resets `out` to an empty record (no partial output) otherwise. */
+int Gltf_LoadFileMulti(const char* path, GltfMultiMeshData* out, char* error, int errorCapacity);
 
 /* Provenance/identity helper: a stable material id derived from the source
    file name (without directories) plus the base-colour factor, suitable as a

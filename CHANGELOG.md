@@ -195,6 +195,58 @@ where release policy permits it.
   F-A and F-C/F-D were remediated and verified; this documentation update resolves
   F-B.
 
+- E03 multi-primitive GLB support (follow-up A+B): `utils/GltfWriter.{h,cpp}` and
+  `utils/GltfLoader.{h,cpp}` gain `GltfPrimitiveData`/`GltfMultiMeshData` records and
+  `Gltf_WriteFileMulti`/`Gltf_LoadFileMulti`. The layout is deterministic: one shared BIN
+  buffer; per primitive POSITION, then NORMAL/TEXCOORD_0 when present, then the index list;
+  material i corresponds to primitive i; accessors are numbered in the same order. Writing
+  is strictly validated first (no positions, a partial triangle or an out-of-range index
+  yields named errors and removes the partial file). The single-primitive writer API is
+  unchanged and byte-identical by construction (deterministic `%.9g` floats), empirically
+  verified by compiling the pre-change writer and comparing bytes, and covered by a
+  dedicated byte-identity test added with the gate follow-ups. The single loader keeps its
+  historical tolerant, image-retaining contract and reads primitive 0 of a multi file; the
+  multi loader is strict and rejects texture references with a named error.
+  `WorldMeshBuilder_BuildMulti` maps each `SourceMesh` submesh to one `GltfPrimitiveData`
+  (flat per-triangle normals; per-submesh base colour = mean of the stored face colours, or
+  neutral white for PL records) and validates a contiguous, ordered, complete partition of
+  the index list (deterministic, named errors, zero partial output); the single builder
+  keeps `MULTIPLE_SUBMESHES_UNSUPPORTED` for compatibility and the game call site uses
+  `BuildMulti`. `native/NativeRenderer` represents a multi-primitive resource
+  (`ScenePrimitive` with its own vertex/index buffers, window+offscreen SRBs and base
+  colour; one shared white texel per item), and an instance draws every primitive
+  (UpdateBuffer -> Commit -> Draw per primitive); `drawn` still counts instances and the
+  placeholder/content/no-fallback semantics are unchanged. `Game/C/assetcatalog_game.c`
+  `ConvertModelSlot` now builds with `BuildMulti` and publishes with a local transactional
+  `PublishMultiMesh` (reuse/tmp/verify/rename mirroring `AssetConverter`; same error codes;
+  the log line and named diagnostics are unchanged). Recorded follow-ups: promote
+  `PublishMultiMesh` into `AssetConverter` (it duplicates ~80 lines and its multi verify
+  checks only the primitive count), and `MaterialReferencesTexture` does not cover texture
+  references expressed via `extensions`. Capacity change: the renderer's
+  `LoadContent`/`RegisterResource` now go through `Gltf_LoadFileMulti`, which rejects
+  texture references, so a single-record GLB with an embedded base-colour image is no
+  longer accepted by the renderer (named error); the E02 writer never embeds images, so the
+  world-mesh pipeline is unaffected (a boundary check was added to the smoke with the gate
+  follow-ups). Evidence: all inspector suites are green (`GltfRoundTripTests` 116 checks;
+  `WorldMeshBuilderTests` 211; others unchanged); native renderer smoke 154 checks,
+  0 failures; `Release_dev` and
+  `Release_dev_native` builds exit 0. Real runs: slot 195 (the pack's largest model, span
+  2044 B) now converts as multi-submesh (it previously failed with
+  `multiple-submeshes-unsupported`) but is unreferenced (no placements); slot 1150
+  (referenced) published a GLB parsed with 3 primitives / 3 materials, 22 placements,
+  submitted 22 / drawn 22 / skippedUnresolved 0 / residentResources 1, offscreen frame
+  640x360 with 42 non-clear pixels. The model is a ~0.3 m sign (bounds 916x1265x56 raw) and
+  the pack is modular (max span 2044 B): no large single building meshes exist in the model
+  pack. The bounded run proves the multi-primitive pipeline end-to-end (conversion,
+  publication, registration, draw of all three primitives, 22/22 instances, one resident
+  resource) with the game camera; per-primitive correctness is established by the offscreen
+  suite; it does not prove visual fidelity or a large visible building, and there is no
+  texture/lighting parity. Must not claim: no "region/building renders correctly"; the
+  renderer no longer accepts embedded-image GLBs (capacity change above); no all-model/
+  all-slot coverage; no LOD/streaming/cars/animation/performance; single-vs-multi byte
+  identity is by construction plus empirical verification and the dedicated test; dev runs
+  are not visual acceptance.
+
 - ODT-to-GLB tooling spike (bounded, external, temp-only; no repository
   integration): OpenDriver2Tools master @
   `89009f7f4f48f37a886b376292432cdab4a136` (2025-10-28) was built headless (Win32)

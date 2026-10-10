@@ -446,6 +446,11 @@ bool ReadAccessorFloats(const JsonValue& root, const std::vector<unsigned char>&
 	}
 
 	count = (int)NumberField(&accessor, "count", 0);
+	if (count < 0)
+	{
+		snprintf(error, errorCapacity, "accessor %d has a negative count", accessorIndex);
+		return false;
+	}
 	const size_t offset = views[view].byteOffset + (size_t)NumberField(&accessor, "byteOffset", 0);
 	const size_t elementSize = (size_t)components * sizeof(float);
 	const size_t stride = views[view].byteStride ? views[view].byteStride : elementSize;
@@ -509,6 +514,11 @@ bool ReadAccessorIndices(const JsonValue& root, const std::vector<unsigned char>
 	}
 
 	const int count = (int)NumberField(&accessor, "count", 0);
+	if (count < 0)
+	{
+		snprintf(error, errorCapacity, "index accessor has a negative count");
+		return false;
+	}
 	const size_t componentSize = component == 5121 ? 1 : (component == 5123 ? 2 : 4);
 	const size_t offset = views[view].byteOffset + (size_t)NumberField(&accessor, "byteOffset", 0);
 	const size_t elementSize = componentSize;
@@ -647,19 +657,17 @@ void ReadNodeTransform(const JsonValue& root, float out[16])
 	for (int i = 0; i < 16; i++)
 		out[i] = m[i];
 }
-} // namespace
 
-int Gltf_LoadFile(const char* path, GltfMeshData* out, char* error, int errorCapacity)
+// --- shared loader helpers --------------------------------------------------
+
+bool ReadGlbContainer(const char* path, std::string& jsonText, std::vector<unsigned char>& bin,
+	char* error, int errorCapacity)
 {
-	if (!path || !out || !error || errorCapacity <= 0)
-		return -1;
-	error[0] = '\0';
-
 	FILE* file = fopen(path, "rb");
 	if (!file)
 	{
 		snprintf(error, errorCapacity, "cannot open %s", path);
-		return -1;
+		return false;
 	}
 	fseek(file, 0, SEEK_END);
 	long fileSize = ftell(file);
@@ -668,7 +676,7 @@ int Gltf_LoadFile(const char* path, GltfMeshData* out, char* error, int errorCap
 	{
 		fclose(file);
 		snprintf(error, errorCapacity, "%s is too small to be a glTF/GLB file", path);
-		return -1;
+		return false;
 	}
 
 	std::vector<unsigned char> bytes((size_t)fileSize);
@@ -676,125 +684,195 @@ int Gltf_LoadFile(const char* path, GltfMeshData* out, char* error, int errorCap
 	{
 		fclose(file);
 		snprintf(error, errorCapacity, "cannot read %s", path);
-		return -1;
+		return false;
 	}
 	fclose(file);
 
-	// GLB container?
-	std::string jsonText;
-	std::vector<unsigned char> bin;
-
-	if (ReadU32(bytes.data()) == 0x46546C67)
-	{
-		const unsigned int version = ReadU32(bytes.data() + 4);
-		if (version != 2)
-		{
-			snprintf(error, errorCapacity, "GLB version %u is not supported", version);
-			return -1;
-		}
-
-		size_t offset = 12;
-		while (offset + 8 <= bytes.size())
-		{
-			const unsigned int chunkLength = ReadU32(bytes.data() + offset);
-			const unsigned int chunkType = ReadU32(bytes.data() + offset + 4);
-			offset += 8;
-			if (offset + chunkLength > bytes.size())
-			{
-				snprintf(error, errorCapacity, "GLB chunk exceeds the file size");
-				return -1;
-			}
-			if (chunkType == 0x4E4F534A) // JSON
-				jsonText.assign((const char*)bytes.data() + offset, chunkLength);
-			else if (chunkType == 0x004E4942) // BIN
-				bin.assign(bytes.begin() + offset, bytes.begin() + offset + chunkLength);
-			offset += chunkLength;
-		}
-	}
-	else
+	if (ReadU32(bytes.data()) != 0x46546C67)
 	{
 		snprintf(error, errorCapacity, "only binary .glb files are supported");
-		return -1;
+		return false;
+	}
+
+	const unsigned int version = ReadU32(bytes.data() + 4);
+	if (version != 2)
+	{
+		snprintf(error, errorCapacity, "GLB version %u is not supported", version);
+		return false;
+	}
+
+	size_t offset = 12;
+	while (offset + 8 <= bytes.size())
+	{
+		const unsigned int chunkLength = ReadU32(bytes.data() + offset);
+		const unsigned int chunkType = ReadU32(bytes.data() + offset + 4);
+		offset += 8;
+		if (offset + chunkLength > bytes.size())
+		{
+			snprintf(error, errorCapacity, "GLB chunk exceeds the file size");
+			return false;
+		}
+		if (chunkType == 0x4E4F534A) // JSON
+			jsonText.assign((const char*)bytes.data() + offset, chunkLength);
+		else if (chunkType == 0x004E4942) // BIN
+			bin.assign(bytes.begin() + offset, bytes.begin() + offset + chunkLength);
+		offset += chunkLength;
 	}
 
 	if (jsonText.empty())
 	{
 		snprintf(error, errorCapacity, "the GLB has no JSON chunk");
-		return -1;
+		return false;
 	}
+	return true;
+}
 
-	JsonValue root;
+bool ParseRoot(const std::string& jsonText, JsonValue& root, char* error, int errorCapacity)
+{
 	JsonParser parser(jsonText.c_str(), (int)jsonText.size(), error, errorCapacity);
 	if (!parser.ParseValue(root, 0) || root.type != JsonValue::Object)
 	{
 		if (error[0] == '\0')
 			snprintf(error, errorCapacity, "the glTF JSON could not be parsed");
-		return -1;
+		return false;
 	}
+	return true;
+}
 
-	// BufferViews.
-	std::vector<BufferView> views;
+void BuildBufferViews(const JsonValue& root, std::vector<BufferView>& views)
+{
 	const JsonValue* viewArray = root.Find("bufferViews");
-	if (viewArray && viewArray->type == JsonValue::Array)
+	if (!viewArray || viewArray->type != JsonValue::Array)
+		return;
+	for (size_t i = 0; i < viewArray->array.size(); i++)
 	{
-		for (size_t i = 0; i < viewArray->array.size(); i++)
-		{
-			const JsonValue& v = viewArray->array[i];
-			BufferView view;
-			view.buffer = (int)v.Find("buffer")->NumberOr(0);
-			view.byteOffset = (size_t)v.Find("byteOffset")->NumberOr(0);
-			view.byteLength = (size_t)v.Find("byteLength")->NumberOr(0);
-			const JsonValue* stride = v.Find("byteStride");
-			view.byteStride = stride ? (size_t)stride->NumberOr(0) : 0;
-			views.push_back(view);
-		}
+		const JsonValue& v = viewArray->array[i];
+		BufferView view;
+		view.buffer = (int)NumberField(&v, "buffer", 0);
+		view.byteOffset = (size_t)NumberField(&v, "byteOffset", 0);
+		view.byteLength = (size_t)NumberField(&v, "byteLength", 0);
+		view.byteStride = (size_t)NumberField(&v, "byteStride", 0);
+		views.push_back(view);
 	}
+}
 
-	// First mesh primitive.
-	const JsonValue* meshes = root.Find("meshes");
-	const JsonValue* primitive = NULL;
-	if (meshes && meshes->type == JsonValue::Array && !meshes->array.empty())
-		primitive = GetArrayEntry(meshes->array[0].Find("primitives"), 0);
-	const JsonValue* attributes = primitive ? primitive->Find("attributes") : NULL;
+bool MaterialReferencesTexture(const JsonValue& material)
+{
+	const JsonValue* pbr = material.Find("pbrMetallicRoughness");
+	if (pbr && (pbr->Find("baseColorTexture") || pbr->Find("metallicRoughnessTexture")))
+		return true;
+	return material.Find("normalTexture") || material.Find("emissiveTexture") || material.Find("occlusionTexture");
+}
+
+// Reads one primitive's geometry and material factors. `strict` adds the
+// bounds/count checks the multi-primitive consumer needs (attribute counts agree
+// with POSITION, indices are in range and form whole triangles); the single
+// historical loader keeps its tolerant contract by passing false. A material
+// texture reference is rejected only when `rejectTextures` is set, because the
+// multi record cannot hold an image.
+bool LoadPrimitiveCore(const JsonValue& root, const std::vector<unsigned char>& bin,
+	const std::vector<BufferView>& views, int primitiveIndex, const JsonValue& primitive,
+	bool strict, bool rejectTextures, GltfPrimitiveData& out, int& materialIndex,
+	char* error, int errorCapacity)
+{
+	out = GltfPrimitiveData();
+	materialIndex = -1;
+
+	char detail[192] = "";
+
+	const JsonValue* attributes = primitive.Find("attributes");
 	if (!attributes)
 	{
-		snprintf(error, errorCapacity, "the glTF has no readable mesh primitive");
-		return -1;
+		snprintf(error, errorCapacity, "primitive %d has no attributes", primitiveIndex);
+		return false;
 	}
 
 	int count = 0;
-	if (!ReadAccessorFloats(root, bin, views, (int)NumberField(attributes, "POSITION", -1), 3, out->positions, count, error, errorCapacity))
-		return -1;
-	out->vertexCount = count;
-	if (out->vertexCount <= 0 || out->vertexCount > 65535)
+	if (!ReadAccessorFloats(root, bin, views, (int)NumberField(attributes, "POSITION", -1), 3,
+			out.positions, count, detail, sizeof(detail)))
 	{
-		snprintf(error, errorCapacity, "the mesh has an unsupported vertex count (%d)", out->vertexCount);
-		return -1;
+		snprintf(error, errorCapacity, "primitive %d: %s", primitiveIndex, detail);
+		return false;
+	}
+	out.vertexCount = count;
+	if (out.vertexCount <= 0 || out.vertexCount > 65535)
+	{
+		snprintf(error, errorCapacity, "primitive %d has an unsupported vertex count (%d)", primitiveIndex, out.vertexCount);
+		return false;
 	}
 
 	const JsonValue* normalAccessor = attributes->Find("NORMAL");
 	if (normalAccessor && normalAccessor->type == JsonValue::Number)
-		ReadAccessorFloats(root, bin, views, (int)normalAccessor->number, 3, out->normals, count, error, errorCapacity);
+	{
+		int normalCount = 0;
+		if (!ReadAccessorFloats(root, bin, views, (int)normalAccessor->number, 3,
+				out.normals, normalCount, detail, sizeof(detail)))
+		{
+			snprintf(error, errorCapacity, "primitive %d: %s", primitiveIndex, detail);
+			return false;
+		}
+		if (strict && normalCount != out.vertexCount)
+		{
+			snprintf(error, errorCapacity, "primitive %d has a NORMAL count that disagrees with POSITION", primitiveIndex);
+			return false;
+		}
+	}
 
 	const JsonValue* uvAccessor = attributes->Find("TEXCOORD_0");
 	if (uvAccessor && uvAccessor->type == JsonValue::Number)
-		ReadAccessorFloats(root, bin, views, (int)uvAccessor->number, 2, out->uvs, count, error, errorCapacity);
+	{
+		int uvCount = 0;
+		if (!ReadAccessorFloats(root, bin, views, (int)uvAccessor->number, 2,
+				out.uvs, uvCount, detail, sizeof(detail)))
+		{
+			snprintf(error, errorCapacity, "primitive %d: %s", primitiveIndex, detail);
+			return false;
+		}
+		if (strict && uvCount != out.vertexCount)
+		{
+			snprintf(error, errorCapacity, "primitive %d has a TEXCOORD_0 count that disagrees with POSITION", primitiveIndex);
+			return false;
+		}
+	}
 
-	const JsonValue* indices = primitive->Find("indices");
+	const JsonValue* indices = primitive.Find("indices");
 	if (indices && indices->type == JsonValue::Number)
 	{
-		if (!ReadAccessorIndices(root, bin, views, (int)indices->number, out->indices, error, errorCapacity))
-			return -1;
-		out->triangleCount = (int)(out->indices.size() / 3);
+		if (!ReadAccessorIndices(root, bin, views, (int)indices->number, out.indices, detail, sizeof(detail)))
+		{
+			snprintf(error, errorCapacity, "primitive %d: %s", primitiveIndex, detail);
+			return false;
+		}
+		if (strict)
+		{
+			if (out.indices.size() % 3 != 0)
+			{
+				snprintf(error, errorCapacity, "primitive %d has an index count that is not a whole number of triangles", primitiveIndex);
+				return false;
+			}
+			for (size_t k = 0; k < out.indices.size(); k++)
+			{
+				if (out.indices[k] >= (unsigned int)out.vertexCount)
+				{
+					snprintf(error, errorCapacity, "primitive %d has an index outside the vertex range", primitiveIndex);
+					return false;
+				}
+			}
+		}
+		out.triangleCount = (int)(out.indices.size() / 3);
 	}
 	else
 	{
-		out->triangleCount = out->vertexCount / 3;
+		if (strict && out.vertexCount % 3 != 0)
+		{
+			snprintf(error, errorCapacity, "primitive %d has a vertex count that is not a whole number of triangles", primitiveIndex);
+			return false;
+		}
+		out.triangleCount = out.vertexCount / 3;
 	}
 
-	// Material.
-	const JsonValue* materials = root.Find("materials");
-	const JsonValue* material = GetArrayEntry(materials, (int)(primitive->Find("material") ? primitive->Find("material")->NumberOr(-1) : -1));
+	materialIndex = (int)NumberField(&primitive, "material", -1);
+	const JsonValue* material = GetArrayEntry(root.Find("materials"), materialIndex);
 	if (material)
 	{
 		const JsonValue* pbr = material->Find("pbrMetallicRoughness");
@@ -803,11 +881,75 @@ int Gltf_LoadFile(const char* path, GltfMeshData* out, char* error, int errorCap
 			const JsonValue* factor = pbr->Find("baseColorFactor");
 			if (factor && factor->type == JsonValue::Array && factor->array.size() == 4)
 				for (int i = 0; i < 4; i++)
-					out->baseColorFactor[i] = (float)factor->array[i].NumberOr(1.0);
+					out.baseColorFactor[i] = (float)factor->array[i].NumberOr(1.0);
 
-			out->metallicFactor = (float)(pbr->Find("metallicFactor") ? pbr->Find("metallicFactor")->NumberOr(1.0) : 1.0);
-			out->roughnessFactor = (float)(pbr->Find("roughnessFactor") ? pbr->Find("roughnessFactor")->NumberOr(1.0) : 1.0);
+			out.metallicFactor = (float)(pbr->Find("metallicFactor") ? pbr->Find("metallicFactor")->NumberOr(1.0) : 1.0);
+			out.roughnessFactor = (float)(pbr->Find("roughnessFactor") ? pbr->Find("roughnessFactor")->NumberOr(1.0) : 1.0);
+		}
+		if (rejectTextures && MaterialReferencesTexture(*material))
+		{
+			snprintf(error, errorCapacity, "primitive %d references a texture that the multi-primitive record cannot hold", primitiveIndex);
+			return false;
+		}
+	}
+	return true;
+}
+} // namespace
 
+int Gltf_LoadFile(const char* path, GltfMeshData* out, char* error, int errorCapacity)
+{
+	if (!path || !out || !error || errorCapacity <= 0)
+		return -1;
+	error[0] = '\0';
+	*out = GltfMeshData();
+
+	std::string jsonText;
+	std::vector<unsigned char> bin;
+	if (!ReadGlbContainer(path, jsonText, bin, error, errorCapacity))
+		return -1;
+
+	JsonValue root;
+	if (!ParseRoot(jsonText, root, error, errorCapacity))
+		return -1;
+
+	std::vector<BufferView> views;
+	BuildBufferViews(root, views);
+
+	// First mesh primitive only: the single record is unchanged for existing
+	// callers, including its tolerant (non-strict) attribute reading.
+	const JsonValue* meshes = root.Find("meshes");
+	const JsonValue* primitive = NULL;
+	if (meshes && meshes->type == JsonValue::Array && !meshes->array.empty())
+		primitive = GetArrayEntry(meshes->array[0].Find("primitives"), 0);
+	if (!primitive)
+	{
+		snprintf(error, errorCapacity, "the glTF has no readable mesh primitive");
+		return -1;
+	}
+
+	GltfPrimitiveData core;
+	int materialIndex = -1;
+	if (!LoadPrimitiveCore(root, bin, views, 0, *primitive, false, false, core, materialIndex, error, errorCapacity))
+		return -1;
+
+	out->positions.swap(core.positions);
+	out->normals.swap(core.normals);
+	out->uvs.swap(core.uvs);
+	out->indices.swap(core.indices);
+	for (int i = 0; i < 4; i++)
+		out->baseColorFactor[i] = core.baseColorFactor[i];
+	out->metallicFactor = core.metallicFactor;
+	out->roughnessFactor = core.roughnessFactor;
+	out->vertexCount = core.vertexCount;
+	out->triangleCount = core.triangleCount;
+
+	// The single record still retains an embedded image and the emissive factor.
+	const JsonValue* material = GetArrayEntry(root.Find("materials"), materialIndex);
+	if (material)
+	{
+		const JsonValue* pbr = material->Find("pbrMetallicRoughness");
+		if (pbr)
+		{
 			LoadTextureInfo(root, bin, views, pbr->Find("baseColorTexture"), out->baseColorRGBA, out->baseColorWidth, out->baseColorHeight);
 			LoadTextureInfo(root, bin, views, pbr->Find("metallicRoughnessTexture"), out->metallicRoughnessRGBA, out->metallicRoughnessWidth, out->metallicRoughnessHeight);
 			LoadTextureInfo(root, bin, views, material->Find("normalTexture"), out->normalRGBA, out->normalWidth, out->normalHeight);
@@ -822,6 +964,52 @@ int Gltf_LoadFile(const char* path, GltfMeshData* out, char* error, int errorCap
 
 	ReadNodeTransform(root, out->transform);
 
+	return 0;
+}
+
+int Gltf_LoadFileMulti(const char* path, GltfMultiMeshData* out, char* error, int errorCapacity)
+{
+	if (!path || !out || !error || errorCapacity <= 0)
+		return -1;
+	error[0] = '\0';
+	*out = GltfMultiMeshData();
+
+	std::string jsonText;
+	std::vector<unsigned char> bin;
+	if (!ReadGlbContainer(path, jsonText, bin, error, errorCapacity))
+		return -1;
+
+	JsonValue root;
+	if (!ParseRoot(jsonText, root, error, errorCapacity))
+		return -1;
+
+	std::vector<BufferView> views;
+	BuildBufferViews(root, views);
+
+	const JsonValue* meshes = root.Find("meshes");
+	const JsonValue* primitives = NULL;
+	if (meshes && meshes->type == JsonValue::Array && !meshes->array.empty())
+		primitives = meshes->array[0].Find("primitives");
+	if (!primitives || primitives->type != JsonValue::Array || primitives->array.empty())
+	{
+		snprintf(error, errorCapacity, "the glTF has no readable mesh primitive");
+		return -1;
+	}
+
+	GltfMultiMeshData result;
+	result.primitives.reserve(primitives->array.size());
+	for (size_t i = 0; i < primitives->array.size(); i++)
+	{
+		GltfPrimitiveData primitive;
+		int materialIndex = -1;
+		if (!LoadPrimitiveCore(root, bin, views, (int)i, primitives->array[i], true, true,
+				primitive, materialIndex, error, errorCapacity))
+			return -1; // `out` was reset above: no partial output
+		result.primitives.push_back(primitive);
+	}
+
+	ReadNodeTransform(root, result.transform);
+	*out = result;
 	return 0;
 }
 

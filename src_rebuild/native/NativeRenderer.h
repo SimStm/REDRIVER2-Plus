@@ -14,6 +14,9 @@
  * The scene draw is camera-driven and depth-tested. It draws submitted
  * instances when any are set, otherwise converted E02 content loaded through
  * NativeRenderer_LoadContent, otherwise a built-in placeholder.
+ * Converted content may carry several primitives (the E03 multi-submesh GLB):
+ * each primitive owns its immutable vertex/index buffers, its own base-colour
+ * factor and its own shader bindings, and an instance draws all of them.
  * RenderSceneToRGBA runs the same draw into an offscreen readback target for
  * tests and evidence capture.
  *
@@ -118,10 +121,12 @@ void NativeRenderer_SetCamera(const float view[16], float fovYRadians);
    back to the placeholder. */
 int NativeRenderer_RenderScene(char* error, int errorCapacity);
 
-/* Loads converted content from a .glb (the E02 record: one mesh/primitive with
-   positions, optional UVs, 16/32-bit indices, an optional embedded base-colour
-   image and a base-colour factor) and uploads immutable GPU buffers, texture
-   and sampler. The node transform places the mesh in the world; world units
+/* Loads converted content from a .glb (the E03 record: one mesh with one or
+   more primitives, each with positions, optional UVs, 16/32-bit indices and its
+   own base-colour factor; the multi record carries no embedded image, so each
+   primitive samples a white texel and its base-colour factor is what is
+   visible) and uploads immutable GPU buffers plus the shader bindings for both
+   scene pipelines. The node transform places the mesh in the world; world units
    stay raw game units (4096 per metre), no conversion is applied. Returns 1 on
    success; returns 0 with a diagnostic in `error` and leaves previously loaded
    content untouched. Re-loading replaces and releases the old content
@@ -139,12 +144,12 @@ int NativeRenderer_HasContent(void);
    pointer may be NULL. */
 void NativeRenderer_GetContentStats(int* vertexCount, int* triangleCount);
 
-/* Registers a converted .glb under a canonical `key` and uploads its immutable
-   GPU resources. Idempotent: re-registering a resident key is a no-op that
-   returns 1. Returns 0 with a diagnostic in `error` when the key or path is
-   empty, the renderer is inactive, the file cannot be loaded, or the resource
-   capacity (NATIVE_MAX_RESOURCES) is already full; a full table never evicts a
-   resident resource. Requires an active renderer. */
+/* Registers a converted .glb (one or more primitives) under a canonical `key`
+   and uploads its immutable GPU resources. Idempotent: re-registering a
+   resident key is a no-op that returns 1. Returns 0 with a diagnostic in `error`
+   when the key or path is empty, the renderer is inactive, the file cannot be
+   loaded, or the resource capacity (NATIVE_MAX_RESOURCES) is already full; a
+   full table never evicts a resident resource. Requires an active renderer. */
 int NativeRenderer_RegisterResource(const char* key, const char* glbPath,
 	char* error, int errorCapacity);
 
@@ -177,7 +182,8 @@ void NativeRenderer_ClearInstances(void);
 void NativeRenderer_SetClipPlanes(float nearPlane, float farPlane);
 
 /* Counts from the last NativeRenderer_SetInstances / scene draw. `submitted` is
-   the instance count, `drawn` how many were actually drawn, `skippedUnresolved`
+   the instance count, `drawn` how many instances were actually drawn (an
+   instance counts once even when it draws several primitives), `skippedUnresolved`
    how many had no resident resource, and `residentResources` the current
    resource count. Any pointer may be NULL. */
 void NativeRenderer_GetInstanceStats(int* submitted, int* drawn,

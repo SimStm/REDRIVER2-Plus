@@ -269,3 +269,177 @@ int WorldMeshBuilder_Build(const SourceMesh& source, GltfMeshData* out,
 
 	return (int)WORLD_MESH_ERROR_NONE;
 }
+
+int WorldMeshBuilder_BuildMulti(const SourceMesh& source, GltfMultiMeshData* out,
+	WorldMeshBuilderResult* result, char* error, int capacity)
+{
+	if (error && capacity > 0)
+		error[0] = '\0';
+
+	ZeroResult(result);
+
+	if (!out)
+		return (int)Fail(result, error, capacity, WORLD_MESH_ERROR_ARGUMENT,
+			"a destination mesh is required");
+
+	*out = GltfMultiMeshData(); // never leave a partial result behind
+
+	// Positions define the vertex count and must be whole vertices.
+	if (source.positions.empty())
+		return (int)Fail(result, error, capacity, WORLD_MESH_ERROR_EMPTY,
+			"the source mesh has no vertices");
+
+	if (source.positions.size() % 3 != 0)
+		return (int)Fail(result, error, capacity, WORLD_MESH_ERROR_ATTRIBUTE_SIZE,
+			"the source position array is not a whole number of vertices");
+
+	const int vertexCount = (int)(source.positions.size() / 3);
+
+	// UVs are required per vertex in this pipeline; colours are either absent or
+	// one global RGB array with per-submesh presence flags.
+	if (source.uvs.size() != (size_t)vertexCount * 2)
+		return (int)Fail(result, error, capacity, WORLD_MESH_ERROR_ATTRIBUTE_SIZE,
+			"the source UV count does not match the vertex count");
+
+	if (!source.colors.empty() && source.colors.size() != (size_t)vertexCount * 3)
+		return (int)Fail(result, error, capacity, WORLD_MESH_ERROR_ATTRIBUTE_SIZE,
+			"the source colour count does not match the vertex count");
+
+	if (source.indices.empty() || source.indices.size() % 3 != 0)
+		return (int)Fail(result, error, capacity, WORLD_MESH_ERROR_EMPTY,
+			"the source mesh has no whole triangles");
+
+	if (source.submeshes.empty())
+		return (int)Fail(result, error, capacity, WORLD_MESH_ERROR_EMPTY,
+			"the source mesh has no submesh");
+
+	// The submesh runs must be an ordered, contiguous partition of the index
+	// list, so every index is emitted exactly once and none is dropped.
+	size_t expectedFirst = 0;
+	for (size_t s = 0; s < source.submeshes.size(); ++s)
+	{
+		const SourceSubmesh& submesh = source.submeshes[s];
+
+		if (submesh.indexCount == 0 || submesh.indexCount % 3 != 0 ||
+			(size_t)submesh.firstIndex + submesh.indexCount > source.indices.size())
+			return (int)Fail(result, error, capacity, WORLD_MESH_ERROR_INDEX_RANGE,
+				"a submesh index run is not a whole-triangle range inside the index list");
+
+		if ((size_t)submesh.firstIndex != expectedFirst)
+			return (int)Fail(result, error, capacity, WORLD_MESH_ERROR_UNCOVERED_INDICES,
+				"the submesh index runs do not contiguously cover the index list");
+
+		if (submesh.hasColors && source.colors.empty())
+			return (int)Fail(result, error, capacity, WORLD_MESH_ERROR_ATTRIBUTE_SIZE,
+				"a submesh declares face colours but the source has none");
+
+		expectedFirst += submesh.indexCount;
+	}
+
+	if (expectedFirst != source.indices.size())
+		return (int)Fail(result, error, capacity, WORLD_MESH_ERROR_UNCOVERED_INDICES,
+			"the submesh index runs do not cover every index");
+
+	// Every index must address a real vertex.
+	for (size_t i = 0; i < source.indices.size(); ++i)
+	{
+		if (source.indices[i] >= (unsigned int)vertexCount)
+			return (int)Fail(result, error, capacity, WORLD_MESH_ERROR_INDEX_RANGE,
+				"a triangle index is outside the vertex range");
+	}
+
+	const bool hasUvs = !source.uvs.empty();
+
+	out->primitives.reserve(source.submeshes.size());
+
+	int totalVertices = 0;
+	int totalTriangles = 0;
+	bool anyColors = false;
+
+	for (size_t s = 0; s < source.submeshes.size(); ++s)
+	{
+		const SourceSubmesh& submesh = source.submeshes[s];
+		const int triangleCount = (int)(submesh.indexCount / 3);
+
+		out->primitives.push_back(GltfPrimitiveData());
+		GltfPrimitiveData& primitive = out->primitives.back();
+		primitive.positions.reserve((size_t)triangleCount * 9);
+		primitive.normals.reserve((size_t)triangleCount * 9);
+		if (hasUvs)
+			primitive.uvs.reserve((size_t)triangleCount * 6);
+		primitive.indices.reserve((size_t)triangleCount * 3);
+
+		for (int triangle = 0; triangle < triangleCount; ++triangle)
+		{
+			const unsigned int i0 = source.indices[submesh.firstIndex + triangle * 3 + 0];
+			const unsigned int i1 = source.indices[submesh.firstIndex + triangle * 3 + 1];
+			const unsigned int i2 = source.indices[submesh.firstIndex + triangle * 3 + 2];
+
+			const float* p0 = &source.positions[(size_t)i0 * 3];
+			const float* p1 = &source.positions[(size_t)i1 * 3];
+			const float* p2 = &source.positions[(size_t)i2 * 3];
+
+			float normal[3];
+			TriangleNormal(p0, p1, p2, normal);
+
+			const unsigned int corners[3] = { i0, i1, i2 };
+			const unsigned int baseVertex = (unsigned int)(primitive.positions.size() / 3);
+
+			for (int corner = 0; corner < 3; ++corner)
+			{
+				const unsigned int vertex = corners[corner];
+				primitive.positions.push_back(source.positions[(size_t)vertex * 3 + 0]);
+				primitive.positions.push_back(source.positions[(size_t)vertex * 3 + 1]);
+				primitive.positions.push_back(source.positions[(size_t)vertex * 3 + 2]);
+
+				primitive.normals.push_back(normal[0]);
+				primitive.normals.push_back(normal[1]);
+				primitive.normals.push_back(normal[2]);
+
+				if (hasUvs)
+				{
+					primitive.uvs.push_back(source.uvs[(size_t)vertex * 2 + 0]);
+					primitive.uvs.push_back(source.uvs[(size_t)vertex * 2 + 1]);
+				}
+			}
+
+			primitive.indices.push_back(baseVertex + 0);
+			primitive.indices.push_back(baseVertex + 1);
+			primitive.indices.push_back(baseVertex + 2);
+		}
+
+		primitive.vertexCount = (int)(primitive.positions.size() / 3);
+		primitive.triangleCount = triangleCount;
+
+		// Per-primitive base colour, exactly as the single path applies it to
+		// its one submesh: the mean of that submesh's stored face colours, or
+		// the documented neutral when the submesh stored none.
+		if (submesh.hasColors)
+			AverageSubmeshColor(source, submesh, primitive.baseColorFactor);
+		else
+		{
+			primitive.baseColorFactor[0] = 1.0f;
+			primitive.baseColorFactor[1] = 1.0f;
+			primitive.baseColorFactor[2] = 1.0f;
+			primitive.baseColorFactor[3] = 1.0f;
+		}
+
+		totalVertices += primitive.vertexCount;
+		totalTriangles += triangleCount;
+		anyColors = anyColors || submesh.hasColors;
+	}
+
+	if (result)
+	{
+		result->error = WORLD_MESH_ERROR_NONE;
+		result->submeshCount = (int)source.submeshes.size();
+		result->vertexCount = totalVertices;
+		result->triangleCount = totalTriangles;
+		result->primitiveClass = source.submeshes[0].primitiveClass;
+		result->textureSet = source.submeshes[0].textureSet;
+		result->textureId = source.submeshes[0].textureId;
+		result->hasColors = anyColors;
+	}
+
+	return (int)WORLD_MESH_ERROR_NONE;
+}

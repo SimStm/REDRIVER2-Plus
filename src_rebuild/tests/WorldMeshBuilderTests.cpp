@@ -402,6 +402,241 @@ static void TestConversionHashStability()
 	CHECK(strcmp(first.contentHash, second.contentHash) == 0);
 }
 
+// Two separate coloured quads (each two triangles) as two submeshes: submesh 0
+// at z = 0 with a solid red face colour, submesh 1 at z = 1 with a solid green
+// one. The colour array is global (one RGB per vertex); the presence flag is per
+// submesh. The runs are contiguous and cover the whole index list.
+static SourceMesh MakeMultiSubmeshMesh()
+{
+	SourceMesh mesh;
+	mesh.positions = {
+		// quad A (z = 0)
+		0.0f, 0.0f, 0.0f,
+		1.0f, 0.0f, 0.0f,
+		1.0f, 1.0f, 0.0f,
+		0.0f, 1.0f, 0.0f,
+		// quad B (z = 1)
+		0.0f, 0.0f, 1.0f,
+		1.0f, 0.0f, 1.0f,
+		1.0f, 1.0f, 1.0f,
+		0.0f, 1.0f, 1.0f,
+	};
+	mesh.uvs = {
+		0.0f, 0.0f, 8.0f, 0.0f, 8.0f, 8.0f, 0.0f, 8.0f,
+		0.0f, 0.0f, 4.0f, 0.0f, 4.0f, 4.0f, 0.0f, 4.0f,
+	};
+	mesh.colors = {
+		255, 0, 0, 255, 0, 0, 255, 0, 0, 255, 0, 0,		// quad A: red
+		0, 255, 0, 0, 255, 0, 0, 255, 0, 0, 255, 0,		// quad B: green
+	};
+	mesh.indices = { 0, 1, 2, 0, 2, 3, 4, 5, 6, 4, 6, 7 };
+
+	SourceSubmesh first;
+	first.primitiveClass = SourcePrimitiveClass::TexturedFlatQuad;
+	first.textureSet = 1;
+	first.textureId = 2;
+	first.firstIndex = 0;
+	first.indexCount = 6;
+	first.hasColors = true;
+	first.hasNormals = false;
+	mesh.submeshes.push_back(first);
+
+	SourceSubmesh second;
+	second.primitiveClass = SourcePrimitiveClass::TexturedFlatQuad;
+	second.textureSet = 1;
+	second.textureId = 3;
+	second.firstIndex = 6;
+	second.indexCount = 6;
+	second.hasColors = true;
+	second.hasNormals = false;
+	mesh.submeshes.push_back(second);
+	return mesh;
+}
+
+static void TestMultiSubmeshBuild()
+{
+	SourceMesh source = MakeMultiSubmeshMesh();
+	GltfMultiMeshData mesh;
+	WorldMeshBuilderResult result;
+	char error[256];
+
+	CHECK(WorldMeshBuilder_BuildMulti(source, &mesh, &result, error, sizeof(error)) == WORLD_MESH_ERROR_NONE);
+	CHECK(result.error == WORLD_MESH_ERROR_NONE);
+	CHECK(result.submeshCount == 2);
+	CHECK(result.vertexCount == 12);
+	CHECK(result.triangleCount == 4);
+	CHECK(result.primitiveClass == SourcePrimitiveClass::TexturedFlatQuad);
+	CHECK(result.textureSet == 1 && result.textureId == 2);
+	CHECK(result.hasColors == true);
+
+	// One primitive per submesh, each with its own expanded geometry.
+	CHECK(mesh.primitives.size() == 2);
+	CHECK(mesh.primitives[0].vertexCount == 6 && mesh.primitives[0].triangleCount == 2);
+	CHECK(mesh.primitives[1].vertexCount == 6 && mesh.primitives[1].triangleCount == 2);
+	CHECK(mesh.primitives[0].positions.size() == 18 && mesh.primitives[0].normals.size() == 18);
+	CHECK(mesh.primitives[1].positions.size() == 18 && mesh.primitives[1].normals.size() == 18);
+	CHECK(mesh.primitives[0].indices.size() == 6 && mesh.primitives[1].indices.size() == 6);
+
+	// Each primitive carries its own quad (z = 0 vs z = 1).
+	CHECK(NearlyEqual(mesh.primitives[0].positions[2], 0.0f));
+	CHECK(NearlyEqual(mesh.primitives[1].positions[2], 1.0f));
+
+	// Per-primitive base colour: solid red and solid green, no shading baked in.
+	CHECK(NearlyEqual(mesh.primitives[0].baseColorFactor[0], 1.0f));
+	CHECK(NearlyEqual(mesh.primitives[0].baseColorFactor[1], 0.0f));
+	CHECK(NearlyEqual(mesh.primitives[0].baseColorFactor[2], 0.0f));
+	CHECK(NearlyEqual(mesh.primitives[0].baseColorFactor[3], 1.0f));
+	CHECK(NearlyEqual(mesh.primitives[1].baseColorFactor[0], 0.0f));
+	CHECK(NearlyEqual(mesh.primitives[1].baseColorFactor[1], 1.0f));
+	CHECK(NearlyEqual(mesh.primitives[1].baseColorFactor[2], 0.0f));
+
+	// Flat per-triangle normals are synthesized per primitive, as the single path.
+	for (int vertex = 0; vertex < 6; ++vertex)
+	{
+		CHECK(NearlyEqual(mesh.primitives[0].normals[(size_t)vertex * 3 + 2], 1.0f));
+		CHECK(NearlyEqual(mesh.primitives[1].normals[(size_t)vertex * 3 + 2], 1.0f));
+	}
+}
+
+static void TestMultiMixedColors()
+{
+	// A colour-bearing submesh and a PL submesh in the same mesh: the PL submesh
+	// must use the documented neutral rather than read a neighbour's colour.
+	SourceMesh source = MakeMultiSubmeshMesh();
+	source.submeshes[1].hasColors = false;
+	source.submeshes[1].primitiveClass = SourcePrimitiveClass::TexturedPlQuad;
+
+	GltfMultiMeshData mesh;
+	WorldMeshBuilderResult result;
+	char error[256];
+	CHECK(WorldMeshBuilder_BuildMulti(source, &mesh, &result, error, sizeof(error)) == WORLD_MESH_ERROR_NONE);
+	CHECK(result.hasColors == true); // at least one submesh carries colour
+	CHECK(mesh.primitives.size() == 2);
+	CHECK(NearlyEqual(mesh.primitives[0].baseColorFactor[0], 1.0f));
+	CHECK(NearlyEqual(mesh.primitives[0].baseColorFactor[1], 0.0f));
+	CHECK(NearlyEqual(mesh.primitives[1].baseColorFactor[0], 1.0f));
+	CHECK(NearlyEqual(mesh.primitives[1].baseColorFactor[1], 1.0f));
+	CHECK(NearlyEqual(mesh.primitives[1].baseColorFactor[2], 1.0f));
+}
+
+static void TestMultiErrors()
+{
+	char error[256];
+	WorldMeshBuilderResult result;
+	GltfMultiMeshData mesh;
+
+	// No destination.
+	CHECK(WorldMeshBuilder_BuildMulti(MakeMultiSubmeshMesh(), NULL, &result, error, sizeof(error)) == WORLD_MESH_ERROR_ARGUMENT);
+
+	// No submesh.
+	{
+		SourceMesh source = MakeMultiSubmeshMesh();
+		source.submeshes.clear();
+		CHECK(WorldMeshBuilder_BuildMulti(source, &mesh, &result, error, sizeof(error)) == WORLD_MESH_ERROR_EMPTY);
+		CHECK(mesh.primitives.empty());
+	}
+
+	// A gap between runs would drop geometry silently: rejected, zero output.
+	{
+		SourceMesh source = MakeMultiSubmeshMesh();
+		source.submeshes[0].indexCount = 3;
+		source.submeshes[1].firstIndex = 6;
+		source.submeshes[1].indexCount = 3;
+		CHECK(WorldMeshBuilder_BuildMulti(source, &mesh, &result, error, sizeof(error)) == WORLD_MESH_ERROR_UNCOVERED_INDICES);
+		CHECK(mesh.primitives.empty());
+		CHECK(error[0] != '\0');
+	}
+
+	// A run that extends past the index list.
+	{
+		SourceMesh source = MakeMultiSubmeshMesh();
+		source.submeshes[1].indexCount = 12;
+		CHECK(WorldMeshBuilder_BuildMulti(source, &mesh, &result, error, sizeof(error)) == WORLD_MESH_ERROR_INDEX_RANGE);
+		CHECK(mesh.primitives.empty());
+	}
+
+	// A submesh declares colour but the source has none.
+	{
+		SourceMesh source = MakeMultiSubmeshMesh();
+		source.colors.clear();
+		CHECK(WorldMeshBuilder_BuildMulti(source, &mesh, &result, error, sizeof(error)) == WORLD_MESH_ERROR_ATTRIBUTE_SIZE);
+		CHECK(mesh.primitives.empty());
+	}
+
+	// An index outside the vertex range.
+	{
+		SourceMesh source = MakeMultiSubmeshMesh();
+		source.indices[6] = 99;
+		CHECK(WorldMeshBuilder_BuildMulti(source, &mesh, &result, error, sizeof(error)) == WORLD_MESH_ERROR_INDEX_RANGE);
+	}
+
+	// Positions not a whole number of vertices.
+	{
+		SourceMesh source = MakeMultiSubmeshMesh();
+		source.positions.push_back(1.0f);
+		CHECK(WorldMeshBuilder_BuildMulti(source, &mesh, &result, error, sizeof(error)) == WORLD_MESH_ERROR_ATTRIBUTE_SIZE);
+	}
+
+	// A null error buffer is allowed and never written.
+	{
+		SourceMesh source = MakeMultiSubmeshMesh();
+		source.submeshes.clear();
+		CHECK(WorldMeshBuilder_BuildMulti(source, &mesh, &result, NULL, 0) == WORLD_MESH_ERROR_EMPTY);
+	}
+}
+
+static void TestMultiDeterminismAndReload()
+{
+	SourceMesh source = MakeMultiSubmeshMesh();
+	char error[256];
+
+	GltfMultiMeshData first;
+	WorldMeshBuilderResult firstResult;
+	CHECK(WorldMeshBuilder_BuildMulti(source, &first, &firstResult, error, sizeof(error)) == WORLD_MESH_ERROR_NONE);
+
+	GltfMultiMeshData second;
+	WorldMeshBuilderResult secondResult;
+	CHECK(WorldMeshBuilder_BuildMulti(source, &second, &secondResult, error, sizeof(error)) == WORLD_MESH_ERROR_NONE);
+
+	CHECK(firstResult.vertexCount == secondResult.vertexCount);
+	CHECK(firstResult.triangleCount == secondResult.triangleCount);
+	CHECK(first.primitives.size() == second.primitives.size());
+	for (size_t p = 0; p < first.primitives.size(); ++p)
+	{
+		CHECK(first.primitives[p].positions == second.primitives[p].positions);
+		CHECK(first.primitives[p].normals == second.primitives[p].normals);
+		CHECK(first.primitives[p].uvs == second.primitives[p].uvs);
+		CHECK(first.primitives[p].indices == second.primitives[p].indices);
+		CHECK(memcmp(first.primitives[p].baseColorFactor, second.primitives[p].baseColorFactor,
+			sizeof(first.primitives[p].baseColorFactor)) == 0);
+	}
+
+	// Two builds write byte-identical multi GLB files.
+	CHECK(Gltf_WriteFileMulti("world_multi_a.glb", first, error, sizeof(error)) == 0);
+	CHECK(Gltf_WriteFileMulti("world_multi_b.glb", second, error, sizeof(error)) == 0);
+	std::vector<unsigned char> bytesA, bytesB;
+	CHECK(ReadFileBytes("world_multi_a.glb", &bytesA));
+	CHECK(ReadFileBytes("world_multi_b.glb", &bytesB));
+	CHECK(!bytesA.empty() && bytesA.size() == bytesB.size());
+	CHECK(bytesA.size() == bytesB.size() && memcmp(bytesA.data(), bytesB.data(), bytesA.size()) == 0);
+
+	// The built mesh reloads through the multi importer with the same primitives.
+	GltfMultiMeshData loaded;
+	CHECK(Gltf_LoadFileMulti("world_multi_a.glb", &loaded, error, sizeof(error)) == 0);
+	CHECK(loaded.primitives.size() == first.primitives.size());
+	for (size_t p = 0; p < first.primitives.size(); ++p)
+	{
+		CHECK(loaded.primitives[p].positions.size() == first.primitives[p].positions.size());
+		CHECK(memcmp(loaded.primitives[p].positions.data(), first.primitives[p].positions.data(),
+			first.primitives[p].positions.size() * sizeof(float)) == 0);
+		CHECK(loaded.primitives[p].indices.size() == first.primitives[p].indices.size());
+		CHECK(memcmp(loaded.primitives[p].indices.data(), first.primitives[p].indices.data(),
+			first.primitives[p].indices.size() * sizeof(unsigned int)) == 0);
+		CHECK(memcmp(loaded.primitives[p].baseColorFactor, first.primitives[p].baseColorFactor,
+			sizeof(first.primitives[p].baseColorFactor)) == 0);
+	}
+}
+
 int main()
 {
 	TestFlatNormals();
@@ -411,6 +646,10 @@ int main()
 	TestBoundsAndArguments();
 	TestDeterminismAndReload();
 	TestConversionHashStability();
+	TestMultiSubmeshBuild();
+	TestMultiMixedColors();
+	TestMultiErrors();
+	TestMultiDeterminismAndReload();
 
 	printf("%d checks, %d failures\n", g_checks, g_failures);
 	return g_failures == 0 ? 0 : 1;

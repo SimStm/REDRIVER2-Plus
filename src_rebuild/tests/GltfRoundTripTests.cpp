@@ -2,6 +2,14 @@
 // glTF/GLB writer and importer must agree on geometry, UVs, transform and
 // material flags, and identical conversions must produce identical bytes.
 //
+// They also cover the multi-primitive record (GltfMultiMeshData /
+// Gltf_WriteFileMulti / Gltf_LoadFileMulti): per-primitive geometry, indices and
+// base-colour material, determinism, rejection of an empty or degenerate
+// primitive with a named reason and zero partial output, that the single
+// loader still reads primitive 0 of a multi-primitive file, and that a
+// one-primitive mesh is byte-identical whether written through Gltf_WriteFile or
+// Gltf_WriteFileMulti.
+//
 // The importer's WIC image path is not exercised (no embedded image), so the
 // test needs no game assets or GPU context. Build and run instructions are in
 // tests/README.md.
@@ -11,6 +19,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <string>
 #include <vector>
 
 static int g_checks = 0;
@@ -141,11 +150,309 @@ static void TestDiagnostics()
 	CHECK(Gltf_LoadFile("truncated.glb", &loaded, error, sizeof(error)) == -1);
 }
 
+static GltfPrimitiveData MakePrimitive(const std::vector<float>& positions,
+	const std::vector<float>& normals, const std::vector<float>& uvs,
+	const std::vector<unsigned int>& indices, float r, float g, float b, float a)
+{
+	GltfPrimitiveData primitive;
+	primitive.positions = positions;
+	primitive.normals = normals;
+	primitive.uvs = uvs;
+	primitive.indices = indices;
+	primitive.vertexCount = (int)(positions.size() / 3);
+	primitive.triangleCount = (int)(indices.size() / 3);
+	primitive.baseColorFactor[0] = r;
+	primitive.baseColorFactor[1] = g;
+	primitive.baseColorFactor[2] = b;
+	primitive.baseColorFactor[3] = a;
+	return primitive;
+}
+
+// Three primitives with different vertex/index counts, different attribute sets
+// (with/without normals and UVs) and different base colours.
+static GltfMultiMeshData MakeMultiMesh()
+{
+	GltfMultiMeshData mesh;
+	mesh.primitives.push_back(MakePrimitive(
+		{ 0, 0, 0, 1, 0, 0, 0, 1, 0 },
+		{ 0, 0, 1, 0, 0, 1, 0, 0, 1 },
+		{ 0, 0, 1, 0, 0, 1 },
+		{ 0, 1, 2 },
+		0.25f, 0.5f, 0.75f, 1.0f));
+	mesh.primitives.push_back(MakePrimitive(
+		{ 0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0 },
+		std::vector<float>(),
+		{ 0, 0, 1, 0, 1, 1, 0, 1 },
+		{ 0, 1, 2, 0, 2, 3 },
+		1.0f, 0.0f, 0.0f, 1.0f));
+	mesh.primitives.push_back(MakePrimitive(
+		{ 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 1, 0, 0 },
+		std::vector<float>(),
+		std::vector<float>(),
+		{ 0, 1, 2, 3, 4, 5 },
+		0.0f, 1.0f, 0.0f, 0.5f));
+
+	const float transform[16] = {
+		1, 0, 0, 0,
+		0, 1, 0, 0,
+		0, 0, 1, 0,
+		5, 6, 7, 1,
+	};
+	memcpy(mesh.transform, transform, sizeof(transform));
+	return mesh;
+}
+
+static void TestMultiPrimitiveRoundTrip()
+{
+	const GltfMultiMeshData source = MakeMultiMesh();
+	char error[256];
+	CHECK(Gltf_WriteFileMulti("multi.glb", source, error, sizeof(error)) == 0);
+
+	GltfMultiMeshData loaded;
+	CHECK(Gltf_LoadFileMulti("multi.glb", &loaded, error, sizeof(error)) == 0);
+	CHECK(loaded.primitives.size() == source.primitives.size());
+
+	if (loaded.primitives.size() == source.primitives.size())
+	{
+		for (size_t i = 0; i < source.primitives.size(); i++)
+		{
+			const GltfPrimitiveData& s = source.primitives[i];
+			const GltfPrimitiveData& l = loaded.primitives[i];
+
+			CHECK(l.vertexCount == s.vertexCount);
+			CHECK(l.triangleCount == s.triangleCount);
+
+			CHECK(l.positions.size() == s.positions.size());
+			CHECK(s.positions.empty() || memcmp(l.positions.data(), s.positions.data(), s.positions.size() * sizeof(float)) == 0);
+			CHECK(l.normals.size() == s.normals.size());
+			CHECK(s.normals.empty() || memcmp(l.normals.data(), s.normals.data(), s.normals.size() * sizeof(float)) == 0);
+			CHECK(l.uvs.size() == s.uvs.size());
+			CHECK(s.uvs.empty() || memcmp(l.uvs.data(), s.uvs.data(), s.uvs.size() * sizeof(float)) == 0);
+			CHECK(l.indices.size() == s.indices.size());
+			CHECK(s.indices.empty() || memcmp(l.indices.data(), s.indices.data(), s.indices.size() * sizeof(unsigned int)) == 0);
+
+			CHECK(memcmp(l.baseColorFactor, s.baseColorFactor, sizeof(s.baseColorFactor)) == 0);
+			CHECK(l.metallicFactor == s.metallicFactor);
+			CHECK(l.roughnessFactor == s.roughnessFactor);
+		}
+	}
+
+	CHECK(memcmp(loaded.transform, source.transform, sizeof(source.transform)) == 0);
+
+	// The single-primitive loader reads primitive 0 of the same multi file.
+	GltfMeshData first;
+	CHECK(Gltf_LoadFile("multi.glb", &first, error, sizeof(error)) == 0);
+	CHECK(first.vertexCount == source.primitives[0].vertexCount);
+	CHECK(first.triangleCount == source.primitives[0].triangleCount);
+	CHECK(memcmp(first.baseColorFactor, source.primitives[0].baseColorFactor, sizeof(first.baseColorFactor)) == 0);
+}
+
+static void TestMultiPrimitiveDeterminism()
+{
+	const GltfMultiMeshData source = MakeMultiMesh();
+	char error[256];
+	CHECK(Gltf_WriteFileMulti("multi_a.glb", source, error, sizeof(error)) == 0);
+	CHECK(Gltf_WriteFileMulti("multi_b.glb", source, error, sizeof(error)) == 0);
+
+	std::vector<unsigned char> a, b;
+	CHECK(ReadFileBytes("multi_a.glb", &a));
+	CHECK(ReadFileBytes("multi_b.glb", &b));
+	CHECK(!a.empty() && a.size() == b.size());
+	CHECK(a.size() == b.size() && memcmp(a.data(), b.data(), a.size()) == 0);
+}
+
+// Gate F4: a one-primitive mesh written through Gltf_WriteFileMulti must be
+// byte-identical to the historical single-primitive Gltf_WriteFile output,
+// locking the documented single-vs-multi byte-identity claim.
+static void TestSingleVsMultiByteIdentity()
+{
+	const GltfMeshData source = MakeTriangle();
+	char error[256];
+	CHECK(Gltf_WriteFile("single-identity.glb", source, error, sizeof(error)) == 0);
+
+	// The same record expressed as a one-primitive multi mesh.
+	GltfMultiMeshData multi;
+	GltfPrimitiveData primitive;
+	primitive.positions = source.positions;
+	primitive.normals = source.normals;
+	primitive.uvs = source.uvs;
+	primitive.indices = source.indices;
+	for (int i = 0; i < 4; i++)
+		primitive.baseColorFactor[i] = source.baseColorFactor[i];
+	primitive.metallicFactor = source.metallicFactor;
+	primitive.roughnessFactor = source.roughnessFactor;
+	primitive.vertexCount = source.vertexCount;
+	primitive.triangleCount = source.triangleCount;
+	multi.primitives.push_back(primitive);
+	memcpy(multi.transform, source.transform, sizeof(multi.transform));
+	CHECK(Gltf_WriteFileMulti("multi-identity.glb", multi, error, sizeof(error)) == 0);
+
+	std::vector<unsigned char> single, multiBytes;
+	CHECK(ReadFileBytes("single-identity.glb", &single));
+	CHECK(ReadFileBytes("multi-identity.glb", &multiBytes));
+	CHECK(!single.empty() && single.size() == multiBytes.size());
+	CHECK(single.size() == multiBytes.size() &&
+		memcmp(single.data(), multiBytes.data(), single.size()) == 0);
+}
+
+static bool FileExists(const char* path)
+{
+	FILE* file = fopen(path, "rb");
+	if (!file)
+		return false;
+	fclose(file);
+	return true;
+}
+
+static void TestMultiPrimitiveWriterRejections()
+{
+	char error[256];
+
+	// No primitives: named reason and no file.
+	remove("reject-empty.glb");
+	GltfMultiMeshData empty;
+	CHECK(Gltf_WriteFileMulti("reject-empty.glb", empty, error, sizeof(error)) == -1);
+	CHECK(error[0] != '\0');
+	CHECK(strstr(error, "no primitives") != NULL);
+	CHECK(!FileExists("reject-empty.glb"));
+
+	// A primitive with no positions.
+	remove("reject-degenerate.glb");
+	GltfMultiMeshData noPositions;
+	noPositions.primitives.push_back(GltfPrimitiveData());
+	CHECK(Gltf_WriteFileMulti("reject-degenerate.glb", noPositions, error, sizeof(error)) == -1);
+	CHECK(strstr(error, "primitive 0") != NULL);
+	CHECK(!FileExists("reject-degenerate.glb"));
+
+	// A primitive whose index list is not a whole number of triangles.
+	remove("reject-partial-triangle.glb");
+	GltfMultiMeshData partialTriangle;
+	partialTriangle.primitives.push_back(MakePrimitive(
+		{ 0, 0, 0, 1, 0, 0, 0, 1, 0 }, std::vector<float>(), std::vector<float>(),
+		{ 0, 1 }, 1, 1, 1, 1));
+	CHECK(Gltf_WriteFileMulti("reject-partial-triangle.glb", partialTriangle, error, sizeof(error)) == -1);
+	CHECK(strstr(error, "primitive 0") != NULL);
+	CHECK(!FileExists("reject-partial-triangle.glb"));
+
+	// A primitive with an out-of-range index.
+	remove("reject-index.glb");
+	GltfMultiMeshData badIndex;
+	badIndex.primitives.push_back(MakePrimitive(
+		{ 0, 0, 0, 1, 0, 0, 0, 1, 0 }, std::vector<float>(), std::vector<float>(),
+		{ 0, 1, 9 }, 1, 1, 1, 1));
+	CHECK(Gltf_WriteFileMulti("reject-index.glb", badIndex, error, sizeof(error)) == -1);
+	CHECK(strstr(error, "outside the vertex range") != NULL);
+	CHECK(!FileExists("reject-index.glb"));
+}
+
+static void AppendU32(std::vector<unsigned char>& out, unsigned int value)
+{
+	out.push_back((unsigned char)(value & 0xff));
+	out.push_back((unsigned char)((value >> 8) & 0xff));
+	out.push_back((unsigned char)((value >> 16) & 0xff));
+	out.push_back((unsigned char)((value >> 24) & 0xff));
+}
+
+static int WriteGlbFromJsonBin(const char* path, const char* json, const std::vector<unsigned char>& bin)
+{
+	std::string jsonText = json;
+	while (jsonText.size() % 4 != 0)
+		jsonText += " ";
+	std::vector<unsigned char> binChunk = bin;
+	while (binChunk.size() % 4 != 0)
+		binChunk.push_back(0);
+
+	const unsigned int jsonLength = (unsigned int)jsonText.size();
+	const unsigned int binLength = (unsigned int)binChunk.size();
+	const unsigned int totalLength = 12 + 8 + jsonLength + 8 + binLength;
+
+	std::vector<unsigned char> glb;
+	AppendU32(glb, 0x46546C67);
+	AppendU32(glb, 2);
+	AppendU32(glb, totalLength);
+	AppendU32(glb, jsonLength);
+	AppendU32(glb, 0x4E4F534A);
+	glb.insert(glb.end(), jsonText.begin(), jsonText.end());
+	AppendU32(glb, binLength);
+	AppendU32(glb, 0x004E4942);
+	glb.insert(glb.end(), binChunk.begin(), binChunk.end());
+
+	FILE* file = fopen(path, "wb");
+	if (!file)
+		return 0;
+	const bool wrote = fwrite(glb.data(), 1, glb.size(), file) == glb.size();
+	fclose(file);
+	return wrote ? 1 : 0;
+}
+
+static void TestMultiPrimitiveLoaderRejections()
+{
+	char error[256];
+	GltfMultiMeshData loaded;
+
+	// A mesh whose primitives array is empty.
+	CHECK(WriteGlbFromJsonBin("load-empty-prims.glb",
+		"{\"asset\":{\"version\":\"2.0\"},\"meshes\":[{\"primitives\":[]}]}",
+		std::vector<unsigned char>()));
+	loaded.primitives.push_back(GltfPrimitiveData());
+	loaded.primitives[0].vertexCount = 99;
+	CHECK(Gltf_LoadFileMulti("load-empty-prims.glb", &loaded, error, sizeof(error)) == -1);
+	CHECK(error[0] != '\0');
+	CHECK(loaded.primitives.empty()); // zero partial output
+
+	// A primitive without a POSITION accessor.
+	CHECK(WriteGlbFromJsonBin("load-no-position.glb",
+		"{\"asset\":{\"version\":\"2.0\"},\"meshes\":[{\"primitives\":[{\"attributes\":{}}]}]}",
+		std::vector<unsigned char>()));
+	CHECK(Gltf_LoadFileMulti("load-no-position.glb", &loaded, error, sizeof(error)) == -1);
+	CHECK(error[0] != '\0');
+	CHECK(loaded.primitives.empty());
+
+	// A primitive with an out-of-range index (valid POSITION, bad index list).
+	std::vector<unsigned char> triangleBin(36, 0); // POSITION: 3 * VEC3 float, all zero
+	AppendU32(triangleBin, 0);
+	AppendU32(triangleBin, 1);
+	AppendU32(triangleBin, 5); // out of range for a 3-vertex mesh
+	CHECK(WriteGlbFromJsonBin("load-bad-index.glb",
+		"{\"asset\":{\"version\":\"2.0\"},"
+		"\"meshes\":[{\"primitives\":[{\"attributes\":{\"POSITION\":0},\"indices\":1}]}],"
+		"\"accessors\":["
+		"{\"bufferView\":0,\"componentType\":5126,\"count\":3,\"type\":\"VEC3\"},"
+		"{\"bufferView\":1,\"componentType\":5125,\"count\":3,\"type\":\"SCALAR\"}],"
+		"\"bufferViews\":["
+		"{\"buffer\":0,\"byteOffset\":0,\"byteLength\":36},"
+		"{\"buffer\":0,\"byteOffset\":36,\"byteLength\":12}],"
+		"\"buffers\":[{\"byteLength\":48}]}",
+		triangleBin));
+	CHECK(Gltf_LoadFileMulti("load-bad-index.glb", &loaded, error, sizeof(error)) == -1);
+	CHECK(strstr(error, "outside the vertex range") != NULL);
+	CHECK(loaded.primitives.empty());
+
+	// A primitive that references a texture the multi record cannot hold.
+	const std::vector<unsigned char> positionOnly(36, 0); // POSITION: 3 * VEC3 float
+	CHECK(WriteGlbFromJsonBin("load-textured.glb",
+		"{\"asset\":{\"version\":\"2.0\"},"
+		"\"meshes\":[{\"primitives\":[{\"attributes\":{\"POSITION\":0},\"material\":0}]}],"
+		"\"materials\":[{\"pbrMetallicRoughness\":{\"baseColorTexture\":{\"index\":0}}}],"
+		"\"accessors\":[{\"bufferView\":0,\"componentType\":5126,\"count\":3,\"type\":\"VEC3\"}],"
+		"\"bufferViews\":[{\"buffer\":0,\"byteOffset\":0,\"byteLength\":36}],"
+		"\"buffers\":[{\"byteLength\":36}]}",
+		positionOnly));
+	CHECK(Gltf_LoadFileMulti("load-textured.glb", &loaded, error, sizeof(error)) == -1);
+	CHECK(strstr(error, "texture") != NULL);
+	CHECK(loaded.primitives.empty());
+}
+
 int main()
 {
 	TestRoundTrip();
 	TestReproducibleBytes();
 	TestDiagnostics();
+	TestMultiPrimitiveRoundTrip();
+	TestMultiPrimitiveDeterminism();
+	TestSingleVsMultiByteIdentity();
+	TestMultiPrimitiveWriterRejections();
+	TestMultiPrimitiveLoaderRejections();
 
 	printf("%d checks, %d failures\n", g_checks, g_failures);
 	return g_failures == 0 ? 0 : 1;

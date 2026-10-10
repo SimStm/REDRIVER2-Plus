@@ -13,6 +13,14 @@
 // it with the game camera into an offscreen RGBA8 target, then checks the
 // readback pixels, camera response and the content release/reload transitions.
 //
+// Part 4: registers a multi-primitive converted resource and draws it in
+// instance mode, checking that every primitive and its base colour reaches the
+// target while the instance still counts once.
+//
+// Part 5: rejects a single-record GLB with an embedded base-colour image (the
+// multi-primitive record has no image), checking the named diagnostic and that
+// the previously loaded content and the scene draw are unaffected.
+//
 // It requires a Vulkan-capable GPU/driver and the Diligent libraries built by
 // scripts/fetch_diligent.ps1; it needs no game assets. Build and run
 // instructions are in tests/README.md.
@@ -29,6 +37,8 @@
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
+#include <string>
+#include <vector>
 
 #include "RenderDevice.h"
 #include "DeviceContext.h"
@@ -1053,6 +1063,264 @@ static void TestInstanceScreenRegions()
 	Check(CountRed(depthImage, 64, 64) == 0, "the farther instance is fully occluded");
 }
 
+// Writes a multi-primitive GLB with two horizontal (x-z plane) rectangles: a red
+// one centred at x = -9000 and a green one centred at x = +9000. The node
+// transform stays identity, so the placement is baked into each primitive's
+// positions. Front winding, the same (0,1,2)+(0,2,3) fan the decoder emits.
+static bool WriteMultiFixture(const char* path, char* error, int errorCapacity)
+{
+	GltfMultiMeshData multi;
+
+	const float halfX = 2500.0f;
+	const float halfZ = 1500.0f;
+	const float offsets[2] = { -9000.0f, 9000.0f };
+	const float colors[2][4] = {
+		{ 1.0f, 0.0f, 0.0f, 1.0f },	// red (left)
+		{ 0.0f, 1.0f, 0.0f, 1.0f },	// green (right)
+	};
+
+	for (int p = 0; p < 2; ++p)
+	{
+		const float x = offsets[p];
+		GltfPrimitiveData primitive;
+		primitive.positions = {
+			x - halfX, 0, -halfZ,  x + halfX, 0, -halfZ,  x + halfX, 0, halfZ,  x - halfX, 0, halfZ,
+		};
+		primitive.uvs = { 0, 0,  1, 0,  0, 1,  1, 1 };
+		primitive.indices = { 0, 1, 2,  0, 2, 3 };
+		primitive.vertexCount = 4;
+		primitive.triangleCount = 2;
+		for (int c = 0; c < 4; ++c)
+			primitive.baseColorFactor[c] = colors[p][c];
+		multi.primitives.push_back(primitive);
+	}
+
+	return Gltf_WriteFileMulti(path, multi, error, errorCapacity) == 0;
+}
+
+// E03 multi-primitive consumption: one registered resource with two primitives
+// (distinct base colours) drawn as a single instance. Both colours must appear at
+// their expected screen regions, proving every primitive of the resource is
+// loaded and drawn, while the instance still counts once in the stats.
+static void TestMultiPrimitiveResource()
+{
+	char error[256];
+	NativeRenderer_ClearInstances();
+	NativeRenderer_ClearResources();
+
+	Check(WriteMultiFixture("multi-instance.glb", error, sizeof(error)),
+		"multi-primitive fixture written");
+	Check(NativeRenderer_RegisterResource("multi", "multi-instance.glb", error, sizeof(error)) == 1,
+		"multi-primitive resource registered");
+
+	float view[16];
+	BuildTopDownView(20000.0f, view);
+	NativeRenderer_SetCamera(view, 1.0472f);
+	NativeRenderer_SetClipPlanes(100.0f, 125000.0f);
+
+	NativeInstance instance;
+	const float pos[3] = { 0.0f, 0.0f, 8000.0f };
+	MakeInstance(instance, "multi", pos, 0, 1, 0, 60, 8, 1);
+	Check(NativeRenderer_SetInstances(&instance, 1, error, sizeof(error)) == 1,
+		"multi-primitive instance set");
+
+	unsigned char image[64 * 64 * 4] = {};
+	Check(NativeRenderer_RenderSceneToRGBA(image, 64, 64, error, sizeof(error)) == 1,
+		"multi-primitive instance rendered offscreen");
+
+	int drawn = 0, skipped = 0;
+	NativeRenderer_GetInstanceStats(nullptr, &drawn, &skipped, nullptr);
+	Check(drawn == 1 && skipped == 0,
+		"the multi-primitive instance counts as one drawn instance");
+
+	bool redLeft = false, greenLeft = false, redRight = false, greenRight = false;
+	for (int y = 0; y < 64; ++y)
+	{
+		for (int x = 0; x < 64; ++x)
+		{
+			const unsigned char* pixel = image + ((size_t)y * 64 + x) * 4;
+			if (x < 32)
+			{
+				if (IsRed(pixel)) redLeft = true;
+				if (IsGreen(pixel)) greenLeft = true;
+			}
+			else
+			{
+				if (IsRed(pixel)) redRight = true;
+				if (IsGreen(pixel)) greenRight = true;
+			}
+		}
+	}
+	Check(redLeft, "the red primitive is visible in the left screen region");
+	Check(greenRight, "the green primitive is visible in the right screen region");
+	Check(!greenLeft, "the green primitive does not leak into the left region");
+	Check(!redRight, "the red primitive does not leak into the right region");
+
+	NativeRenderer_ClearInstances();
+	NativeRenderer_ClearResources();
+}
+
+// ---------------------------------------------------------------------------
+// E03 gate follow-up (capacity-change boundary): the renderer's LoadContent and
+// RegisterResource both go through Gltf_LoadFileMulti, which rejects a texture
+// reference the multi-primitive record cannot hold. A single-record GLB with an
+// embedded base-colour image must be refused with a named diagnostic, and the
+// renderer must stay in its previous state.
+// ---------------------------------------------------------------------------
+
+static void AppendU32(std::vector<unsigned char>& out, unsigned int value)
+{
+	out.push_back((unsigned char)(value & 0xff));
+	out.push_back((unsigned char)((value >> 8) & 0xff));
+	out.push_back((unsigned char)((value >> 16) & 0xff));
+	out.push_back((unsigned char)((value >> 24) & 0xff));
+}
+
+// Writes a minimal single-record GLB whose one primitive references a material
+// with a base-colour texture. A real 1x1 PNG is embedded as images[0] (a
+// bufferView in the shared BIN chunk) and textures[0] points at it, so this is a
+// genuine textured GLB, not just a texture reference. The multi-primitive record
+// cannot hold that image, so Gltf_LoadFileMulti must reject it.
+static bool WriteTexturedGlb(const char* path, char* error, int errorCapacity)
+{
+	// A valid 1x1 red PNG (120 bytes).
+	static const unsigned char png[120] = {
+		0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D,
+		0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+		0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4, 0x89, 0x00, 0x00, 0x00,
+		0x01, 0x73, 0x52, 0x47, 0x42, 0x00, 0xAE, 0xCE, 0x1C, 0xE9, 0x00, 0x00,
+		0x00, 0x04, 0x67, 0x41, 0x4D, 0x41, 0x00, 0x00, 0xB1, 0x8F, 0x0B, 0xFC,
+		0x61, 0x05, 0x00, 0x00, 0x00, 0x09, 0x70, 0x48, 0x59, 0x73, 0x00, 0x00,
+		0x0E, 0xC3, 0x00, 0x00, 0x0E, 0xC3, 0x01, 0xC7, 0x6F, 0xA8, 0x64, 0x00,
+		0x00, 0x00, 0x0D, 0x49, 0x44, 0x41, 0x54, 0x18, 0x57, 0x63, 0xF8, 0xCF,
+		0xC0, 0xF0, 0x1F, 0x00, 0x05, 0x00, 0x01, 0xFF, 0xA6, 0x5C, 0x9B, 0x5D,
+		0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+	};
+
+	const unsigned int positionBytes = 36; // 3 * VEC3 float32, all zero
+	std::vector<unsigned char> bin(positionBytes, 0);
+	bin.insert(bin.end(), png, png + sizeof(png)); // 36 + 120 = 156 (4-byte aligned)
+
+	const char* json =
+		"{\"asset\":{\"version\":\"2.0\"},"
+		"\"meshes\":[{\"primitives\":[{\"attributes\":{\"POSITION\":0},\"material\":0}]}],"
+		"\"materials\":[{\"pbrMetallicRoughness\":{\"baseColorTexture\":{\"index\":0}}}],"
+		"\"textures\":[{\"source\":0}],"
+		"\"images\":[{\"bufferView\":1,\"mimeType\":\"image/png\"}],"
+		"\"accessors\":[{\"bufferView\":0,\"componentType\":5126,\"count\":3,\"type\":\"VEC3\"}],"
+		"\"bufferViews\":[{\"buffer\":0,\"byteOffset\":0,\"byteLength\":36},"
+		"{\"buffer\":0,\"byteOffset\":36,\"byteLength\":120}],"
+		"\"buffers\":[{\"byteLength\":156}]}";
+
+	std::string jsonText = json;
+	while (jsonText.size() % 4 != 0)
+		jsonText += " ";
+
+	const unsigned int jsonLength = (unsigned int)jsonText.size();
+	const unsigned int binLength = (unsigned int)bin.size();
+	const unsigned int totalLength = 12 + 8 + jsonLength + 8 + binLength;
+
+	std::vector<unsigned char> glb;
+	AppendU32(glb, 0x46546C67); // "glTF"
+	AppendU32(glb, 2);
+	AppendU32(glb, totalLength);
+	AppendU32(glb, jsonLength);
+	AppendU32(glb, 0x4E4F534A); // "JSON"
+	glb.insert(glb.end(), jsonText.begin(), jsonText.end());
+	AppendU32(glb, binLength);
+	AppendU32(glb, 0x004E4942); // "BIN\0"
+	glb.insert(glb.end(), bin.begin(), bin.end());
+
+	FILE* file = fopen(path, "wb");
+	if (!file)
+	{
+		snprintf(error, errorCapacity, "cannot create %s", path);
+		return false;
+	}
+	const bool wrote = fwrite(glb.data(), 1, glb.size(), file) == glb.size();
+	fclose(file);
+	if (!wrote)
+	{
+		remove(path);
+		snprintf(error, errorCapacity, "cannot write %s", path);
+		return false;
+	}
+	return true;
+}
+
+static void TestTexturedContentRejected()
+{
+	char error[256];
+	NativeRenderer_ClearContent();
+	NativeRenderer_ClearInstances();
+	NativeRenderer_ClearResources();
+
+	// A valid, untextured content record first: the rejected textured load must
+	// leave it intact (the strongest form of "renderer state stays clean").
+	GltfMeshData quad;
+	quad.positions = { -1, -1, 0,  1, -1, 0,  1, 1, 0,  -1, 1, 0 };
+	quad.uvs = { 0, 0,  1, 0,  1, 1,  0, 1 };
+	quad.indices = { 0, 1, 2,  0, 2, 3 };
+	quad.vertexCount = 4;
+	quad.triangleCount = 2;
+	quad.baseColorFactor[0] = 1.0f;
+	quad.baseColorFactor[1] = 0.0f;
+	quad.baseColorFactor[2] = 0.0f;
+	quad.baseColorFactor[3] = 1.0f;
+	quad.transform[14] = 5.0f; // the only placement: ahead of the identity camera (+Z forward)
+	Check(Gltf_WriteFile("textured-guard.glb", quad, error, sizeof(error)) == 0,
+		"untextured guard content written");
+	Check(NativeRenderer_LoadContent("textured-guard.glb", error, sizeof(error)) == 1,
+		"untextured guard content loaded");
+
+	int vertices = 0, triangles = 0;
+	NativeRenderer_GetContentStats(&vertices, &triangles);
+	Check(vertices == 4 && triangles == 2, "guard content stats report 4 vertices / 2 triangles");
+
+	const float identity[16] = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
+	NativeRenderer_SetCamera(identity, 1.0472f);
+	// The guard quad is metre-scale (z = +5), so use metre-scale clip planes:
+	// an earlier test leaves the raw-unit pair (100 / 125000) in place.
+	NativeRenderer_SetClipPlanes(0.02f, 300.0f);
+
+	// A single-record GLB with an embedded base-colour image is outside the
+	// multi-primitive record the renderer loads through.
+	Check(WriteTexturedGlb("textured-content.glb", error, sizeof(error)),
+		"textured GLB written with an embedded base-colour image");
+	char loadError[256] = "";
+	Check(NativeRenderer_LoadContent("textured-content.glb", loadError, sizeof(loadError)) == 0,
+		"LoadContent rejects a textured GLB");
+	Check(loadError[0] != '\0', "the textured-GLB rejection has a diagnostic");
+	Check(strstr(loadError, "texture") != nullptr, "the diagnostic names the texture reference");
+
+	// State stays clean: the previous content and its stats are untouched, and
+	// the scene still draws it.
+	Check(NativeRenderer_HasContent() == 1, "the rejected load left the guard content loaded");
+	vertices = 0;
+	triangles = 0;
+	NativeRenderer_GetContentStats(&vertices, &triangles);
+	Check(vertices == 4 && triangles == 2, "the rejected load left the content stats intact");
+
+	unsigned char image[64 * 64 * 4] = {};
+	Check(NativeRenderer_RenderSceneToRGBA(image, 64, 64, error, sizeof(error)) == 1,
+		"the scene still renders after the textured rejection");
+	const unsigned char* centre = &image[((32 * 64) + 32) * 4];
+	Check(centre[0] >= 239 && centre[1] <= 16 && centre[2] <= 16 && centre[3] == 255,
+		"the guard content still draws after the textured rejection");
+
+	// RegisterResource goes through the same loader and must reject it too,
+	// leaving no resident resource.
+	char registerError[256] = "";
+	Check(NativeRenderer_RegisterResource("textured", "textured-content.glb",
+		registerError, sizeof(registerError)) == 0, "RegisterResource rejects a textured GLB");
+	Check(registerError[0] != '\0' && strstr(registerError, "texture") != nullptr,
+		"the register rejection names the texture reference");
+	Check(NativeRenderer_ResourceResident("textured") == 0, "the rejected resource is not resident");
+
+	NativeRenderer_ClearContent();
+	Check(NativeRenderer_HasContent() == 0, "guard content cleared after the textured checks");
+}
+
 // Acceptance (c)/(d): residency, set/clear/re-register transitions, unresolved
 // keys, the named diagnostic, the no-fallback rule and the resource capacity.
 static void TestInstanceResidencyAndDiagnostics()
@@ -1331,6 +1599,8 @@ int main()
 	TestConvertedContentScene();
 	TestWindingCullPolicy();
 	TestInstanceScreenRegions();
+	TestMultiPrimitiveResource();
+	TestTexturedContentRejected();
 	TestInstanceResidencyAndDiagnostics();
 	TestCameraConventionAndPlaceholder();
 	TestVerticalConvention();

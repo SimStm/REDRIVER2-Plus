@@ -16,6 +16,7 @@
 
 #include "../../utils/WorldMeshBuilder.h"
 #include "../../utils/AssetConverter.h"
+#include "../../utils/GltfWriter.h"
 
 #include <limits.h>
 #include <stdio.h>
@@ -872,6 +873,117 @@ static void StoreModelResource(int slot, const char* resourceKey, const char* gl
 	entry.sourceHash = sourceHash;
 }
 
+// Reads a whole file into `out`. Returns false for a missing/empty/unreadable
+// file. Local to the multi-mesh publish path below.
+static bool ReadWholeFileBytes(const char* path, std::vector<unsigned char>& out)
+{
+	FILE* file = fopen(path, "rb");
+	if (file == NULL)
+		return false;
+	fseek(file, 0, SEEK_END);
+	const long size = ftell(file);
+	fseek(file, 0, SEEK_SET);
+	if (size <= 0)
+	{
+		fclose(file);
+		return false;
+	}
+	out.resize((size_t)size);
+	const bool read = fread(out.data(), 1, (size_t)size, file) == (size_t)size;
+	fclose(file);
+	return read;
+}
+
+// Publishes a multi-primitive converted mesh transactionally, mirroring
+// AssetConverter_ConvertMesh for the single-primitive record: a fresh cached GLB
+// at the key's path is reused, otherwise the mesh is written to a temporary
+// file, verified by reading it back, then renamed into place. AssetConverter is
+// deliberately left untouched for this block, so the return codes reuse its
+// vocabulary and the existing diagnostic wording stays unchanged.
+static int PublishMultiMesh(const char* cacheDirectory, const ConversionCacheKey* key,
+	const GltfMultiMeshData& mesh, AssetConverterResult* out, char* error, int errorCapacity)
+{
+	if (error && errorCapacity > 0)
+		error[0] = '\0';
+	if (cacheDirectory == NULL || key == NULL || out == NULL)
+	{
+		if (error && errorCapacity > 0)
+			snprintf(error, errorCapacity, "no cache directory, key or output");
+		return ASSET_CONVERTER_ERR_ARGUMENT;
+	}
+
+	memset(out, 0, sizeof(*out));
+	if (mesh.primitives.empty())
+	{
+		if (error && errorCapacity > 0)
+			snprintf(error, errorCapacity, "the converted mesh has no primitives");
+		return ASSET_CONVERTER_ERR_EMPTY_MESH;
+	}
+
+	char cachePath[CONVERSION_CACHE_PATH_CAPACITY];
+	if (!ConversionCache_MakeCachePath(cacheDirectory, key, cachePath, sizeof(cachePath)))
+	{
+		if (error && errorCapacity > 0)
+			snprintf(error, errorCapacity, "the cache path is too long");
+		return ASSET_CONVERTER_ERR_ARGUMENT;
+	}
+	snprintf(out->glbPath, sizeof(out->glbPath), "%s", cachePath);
+
+	// A file at the key's path is fresh by construction: the key encodes the
+	// source hash, converter, schema, options and active mods.
+	std::vector<unsigned char> bytes;
+	if (ReadWholeFileBytes(cachePath, bytes))
+	{
+		snprintf(out->contentHash, sizeof(out->contentHash), "%016llx",
+			ConversionCache_HashBytes(bytes.data(), (int)bytes.size()));
+		out->converted = 0;
+		out->reused = 1;
+		return ASSET_CONVERTER_OK;
+	}
+
+	// Convert to a temporary file, verify it reads back, then publish it.
+	char temporary[CONVERSION_CACHE_PATH_CAPACITY + 8];
+	snprintf(temporary, sizeof(temporary), "%s.tmp", cachePath);
+	if (Gltf_WriteFileMulti(temporary, mesh, error, errorCapacity) != 0)
+	{
+		remove(temporary);
+		return ASSET_CONVERTER_ERR_WRITE;
+	}
+
+	GltfMultiMeshData verified;
+	if (Gltf_LoadFileMulti(temporary, &verified, error, errorCapacity) != 0 ||
+		verified.primitives.size() != mesh.primitives.size())
+	{
+		remove(temporary);
+		if (error && errorCapacity > 0 && error[0] == '\0')
+			snprintf(error, errorCapacity, "the converted GLB failed to read back");
+		return ASSET_CONVERTER_ERR_VERIFY;
+	}
+
+	if (!ReadWholeFileBytes(temporary, bytes))
+	{
+		remove(temporary);
+		if (error && errorCapacity > 0)
+			snprintf(error, errorCapacity, "the converted GLB could not be read");
+		return ASSET_CONVERTER_ERR_VERIFY;
+	}
+	snprintf(out->contentHash, sizeof(out->contentHash), "%016llx",
+		ConversionCache_HashBytes(bytes.data(), (int)bytes.size()));
+
+	remove(cachePath);
+	if (rename(temporary, cachePath) != 0)
+	{
+		remove(temporary);
+		if (error && errorCapacity > 0)
+			snprintf(error, errorCapacity, "the converted GLB could not be published");
+		return ASSET_CONVERTER_ERR_PUBLISH;
+	}
+
+	out->converted = 1;
+	out->reused = 0;
+	return ASSET_CONVERTER_OK;
+}
+
 // Converts one resident model slot and registers its published resource. The
 // caller owns the request gating; this is the shared core of the
 // `-convertmodel` flag and the `-drawmodel` preparation.
@@ -928,10 +1040,10 @@ static bool ConvertModelSlot(int slot, char* status, int statusCapacity)
 		return false;
 	}
 
-	GltfMeshData mesh;
+	GltfMultiMeshData mesh;
 	WorldMeshBuilderResult built;
 
-	if (WorldMeshBuilder_Build(source, &mesh, &built, error, sizeof(error)) != WORLD_MESH_ERROR_NONE)
+	if (WorldMeshBuilder_BuildMulti(source, &mesh, &built, error, sizeof(error)) != WORLD_MESH_ERROR_NONE)
 	{
 		snprintf(status, statusCapacity, "convert-model: slot %d build failed: %s (%s)",
 			slot, WorldMeshBuilder_ErrorName(built.error), error);
@@ -946,7 +1058,7 @@ static bool ConvertModelSlot(int slot, char* status, int statusCapacity)
 	_mkdir(cacheDirectory); // an existing directory is fine; a real failure surfaces in the publish step
 
 	AssetConverterResult published;
-	const int code = AssetConverter_ConvertMesh(cacheDirectory, &key, mesh, &published, error, sizeof(error));
+	const int code = PublishMultiMesh(cacheDirectory, &key, mesh, &published, error, sizeof(error));
 	if (code != ASSET_CONVERTER_OK)
 	{
 		snprintf(status, statusCapacity, "convert-model: slot %d publish failed: %s (%s)",

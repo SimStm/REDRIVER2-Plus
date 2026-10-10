@@ -71,10 +71,11 @@ struct SceneConstants
 	float baseColor[4];
 };
 
-// One drawable: geometry, texture, bindings and placement. The placeholder and
-// the loaded content are separate instances, so releasing content leaves the
-// placeholder intact.
-struct SceneDrawItem
+// One drawable primitive: geometry, texture, bindings and its own base-colour
+// factor. A converted multi-primitive GLB yields one of these per primitive; the
+// built-in placeholder has exactly one. Each primitive owns its immutable GPU
+// buffers and its bindings for both scene pipelines.
+struct ScenePrimitive
 {
 	RefCntAutoPtr<IBuffer> vertices;
 	RefCntAutoPtr<IBuffer> indices;	// null -> non-indexed draw
@@ -85,16 +86,31 @@ struct SceneDrawItem
 	Uint32 vertexCount;
 	Uint32 indexCount;
 	int triangleCount;
-	float transform[16];
 	float baseColor[4];
+
+	ScenePrimitive()
+		: vertexCount(0), indexCount(0), triangleCount(0)
+	{
+		baseColor[0] = baseColor[1] = baseColor[2] = baseColor[3] = 1.0f;
+	}
+};
+
+// One drawable: a set of primitives sharing one node transform. The placeholder
+// and the loaded content are separate items, so releasing content leaves the
+// placeholder intact. `vertexCount`/`triangleCount` are the aggregate counts
+// across the primitives (the content stats and the log read them).
+struct SceneDrawItem
+{
+	std::vector<ScenePrimitive> primitives;
+	float transform[16];
+	int vertexCount;
+	int triangleCount;
 	int ready;
 
-	SceneDrawItem()
-		: vertexCount(0), indexCount(0), triangleCount(0), ready(0)
+	SceneDrawItem() : vertexCount(0), triangleCount(0), ready(0)
 	{
 		for (int i = 0; i < 16; ++i)
 			transform[i] = (i % 5 == 0) ? 1.0f : 0.0f;
-		baseColor[0] = baseColor[1] = baseColor[2] = baseColor[3] = 1.0f;
 	}
 };
 
@@ -280,32 +296,32 @@ void AddCube(std::vector<SceneVertex>& out, float cx, float cz, float size)
 	AddQuad(out, top0, top1, top2, top3); // +Y face
 }
 
-// Creates the per-item shader resource bindings for both scene pipelines and
-// binds the shared constant buffer, the item texture and its sampler.
-int CreateItemShaderBindings(SceneDrawItem& item)
+// Creates the per-primitive shader resource bindings for both scene pipelines
+// and binds the shared constant buffer, the primitive texture and its sampler.
+int CreatePrimitiveShaderBindings(ScenePrimitive& primitive)
 {
-	item.srb.Release();
-	item.srbOffscreen.Release();
+	primitive.srb.Release();
+	primitive.srbOffscreen.Release();
 
-	g_scene.pipeline->CreateShaderResourceBinding(&item.srb, true);
-	if (!item.srb)
+	g_scene.pipeline->CreateShaderResourceBinding(&primitive.srb, true);
+	if (!primitive.srb)
 		return 0;
-	item.srb->GetVariableByName(SHADER_TYPE_VERTEX, "Constants")->Set(g_scene.constants);
-	item.srb->GetVariableByName(SHADER_TYPE_PIXEL, "gTexture")->Set(item.texture->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE));
-	item.srb->GetVariableByName(SHADER_TYPE_PIXEL, "gSampler")->Set(item.sampler);
+	primitive.srb->GetVariableByName(SHADER_TYPE_VERTEX, "Constants")->Set(g_scene.constants);
+	primitive.srb->GetVariableByName(SHADER_TYPE_PIXEL, "gTexture")->Set(primitive.texture->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE));
+	primitive.srb->GetVariableByName(SHADER_TYPE_PIXEL, "gSampler")->Set(primitive.sampler);
 
 	if (g_scene.offscreenPipeline.RawPtr() == g_scene.pipeline.RawPtr())
 	{
-		item.srbOffscreen = item.srb; // same pipeline serves both targets
+		primitive.srbOffscreen = primitive.srb; // same pipeline serves both targets
 		return 1;
 	}
 
-	g_scene.offscreenPipeline->CreateShaderResourceBinding(&item.srbOffscreen, true);
-	if (!item.srbOffscreen)
+	g_scene.offscreenPipeline->CreateShaderResourceBinding(&primitive.srbOffscreen, true);
+	if (!primitive.srbOffscreen)
 		return 0;
-	item.srbOffscreen->GetVariableByName(SHADER_TYPE_VERTEX, "Constants")->Set(g_scene.constants);
-	item.srbOffscreen->GetVariableByName(SHADER_TYPE_PIXEL, "gTexture")->Set(item.texture->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE));
-	item.srbOffscreen->GetVariableByName(SHADER_TYPE_PIXEL, "gSampler")->Set(item.sampler);
+	primitive.srbOffscreen->GetVariableByName(SHADER_TYPE_VERTEX, "Constants")->Set(g_scene.constants);
+	primitive.srbOffscreen->GetVariableByName(SHADER_TYPE_PIXEL, "gTexture")->Set(primitive.texture->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE));
+	primitive.srbOffscreen->GetVariableByName(SHADER_TYPE_PIXEL, "gSampler")->Set(primitive.sampler);
 	return 1;
 }
 
@@ -451,6 +467,8 @@ int CreatePlaceholderItem()
 	AddCube(vertices, 8000.0f, 8000.0f, 1600.0f);
 
 	SceneDrawItem item;
+	item.primitives.push_back(ScenePrimitive());
+	ScenePrimitive& primitive = item.primitives.back();
 
 	BufferDesc vertexDesc;
 	vertexDesc.Name = "PlaceholderVertices";
@@ -460,10 +478,10 @@ int CreatePlaceholderItem()
 	BufferData vertexData;
 	vertexData.pData = vertices.data();
 	vertexData.DataSize = vertexDesc.Size;
-	g_device->CreateBuffer(vertexDesc, &vertexData, &item.vertices);
-	if (!item.vertices)
+	g_device->CreateBuffer(vertexDesc, &vertexData, &primitive.vertices);
+	if (!primitive.vertices)
 		return 0;
-	item.vertexCount = (Uint32)vertices.size();
+	primitive.vertexCount = (Uint32)vertices.size();
 
 	// Procedural checkerboard so the scene is visibly textured.
 	const int texSize = 64;
@@ -495,114 +513,48 @@ int CreatePlaceholderItem()
 	TextureData textureData;
 	textureData.pSubResources = &subResource;
 	textureData.NumSubresources = 1;
-	g_device->CreateTexture(textureDesc, &textureData, &item.texture);
-	if (!item.texture)
+	g_device->CreateTexture(textureDesc, &textureData, &primitive.texture);
+	if (!primitive.texture)
 		return 0;
 
 	SamplerDesc samplerDesc;
-	g_device->CreateSampler(samplerDesc, &item.sampler);
-	if (!item.sampler)
+	g_device->CreateSampler(samplerDesc, &primitive.sampler);
+	if (!primitive.sampler)
 		return 0;
 
-	if (!CreateItemShaderBindings(item))
+	if (!CreatePrimitiveShaderBindings(primitive))
 		return 0;
 
+	item.vertexCount = (int)vertices.size();
+	item.triangleCount = (int)(vertices.size() / 3);
 	item.ready = 1;
 	g_scene.placeholder = item;
 	return 1;
 }
 
-// Builds a draw item from a converted GLB record. Everything is created into a
-// local item so a failure releases it without touching the live content.
-int CreateContentItem(const GltfMeshData& mesh, SceneDrawItem& out,
+// Builds a draw item from a converted multi-primitive GLB record: one
+// ScenePrimitive per glTF primitive, each with its own immutable vertex/index
+// buffers, its own base-colour factor and its own shader bindings for both scene
+// pipelines. The multi record carries no embedded image, so every primitive
+// samples a shared white texel and its base-colour factor is what is visible.
+// Everything is created into a local item so a failure releases it without
+// touching the live content.
+int CreateContentItem(const GltfMultiMeshData& mesh, SceneDrawItem& out,
 	char* error, int errorCapacity)
 {
-	const size_t vertexCount = mesh.positions.size() / 3;
-	if (vertexCount == 0)
+	if (mesh.primitives.empty())
 	{
-		SetError(error, errorCapacity, "the converted mesh has no vertices");
+		SetError(error, errorCapacity, "the converted mesh has no primitives");
 		return 0;
-	}
-
-	std::vector<SceneVertex> vertices(vertexCount);
-	for (size_t i = 0; i < vertexCount; ++i)
-	{
-		SceneVertex& vertex = vertices[i];
-		vertex.x = mesh.positions[i * 3 + 0];
-		vertex.y = mesh.positions[i * 3 + 1];
-		vertex.z = mesh.positions[i * 3 + 2];
-		// Normals are deliberately not fetched yet: this E03 slice is unlit and
-		// the vertex format stays position + UV; lighting/PBR is a later block.
-		if (mesh.uvs.size() >= (i + 1) * 2)
-		{
-			vertex.u = mesh.uvs[i * 2 + 0];
-			vertex.v = mesh.uvs[i * 2 + 1];
-		}
-		else
-		{
-			vertex.u = 0.0f;
-			vertex.v = 0.0f;
-		}
 	}
 
 	SceneDrawItem item;
 
-	BufferDesc vertexDesc;
-	vertexDesc.Name = "ContentVertices";
-	vertexDesc.BindFlags = BIND_VERTEX_BUFFER;
-	vertexDesc.Usage = USAGE_IMMUTABLE;
-	vertexDesc.Size = (Uint32)(vertices.size() * sizeof(SceneVertex));
-	BufferData vertexData;
-	vertexData.pData = vertices.data();
-	vertexData.DataSize = vertexDesc.Size;
-	g_device->CreateBuffer(vertexDesc, &vertexData, &item.vertices);
-	if (!item.vertices)
+	// No embedded image in the multi record: one shared white texel keeps each
+	// primitive's base-colour factor visible.
+	RefCntAutoPtr<ITexture> whiteTexture;
+	RefCntAutoPtr<ISampler> whiteSampler;
 	{
-		SetError(error, errorCapacity, "the converted vertex buffer could not be created");
-		return 0;
-	}
-	item.vertexCount = (Uint32)vertices.size();
-
-	if (!mesh.indices.empty())
-	{
-		BufferDesc indexDesc;
-		indexDesc.Name = "ContentIndices";
-		indexDesc.BindFlags = BIND_INDEX_BUFFER;
-		indexDesc.Usage = USAGE_IMMUTABLE;
-		indexDesc.Size = (Uint32)(mesh.indices.size() * sizeof(unsigned int));
-		BufferData indexData;
-		indexData.pData = mesh.indices.data();
-		indexData.DataSize = indexDesc.Size;
-		g_device->CreateBuffer(indexDesc, &indexData, &item.indices);
-		if (!item.indices)
-		{
-			SetError(error, errorCapacity, "the converted index buffer could not be created");
-			return 0;
-		}
-		item.indexCount = (Uint32)mesh.indices.size();
-	}
-
-	if (!mesh.baseColorRGBA.empty() && mesh.baseColorWidth > 0 && mesh.baseColorHeight > 0)
-	{
-		TextureDesc textureDesc;
-		textureDesc.Name = "ContentBaseColor";
-		textureDesc.Type = RESOURCE_DIM_TEX_2D;
-		textureDesc.Width = (Uint32)mesh.baseColorWidth;
-		textureDesc.Height = (Uint32)mesh.baseColorHeight;
-		textureDesc.Format = TEX_FORMAT_RGBA8_UNORM;
-		textureDesc.BindFlags = BIND_SHADER_RESOURCE;
-		textureDesc.Usage = USAGE_IMMUTABLE;
-		TextureSubResData subResource;
-		subResource.pData = mesh.baseColorRGBA.data();
-		subResource.Stride = (Uint32)mesh.baseColorWidth * 4;
-		TextureData textureData;
-		textureData.pSubResources = &subResource;
-		textureData.NumSubresources = 1;
-		g_device->CreateTexture(textureDesc, &textureData, &item.texture);
-	}
-	else
-	{
-		// No embedded image: a white texel keeps the base-colour factor visible.
 		const unsigned char white[4] = { 255, 255, 255, 255 };
 		TextureDesc textureDesc;
 		textureDesc.Name = "ContentWhite";
@@ -618,33 +570,113 @@ int CreateContentItem(const GltfMeshData& mesh, SceneDrawItem& out,
 		TextureData textureData;
 		textureData.pSubResources = &subResource;
 		textureData.NumSubresources = 1;
-		g_device->CreateTexture(textureDesc, &textureData, &item.texture);
-	}
-	if (!item.texture)
-	{
-		SetError(error, errorCapacity, "the converted base-colour texture could not be created");
-		return 0;
+		g_device->CreateTexture(textureDesc, &textureData, &whiteTexture);
+		if (!whiteTexture)
+		{
+			SetError(error, errorCapacity, "the converted base-colour texture could not be created");
+			return 0;
+		}
+
+		SamplerDesc samplerDesc;
+		g_device->CreateSampler(samplerDesc, &whiteSampler);
+		if (!whiteSampler)
+		{
+			SetError(error, errorCapacity, "the converted content sampler could not be created");
+			return 0;
+		}
 	}
 
-	SamplerDesc samplerDesc;
-	g_device->CreateSampler(samplerDesc, &item.sampler);
-	if (!item.sampler)
+	item.primitives.reserve(mesh.primitives.size());
+	for (size_t p = 0; p < mesh.primitives.size(); ++p)
 	{
-		SetError(error, errorCapacity, "the converted content sampler could not be created");
-		return 0;
-	}
+		const GltfPrimitiveData& source = mesh.primitives[p];
+		const size_t vertexCount = source.positions.size() / 3;
+		if (vertexCount == 0)
+		{
+			SetError(error, errorCapacity, "a converted primitive has no vertices");
+			return 0;
+		}
 
-	if (!CreateItemShaderBindings(item))
-	{
-		SetError(error, errorCapacity, "the converted content shader bindings could not be created");
-		return 0;
+		std::vector<SceneVertex> vertices(vertexCount);
+		for (size_t i = 0; i < vertexCount; ++i)
+		{
+			SceneVertex& vertex = vertices[i];
+			vertex.x = source.positions[i * 3 + 0];
+			vertex.y = source.positions[i * 3 + 1];
+			vertex.z = source.positions[i * 3 + 2];
+			// Normals are deliberately not fetched yet: this E03 slice is unlit
+			// and the vertex format stays position + UV; lighting/PBR is a later
+			// block.
+			if (source.uvs.size() >= (i + 1) * 2)
+			{
+				vertex.u = source.uvs[i * 2 + 0];
+				vertex.v = source.uvs[i * 2 + 1];
+			}
+			else
+			{
+				vertex.u = 0.0f;
+				vertex.v = 0.0f;
+			}
+		}
+
+		item.primitives.push_back(ScenePrimitive());
+		ScenePrimitive& primitive = item.primitives.back();
+		primitive.texture = whiteTexture;
+		primitive.sampler = whiteSampler;
+
+		BufferDesc vertexDesc;
+		vertexDesc.Name = "ContentVertices";
+		vertexDesc.BindFlags = BIND_VERTEX_BUFFER;
+		vertexDesc.Usage = USAGE_IMMUTABLE;
+		vertexDesc.Size = (Uint32)(vertices.size() * sizeof(SceneVertex));
+		BufferData vertexData;
+		vertexData.pData = vertices.data();
+		vertexData.DataSize = vertexDesc.Size;
+		g_device->CreateBuffer(vertexDesc, &vertexData, &primitive.vertices);
+		if (!primitive.vertices)
+		{
+			SetError(error, errorCapacity, "the converted vertex buffer could not be created");
+			return 0;
+		}
+		primitive.vertexCount = (Uint32)vertices.size();
+
+		if (!source.indices.empty())
+		{
+			BufferDesc indexDesc;
+			indexDesc.Name = "ContentIndices";
+			indexDesc.BindFlags = BIND_INDEX_BUFFER;
+			indexDesc.Usage = USAGE_IMMUTABLE;
+			indexDesc.Size = (Uint32)(source.indices.size() * sizeof(unsigned int));
+			BufferData indexData;
+			indexData.pData = source.indices.data();
+			indexData.DataSize = indexDesc.Size;
+			g_device->CreateBuffer(indexDesc, &indexData, &primitive.indices);
+			if (!primitive.indices)
+			{
+				SetError(error, errorCapacity, "the converted index buffer could not be created");
+				return 0;
+			}
+			primitive.indexCount = (Uint32)source.indices.size();
+		}
+
+		for (int c = 0; c < 4; ++c)
+			primitive.baseColor[c] = source.baseColorFactor[c];
+		primitive.triangleCount = source.triangleCount > 0
+			? source.triangleCount
+			: (int)(source.indices.size() / 3);
+
+		if (!CreatePrimitiveShaderBindings(primitive))
+		{
+			SetError(error, errorCapacity, "the converted content shader bindings could not be created");
+			return 0;
+		}
+
+		item.vertexCount += (int)primitive.vertexCount;
+		item.triangleCount += primitive.triangleCount;
 	}
 
 	for (int i = 0; i < 16; ++i)
 		item.transform[i] = mesh.transform[i];
-	for (int i = 0; i < 4; ++i)
-		item.baseColor[i] = mesh.baseColorFactor[i];
-	item.triangleCount = mesh.triangleCount;
 
 	item.ready = 1;
 	out = item;
@@ -739,31 +771,31 @@ int EnsureOffscreenTargets(Uint32 width, Uint32 height)
 	return 1;
 }
 
-// Uploads the per-draw constants and issues one draw for an item. The shared
+// Uploads the per-draw constants and issues one draw for a primitive. The shared
 // constant buffer is written per call, so the caller must commit and draw
-// before the next UpdateBuffer (the per-instance loop relies on this).
-void DrawItem(const SceneDrawItem& item, IPipelineState* pipeline,
+// before the next UpdateBuffer (the per-primitive loops rely on this).
+void DrawPrimitive(const ScenePrimitive& primitive, IPipelineState* pipeline,
 	IShaderResourceBinding* srb, const float mvp[16])
 {
 	SceneConstants constants;
 	for (int i = 0; i < 16; ++i)
 		constants.mvp[i] = mvp[i];
 	for (int i = 0; i < 4; ++i)
-		constants.baseColor[i] = item.baseColor[i];
+		constants.baseColor[i] = primitive.baseColor[i];
 	g_context->UpdateBuffer(g_scene.constants, 0, sizeof(SceneConstants), &constants,
 		RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
 
 	g_context->SetPipelineState(pipeline);
 	g_context->CommitShaderResources(srb, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
 
-	IBuffer* vertexBuffers[1] = { item.vertices.RawPtr() };
+	IBuffer* vertexBuffers[1] = { primitive.vertices.RawPtr() };
 	g_context->SetVertexBuffers(0, 1, vertexBuffers, nullptr,
 		RESOURCE_STATE_TRANSITION_MODE_TRANSITION, SET_VERTEX_BUFFERS_FLAG_RESET);
-	if (item.indices)
+	if (primitive.indices)
 	{
-		g_context->SetIndexBuffer(item.indices, 0, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+		g_context->SetIndexBuffer(primitive.indices, 0, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
 		DrawIndexedAttribs draw;
-		draw.NumIndices = item.indexCount;
+		draw.NumIndices = primitive.indexCount;
 		draw.IndexType = VT_UINT32;
 		draw.Flags = DRAW_FLAG_NONE;
 		g_context->DrawIndexed(draw);
@@ -771,10 +803,32 @@ void DrawItem(const SceneDrawItem& item, IPipelineState* pipeline,
 	else
 	{
 		DrawAttribs draw;
-		draw.NumVertices = item.vertexCount;
+		draw.NumVertices = primitive.vertexCount;
 		draw.Flags = DRAW_FLAG_NONE;
 		g_context->Draw(draw);
 	}
+}
+
+// Draws every ready primitive of an item with the given MVP and pipeline,
+// selecting the binding that matches the target. Returns the number of
+// primitives actually issued, so the caller can tell a fully empty item from a
+// drawn one.
+int DrawItemPrimitives(const SceneDrawItem& item, IPipelineState* pipeline,
+	int offscreenTarget, const float mvp[16])
+{
+	int drawn = 0;
+	for (size_t p = 0; p < item.primitives.size(); ++p)
+	{
+		const ScenePrimitive& primitive = item.primitives[p];
+		IShaderResourceBinding* srb = offscreenTarget
+			? primitive.srbOffscreen.RawPtr()
+			: primitive.srb.RawPtr();
+		if (!primitive.vertices || !srb)
+			continue;
+		DrawPrimitive(primitive, pipeline, srb, mvp);
+		++drawn;
+	}
+	return drawn;
 }
 
 // Shared scene draw used by RenderScene (swap chain) and RenderSceneToRGBA
@@ -812,21 +866,20 @@ int RenderSceneInto(ITextureView* renderTarget, ITextureView* depthView,
 		for (int i = 0; i < g_instanceCount; ++i)
 		{
 			const SceneDrawItem* item = items[i];
-			if (!item || !item->ready || !item->vertices)
-				continue;
-			IShaderResourceBinding* srb = offscreenTarget
-				? item->srbOffscreen.RawPtr()
-				: item->srb.RawPtr();
-			if (!srb)
+			if (!item || !item->ready || item->primitives.empty())
 				continue;
 
-			// MVP = projection * view * instance transform; raw game units.
+			// MVP = projection * view * instance transform; raw game units. The
+			// instance transform is shared by all of the item's primitives.
 			float viewModel[16];
 			MultiplyColumnMajor(g_view, g_instances[i].transform, viewModel);
 			float mvp[16];
 			MultiplyColumnMajor(projection, viewModel, mvp);
-			DrawItem(*item, pipeline, srb, mvp);
-			++g_instanceDrawn;
+
+			// `drawn` counts instances, not primitives: an instance that issues
+			// at least one primitive counts once, however many it has.
+			if (DrawItemPrimitives(*item, pipeline, offscreenTarget, mvp) > 0)
+				++g_instanceDrawn;
 		}
 		if (g_instanceDrawn == 0 && g_instanceDiagnostic[0] == '\0')
 			SetInstanceDiagnosticKey("no instance could be drawn; first key: ",
@@ -836,10 +889,7 @@ int RenderSceneInto(ITextureView* renderTarget, ITextureView* depthView,
 
 	// Content mode when a converted GLB is loaded, placeholder mode otherwise.
 	const SceneDrawItem& item = g_scene.content.ready ? g_scene.content : g_scene.placeholder;
-	IShaderResourceBinding* srb = offscreenTarget
-		? item.srbOffscreen.RawPtr()
-		: item.srb.RawPtr();
-	if (!item.ready || !srb || !item.vertices)
+	if (!item.ready || item.primitives.empty())
 		return 0;
 
 	// MVP = projection * view * model. The model is the content node transform
@@ -848,8 +898,7 @@ int RenderSceneInto(ITextureView* renderTarget, ITextureView* depthView,
 	MultiplyColumnMajor(g_view, item.transform, viewModel);
 	float mvp[16];
 	MultiplyColumnMajor(projection, viewModel, mvp);
-	DrawItem(item, pipeline, srb, mvp);
-	return 1;
+	return DrawItemPrimitives(item, pipeline, offscreenTarget, mvp) > 0 ? 1 : 0;
 }
 } // namespace
 
@@ -1014,8 +1063,8 @@ int NativeRenderer_LoadContent(const char* glbPath, char* error, int errorCapaci
 		return 0;
 	}
 
-	GltfMeshData mesh;
-	if (Gltf_LoadFile(glbPath, &mesh, error, errorCapacity) != 0)
+	GltfMultiMeshData mesh;
+	if (Gltf_LoadFileMulti(glbPath, &mesh, error, errorCapacity) != 0)
 		return 0; // the previously loaded content stays untouched
 
 	if (!EnsureScenePipelines())
@@ -1087,8 +1136,8 @@ int NativeRenderer_RegisterResource(const char* key, const char* glbPath,
 		return 0;
 	}
 
-	GltfMeshData mesh;
-	if (Gltf_LoadFile(glbPath, &mesh, error, errorCapacity) != 0)
+	GltfMultiMeshData mesh;
+	if (Gltf_LoadFileMulti(glbPath, &mesh, error, errorCapacity) != 0)
 		return 0;
 
 	if (!EnsureScenePipelines())

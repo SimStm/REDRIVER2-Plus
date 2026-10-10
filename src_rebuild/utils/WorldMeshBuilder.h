@@ -87,6 +87,42 @@ struct WorldMeshBuilderResult
 int WorldMeshBuilder_Build(const SourceMesh& source, GltfMeshData* out,
 	WorldMeshBuilderResult* result, char* error, int capacity);
 
+/*
+ * Multi-submesh build path: maps every `SourceMesh` submesh to one
+ * `GltfPrimitiveData`, so a model whose decoder produced more than one submesh
+ * now converts instead of failing with MULTIPLE_SUBMESHES. It shares the single
+ * builder's geometry rules exactly:
+ *
+ *  - One primitive per submesh, in source order. Each primitive expands its own
+ *    submesh's triangles into dedicated per-corner vertices with the same flat
+ *    per-triangle normal synthesis (degenerate -> documented (0,0,1)) and the
+ *    same raw (unnormalised) per-corner UVs. A triangle in one submesh never
+ *    shares a vertex with another.
+ *
+ *  - Per-primitive base colour follows the single builder's policy for that
+ *    submesh: the arithmetic mean of the submesh's stored raw face colours when
+ *    the submesh declares colours, otherwise the documented neutral opaque white
+ *    (1,1,1,1). A mesh may therefore mix colour-bearing and colour-less (PL)
+ *    submeshes; the shared per-vertex colour array is global, so a PL submesh's
+ *    placeholder bytes are never read as a colour.
+ *
+ *  - The submesh index runs must form an ordered, contiguous partition of the
+ *    index list (submesh 0 starts at index 0 and each run begins where the
+ *    previous ended), covering every index exactly once. A gap or overlap is
+ *    UNCOVERED_INDICES with zero output, so no supported geometry is dropped
+ *    silently. Every index must still address a real vertex (INDEX_RANGE).
+ *
+ *  - The node transform stays identity, exactly as the single path.
+ *
+ * Deterministic and bounded: identical input produces byte-identical output
+ * (via Gltf_WriteFileMulti), and any failure resets the destination to an empty
+ * record (no partial output). `result` reports aggregate vertex/triangle counts
+ * and `submeshCount` = the primitive count; the single-valued class/texture/
+ * hasColors fields describe the first submesh (the log only uses the counts).
+ */
+int WorldMeshBuilder_BuildMulti(const SourceMesh& source, GltfMultiMeshData* out,
+	WorldMeshBuilderResult* result, char* error, int capacity);
+
 /* Human-readable name of a build error code. */
 const char* WorldMeshBuilder_ErrorName(WorldMeshBuilderError error);
 
