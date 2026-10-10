@@ -92,7 +92,7 @@ accepted.
   diagnostic, not conversion or world acceptance. Corrected traversal includes terminal objects marked `0x8000`
   (the initial 6078-count report is superseded); the fresh report was copied to
   `src_rebuild/build_e04_gate4/logs/chicago_inventory_final.txt`. Other cities, variants and dynamic/streamed
-  categories remain open; the conversion cache is not consumed by native loading. See
+  categories remain open; complete package loading remains unaccepted. See
   [inventory evidence](engine-migration/e02/chicago-inventory.md).
 
 ## Engine migration E03 (in progress; parity not accepted)
@@ -104,40 +104,41 @@ accepted.
   now build/hash/publish on one asynchronous task; normal frames poll, level-load/shutdown
   join. Provenance rejects obsolete results; GPU registration batches target 4 ms.
   Region-image readback is opt-in. The historical cache seed/keys are preserved.
-  Earlier synchronous runs dropped 107 then 37 ticks; the corrected-key asynchronous
-  final run reached tick 5551 with zero drops across the same two transitions. A bounded
-  result, not city/replay acceptance. Conversion tests 14/0 cover ownership, concurrency,
+  Async preparation reached tick 5551 with zero drops across two transitions (formerly
+  107/37 synchronous drops); this is bounded evidence, not city/replay acceptance.
+  Conversion tests 14/0 cover ownership, concurrency,
   identity and allocation bounds (17 suites passed); native/OpenGL builds/startups passed.
   Presentation owns placements/LOD and retains its native scene through conversion/uploads;
   old keys retire after instance replacement. Replay transitions retained 99/35 frames,
   zero empty loading frames; GPU smoke 1220/0, capture 5897 draws/zero messages. Initial
-  loading/bounded staging overflow still clears. Prefetch/draw distance/actors remain open.
+  loading/bounded staging overflow still clears. Prefetch and actors remain open.
   This bridge does not read CD-thread buffers.
 - Native settings/F9 block (2026-10-10): config.ini `[render] presentationFps` is read
   before selective developer overrides; missing FPS preserves the baseline. Diligent
   samplers follow live bilinear filtering for resident/new resources. The native F9
   panel owns an ImGui/SDL context and GPU adapter on the existing target/swapchain;
-  CPU/FPS/cap/tick diagnostics are visible. Legacy graphics controls and draw distance
-  are disabled where not integrated. RenderDoc PNG inspected (2214 draws, zero messages);
-  native build/startup passed, GPU smoke 1207/0, NTSC/PAL settings 24/0 each. Interactive
-  toggling/controls and draw-distance integration remain open. Three swapchain images
-  removed the measured stationary MAILBOX plateau: ~106-115 FPS, Present ~0.16-0.18 ms
-  versus ~60 FPS / ~7-8 ms with two, 30/31 ticks and zero drops. Moving views remain
-  CPU-bound; actual image count is visible, and surface limits may clamp the request.
+  CPU/FPS/cap/tick diagnostics are visible. Unmigrated legacy controls are disabled.
+  Native overlay PNG inspected (2214 draws, zero messages); settings tests 24/0 per region.
+  Three images removed the bounded stationary ~60 FPS plateau (~106-115 FPS, zero drops);
+  moving views remain CPU-bound. Interactive toggling/input/display validation stays open.
+- Native cell visibility preserves all object/cell/event-list aliases separately from
+  unique placements. DrawMap records approved cells without changing gameplay/RNG;
+  Diligent masks/compacts its own instances and retains copied membership during streaming.
+  F9 draw distance is enabled with the original cell-count/PVS/event meaning. Selection
+  tests 15/0, all 18 suites passed. At tick 30, 441/1800 selects 155/233 instances with
+  the same camera; GPU captures 308/461 draws, zero messages. Independent native selection,
+  split-screen and full event-mode coverage remain open. See the performance product note.
 - Native performance follow-up (2026-10-10): dynamic constants use Map/Discard, window
   Present honors configured VSync, and conservative homogeneous AABB culling removes
   invisible instance draws. Opt-in `RED2_NATIVE_PERF=1` records CPU phases, draw/cull counts
   and tick/drop deltas. Mission 1 samples improved from 3.7-4.6 FPS to 41-60 FPS after
-  these changes; no dropped ticks in the measured post-fix intervals. This is bounded
-  local evidence, not a GPU benchmark or full scene acceptance. RenderDoc1.41 captured
-  one colour/depth pass (5300 indexed draws, 28828 triangles, empty validation log).
-  Its sRGB window target exposed extra encoding of display-encoded original colours;
-  native window output now explicitly requests RGBA8_UNORM, matching offscreen output.
+  these changes; measured intervals had zero drops. Bounded RenderDoc capture: one pass,
+  5300 draws/28828 triangles/zero messages. RGBA8_UNORM window/offscreen output corrects
+  extra sRGB encoding of display-encoded original colours; full parity remains open.
 - Native startup selects existing PsyCross headless mode 2: SDL window and CPU VRAM only.
-  No PsyCross Vulkan instance/device/surface/swapchain or GL context is initialized.
-  CPU upload/copy/read/clear VRAM and OT parsing remain; compatibility draws/readbacks
-  are skipped. Diligent startup failure exits explicitly. Framebuffer-derived effects,
-  legacy GPU texture consumers remain migration work, not hidden fallback.
+  No compatibility GPU initializes; CPU VRAM/OT parsing remain, GPU draws/readbacks skip.
+  Diligent startup failure exits explicitly; framebuffer effects/legacy GPU consumers
+  still require migration.
   Saved settings load without creating a compatibility GPU context. The developer panel
   toggle is F9; the existing receptivity shortcut moved from F9 to F8.
   [Details/evidence](product/native-renderer-performance.md).
@@ -149,11 +150,9 @@ accepted.
 - Windows operational path also uses `src_rebuild/bin/Release_dev/REDRIVER2_dev.exe`:
   from root PowerShell, set `$env:RED2_NATIVE_RENDERER = '1'` and invoke
   `& .\scripts\run_debug_start.ps1 -Mission 1 -ExtraArgs @('-drawregion')` (fire-and-forget).
-  Simulation/game/services still depend on PsyCross; its presentation is headless while
-  Diligent presents the native window, resident `native_cache` GLBs and live camera/LOD.
-  This prepares a resident-world snapshot, not full driving streaming or full-game acceptance.
-  [Launch/capture/reset instructions](RECENT_CONTEXT.md#native-launch-and-capture-operations)
-  include the optional bounded `-drawmodel <slot>` probe and legacy next-launch reset.
+  Simulation/services still depend on PsyCross; Diligent presents resident `native_cache`
+  GLBs/live camera/LOD. The adapter refreshes local-file residency, not full city acceptance.
+  [Launch/capture/reset instructions](RECENT_CONTEXT.md#native-launch-and-capture-operations).
 - `SourceModelDecoder.*` validates explicit MODEL spans with zero partial output, supports
   `{10,11,20,21,22,23}`, and resolves instanced shared vertex/normal arrays from validated base
   spans. Building policy is strict or skip-unsupported; the Chicago histogram found 516 slots /

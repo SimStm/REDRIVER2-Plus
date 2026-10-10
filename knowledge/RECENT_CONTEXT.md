@@ -33,23 +33,18 @@ coverage and player vehicle/on-foot pedestrian. Configuration now reads `[render
 presentationFps` before developer overrides; absent developer keys preserve baseline.
 Native F9 GPU adapter is built and captured over mission 1 (2214 indexed draws, zero
 replay messages); legacy texture handles are explicitly unsupported, old PGXP/light
-controls and draw distance disabled. Bilinear sampler replacement requires Diligent's
+controls disabled. Bilinear sampler replacement requires Diligent's
 ALLOW_OVERWRITE flag and a rare GPU idle wait for safe mutable descriptor changes;
-GPU smoke initially caught three defects
-and now passes 1207/0 (blend, new resources, nearest restoration). Timing runner passes
+GPU smoke passes 1207/0 (blend, new resources, nearest restoration). Timing runner passes
 NTSC/PAL settings 24 each, timing 145364 each and effects 2688/2448. Native VS build passed.
 The SDK chooses MAILBOX before IMMEDIATE with VSync off. Two images reproduced stationary
 ~60 FPS / Present ~7-8 ms; requesting three gives ~106-115 FPS / Present ~0.16-0.18 ms,
 same stationary view/2212 world draws, panel open, cap 360, ticks 30/31 and zero drops.
-Moving camera stays CPU-bound ~54-59 FPS. Capture `native-overlay-three-images.rdc/png`
-shows three images and bilinear output, 2214 total draws and zero validation messages.
-The native smoke with three images also passes 1207/0. VS Release_dev compatibility
-build passed. SDK surface limits may clamp count; UI reports actual images. Perf log
-now separates UI CPU time and records images. Ignored local evidence is retained.
+Prior moving-camera samples were ~54-59 FPS; `native-overlay-three-images.rdc/png`
+shows bilinear output, 2214 draws/zero messages. UI reports actual images; perf separates UI time.
 Actual base-config inheritance startup logged cap=144 when config.ini specified 144 and
 the developer FPS key was omitted. Both INI files restored byte-for-byte afterwards.
-Release_dev `-opengl` mission 1 startup passed (OpenGL 3.3.0). Sessions stopped; VS
-restored to Release_dev_native|x64. Generated native debugger no longer auto-opens F9.
+Prior OpenGL startup passed (3.3.0). Generated native debugger no longer auto-opens F9.
 Resident streaming now observes local-file sectors, area, model revisions and texture-page
 residency. Publications rebuild transforms/LOD provenance, retain unchanged GPU keys and
 retire removed keys; loading clears without the renderer fixture. Source/native placement
@@ -70,8 +65,12 @@ WorldMeshConversionTests: 14/0 (owned pixels, concurrent .tmp safety, cache iden
 16 MiB owned/64 MiB expanded image bounds). GPU smoke: 1220/0. Evidence:
 native-performance/async-world-*. Final RenderDoc: 6347 draws/zero messages, PNG inspected;
 capture added 17 drops. Native/OpenGL builds/startups passed; debugger profile restored exactly.
-Next: preserve source cell/list membership for native draw distance and prefetch, then world corrections
-and player vehicle/on-foot presentation. Interactive F9/input/display and actors remain open.
+Native draw distance uses preserved cell/list aliases and DrawMap's approved cell record;
+F9 control enabled, tests 15/0 (18 suites pass). Tick 30 selects 155/233 instances at
+441/1800 with identical camera; GPU captures 308/461 draws, zero messages. Replay through
+tick 2128 dropped zero ticks; sector swaps retained 108/38 frames, zero empty frames.
+Next: validate remaining world materials/models and visual prefetch, then player vehicle/on-foot.
+Independent native PVS/streaming, split-screen and interactive F9/input/display remain open.
 
 - Fixed dynamic constant updates (Map/Discard), wired configured VSync and added
   conservative AABB culling against the exact homogeneous MVP. Local mission 1 baseline

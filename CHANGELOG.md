@@ -10,6 +10,8 @@ where release policy permits it.
 
 ### Changed
 
+- Native world visibility follows the original draw-distance/PVS/event-cell selection,
+  preserving straddler memberships. The F9 draw-distance control is now enabled.
 - Native sector transitions retain the published scene and camera-dependent LOD
   while preparing/uploading new content; old resources retire after instance replacement.
 - Native sector conversion builds/hashes/publishes owned snapshots asynchronously;

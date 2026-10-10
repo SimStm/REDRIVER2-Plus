@@ -152,6 +152,8 @@ try
 		-ExtraIncludes @() -LinkLibraries @()
 	Invoke-Suite -Name 'NativeCameraViewTests' -Sources @('tests\NativeCameraViewTests.cpp', 'utils\NativeCameraView.cpp') `
 		-ExtraIncludes @() -LinkLibraries @()
+	Invoke-Suite -Name 'NativeWorldVisibilityTests' -Sources @('tests\NativeWorldVisibilityTests.cpp', 'utils\NativeWorldVisibility.cpp') `
+		-ExtraIncludes @() -LinkLibraries @()
 	Invoke-Suite -Name 'WorldMeshBuilderTests' -Sources @('tests\WorldMeshBuilderTests.cpp', 'utils\WorldMeshBuilder.cpp', 'utils\SourceModelDecoder.cpp', 'utils\GltfWriter.cpp', 'utils\GltfLoader.cpp', 'utils\AssetConverter.cpp', 'Game\C\conversioncache.c') `
 		-ExtraIncludes @() -LinkLibraries @('windowscodecs.lib', 'ole32.lib')
 	Invoke-Suite -Name 'WorldMeshConversionTests' -Sources @('tests\WorldMeshConversionTests.cpp', 'utils\WorldMeshConversion.cpp', 'utils\WorldMeshBuilder.cpp', 'utils\SourceModelDecoder.cpp', 'utils\GltfWriter.cpp', 'utils\GltfLoader.cpp', 'utils\AssetConverter.cpp', 'Game\C\conversioncache.c') `

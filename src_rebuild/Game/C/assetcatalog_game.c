@@ -171,6 +171,7 @@ int s_drawPlacementCount = 0;
 // store is sized to the renderer's instance bound so it never overflows.
 AssetCatalogGameDrawPlacement s_regionPlacements[ASSET_CATALOG_GAME_MAX_REGION_PLACEMENTS];
 int s_regionPlacementCount = 0;
+std::vector<NativeWorldCellReference> s_regionCellReferences;
 bool s_regionPlacementsTruncated = false;
 bool s_regionResourcesTruncated = false;
 int s_regionConvertedSlotCount = 0;
@@ -317,6 +318,7 @@ void AssetCatalogGame_BeginLevel(void)
 	s_modelResourceCount = 0;
 	s_drawPlacementCount = 0;
 	s_regionPlacementCount = 0;
+	s_regionCellReferences.clear();
 	s_regionPlacementsTruncated = false;
 	s_regionResourcesTruncated = false;
 	s_regionConvertedSlotCount = 0;
@@ -417,6 +419,8 @@ namespace
 {
 struct LevelPlacementWalk
 {
+	std::vector<NativeWorldCellReference>* cellReferences;
+	bool referenceCapacityExceeded;
 	AssetCatalogPlacement* placements;
 	int capacity;
 	int count;
@@ -489,7 +493,6 @@ void AddLevelPlacement(LevelPlacementWalk& walk, int objectIndex, const XZPAIR& 
 // one barrel's resident region.
 void VisitLevelObject(void* user, int object, int cellOffset, int selector)
 {
-	(void)selector; // Resident union: list activation is deliberately not inferred.
 	LevelPlacementWalk& walk = *(LevelPlacementWalk*)user;
 	const int cellX = (walk.regionIndex % regions_across) * MAP_REGION_SIZE + cellOffset % MAP_REGION_SIZE;
 	const int cellZ = (walk.regionIndex / regions_across) * MAP_REGION_SIZE + cellOffset / MAP_REGION_SIZE;
@@ -497,6 +500,18 @@ void VisitLevelObject(void* user, int object, int cellOffset, int selector)
 	nearCell.x = (cellX - cells_across / 2) * MAP_CELL_SIZE;
 	nearCell.z = (cellZ - cells_down / 2) * MAP_CELL_SIZE;
 	AddLevelPlacement(walk, object, nearCell);
+	// Keep every cell/list alias even when its placement is already decoded.
+	if (walk.cellReferences && object >= 0 && object < walk.totalSlots &&
+		object < ASSET_CATALOG_MAX_PLACEMENTS && walk.visited[object])
+	{
+		if (walk.cellReferences->size() >= NATIVE_WORLD_MAX_CELL_REFERENCES)
+			walk.referenceCapacityExceeded = true;
+		else
+		{
+			const NativeWorldCellReference reference = { object, cellX, cellZ, selector };
+			walk.cellReferences->push_back(reference);
+		}
+	}
 }
 
 void CollectBarrelPlacements(LevelPlacementWalk& walk, int barrel)
@@ -1807,6 +1822,7 @@ static bool PrepareResidentRegionDraw(char* status, int statusCapacity)
 	}
 
 	s_regionPlacementCount = 0;
+	s_regionCellReferences.clear();
 	// Only this snapshot's resources belong in the published registry. A failed
 	// conversion of a reused slot must never retain its previous model/texture.
 	s_modelResourceCount = 0;
@@ -1859,9 +1875,19 @@ static bool PrepareResidentRegionDraw(char* status, int statusCapacity)
 	walk.capacity = placementCapacity;
 	walk.totalSlots = totalSlots;
 	walk.visited = visited;
+	walk.cellReferences = &s_regionCellReferences;
 
 	for (int barrel = 0; barrel < 4; barrel++)
 		CollectBarrelPlacements(walk, barrel);
+
+	if (walk.referenceCapacityExceeded)
+	{
+		free(placements);
+		free(visited);
+		s_regionCellReferences.clear();
+		snprintf(status, statusCapacity, "region draw: cell membership capacity exceeded");
+		return false;
+	}
 
 	if (walk.eligible == 0)
 	{
@@ -2454,6 +2480,18 @@ bool AssetCatalogGame_GetModelResource(int modelSlot,
 
 // Region-draw accessors read on every non-PSX platform; the region store is
 // only populated by the Windows-only preparation path.
+int AssetCatalogGame_GetRegionCellReferences(NativeWorldCellReference* out, int capacity)
+{
+	const int count = s_regionPlacementCount > 0 ? (int)s_regionCellReferences.size() : 0;
+	if (!out && capacity == 0)
+		return count;
+	if (!out || capacity < count)
+		return -1;
+	if (count)
+		memcpy(out, s_regionCellReferences.data(), (size_t)count * sizeof(*out));
+	return count;
+}
+
 int AssetCatalogGame_GetRegionDrawPlacementCount(void)
 {
 	return s_regionPlacementCount;
@@ -2647,6 +2685,13 @@ bool AssetCatalogGame_PrepareRegionDraw(char* status, int statusCapacity)
 
 int AssetCatalogGame_GetRegionDrawPlacementCount(void)
 {
+	return 0;
+}
+
+int AssetCatalogGame_GetRegionCellReferences(NativeWorldCellReference* out, int capacity)
+{
+	(void)out;
+	(void)capacity;
 	return 0;
 }
 

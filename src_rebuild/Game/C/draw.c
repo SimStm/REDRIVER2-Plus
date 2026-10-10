@@ -19,6 +19,9 @@
 #ifndef PSX
 #include "assetcatalog.h"
 #include "PsyX/PsyX_public.h"
+#ifdef _WIN32
+#include "../../utils/NativeWorldVisibility.h"
+#endif
 #endif
 
 MATRIX aspect =
@@ -1443,6 +1446,9 @@ void DrawMapPSX(int* comp_val)
 		distScale = goFaster & 31;
 
 	i = (gDrawDistance >> distScale);		// [A]
+#if defined(_WIN32) && !defined(PSX)
+	NativeWorldVisibility_Begin(drawData.cellxpos, drawData.cellzpos, drawData.cellLevel);
+#endif
 
 	// walk through all cells
 	do
@@ -1463,6 +1469,9 @@ void DrawMapPSX(int* comp_val)
 				cellz > -1 && cellz < cells_down &&
 				PVS_ptr[vis_v * pvs_square + vis_h]) // check PVS table
 			{
+#if defined(_WIN32) && !defined(PSX)
+				NativeWorldVisibility_RecordCell(cellx, cellz);
+#endif
 				// walk each cell object in cell
 				for (ppco = GetFirstPackedCop(cellx, cellz, &ci, 1, drawData.cellLevel); ppco; ppco = GetNextPackedCop(&ci))
 				{

@@ -33,9 +33,9 @@ the live settings. Filtering updates both resident samplers and subsequently reg
 resources; conversion keys stay unchanged.
 Mutable sampler rebinding uses ALLOW_OVERWRITE after a GPU idle wait only when the
 setting changes; the SDK requires that synchronization for Vulkan descriptor access.
-Draw distance still requires native sector coverage integration: the original setting
-counts cells and is not a physical far-plane
-distance. The panel disables that control and the unmigrated PGXP/legacy lighting controls.
+Draw distance follows the original approved cell/event-list selection, not a physical
+far-plane distance. The native panel enables that control; unmigrated PGXP/legacy
+lighting controls remain disabled. The transitional visibility bridge is described below.
 Native lighting remains deferred until geometry/material coverage is correct.
 
 The panel displays ImGui's measured FPS separately from the requested cap, plus CPU
@@ -181,6 +181,43 @@ with OpenGL 3.3.0. Sessions stopped and the original generated debugger profile 
 byte-for-byte; VS returned to Release_dev_native x64. No gameplay/tick source changed.
 
 Prefetch, native draw distance and player vehicle/on-foot presentation remain required.
-The source draw-distance control counts square-spiral cell visits, filtered by PVS and
-active event lists. The current resident union drops cell/list provenance during collection;
-world-origin radius filtering would not preserve that meaning for straddling objects.
+### Cell and event-list visibility
+
+The resident collector now preserves every object/cell/list membership, including
+straddler aliases, separately from unique placements. A bounded 262144-reference store
+fails explicitly on overflow instead of publishing partial visibility. Presentation
+copies those memberships when committing a publication, independently of later spooling.
+
+DrawMap records only cells approved by its original square spiral, draw-distance budget,
+PVS, map bounds and camera planes, plus the active event-list selector. This project-owned
+main-thread presentation record does not alter the original loop or gameplay/RNG state.
+Diligent builds an object mask and compacts its own instances from these memberships;
+an object may be visible through any approved cell, but default and event lists do not
+form a visibility union. GPU AABB culling/LOD still apply to those native instances.
+
+This is a transitional selection bridge, not independent native PVS/streaming ownership
+or removal of GTE/ordering-table generation. Split-screen and full event-mode coverage
+remain unaccepted. The F9 draw-distance control is now enabled; settings precedence and
+its original cell-count meaning remain unchanged. Performance logs include visible
+instance, approved cell, draw-distance and membership counts. Inventory camera counters
+use the inventory denominator; unresolved diagnostics scan only submitted instances.
+
+All 18 inspector suites passed; NativeWorldVisibilityTests passed 15 checks covering
+straddler aliases, event-list replacement, clearing, absent selection and inventory/
+coordinate bounds. In mission 1 frozen at tick 30, both logs show identical camera
+position/matrix: draw distance 441 selected 34 cells/155 instances/308 draws, while
+1800 selected 77/233/461. Both RenderDoc replays have zero messages; inspected 1280x720
+PNGs are byte-identical at this occluded camera view, retaining near buildings/fire escapes.
+Extra selected instances may be culled or depth-occluded; this is not universal image
+parity. Tick-600 runs selected 35/70
+cells but the same 156 instances, demonstrating that extra cells can be empty.
+
+ATTRACT.400 again reached 8594/10167 placements (206/185 resources), zero conversion
+failures/truncations and 108/38 retained frames with zero empty transition frames.
+Observed intervals through tick 2128 had zero dropped ticks; this is a bounded route,
+not complete city/event/replay acceptance. Temporary INI settings were restored exactly.
+The final native build/startup also crossed both sectors (111/38 retained frames, zero
+empty transition frames), with zero dropped ticks through the observed tick 1075.
+VS Release_dev_native and Release_dev x64 builds passed; compatibility mission 1 started
+with OpenGL 3.3.0. Sessions stopped, INIs/debugger profile restored byte-for-byte and VS
+returned to Release_dev_native x64. No scene/gameplay acceptance follows from these checks.

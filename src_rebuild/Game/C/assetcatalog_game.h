@@ -12,6 +12,7 @@
 #include <stdbool.h>
 
 #include "conversioncache.h"
+#include "../../utils/NativeWorldVisibility.h"
 
 /* Enter the level/variant context before any texture or model is registered. */
 void AssetCatalogGame_BeginLevel(void);
@@ -199,6 +200,9 @@ bool AssetCatalogGame_GetModelResource(int modelSlot,
 int AssetCatalogGame_GetDrawPlacements(AssetCatalogGameDrawPlacement* out, int capacity);
 
 /* --- E03 region draw (full converted resident region) --------------------- */
+/* Copies the published cell/list membership, including all straddler aliases.
+   NULL/0 queries the count. Insufficient capacity returns -1, never truncates. */
+int AssetCatalogGame_GetRegionCellReferences(NativeWorldCellReference* out, int capacity);
 
 /* Bounded full-region placement store. It is sized to the native renderer's
    instance bound (NATIVE_MAX_INSTANCES); the bridge asserts the relation so a

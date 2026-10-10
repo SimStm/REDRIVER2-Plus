@@ -1993,10 +1993,10 @@ void DrawDeveloperPanel()
 						DeveloperModernMesh_SetShadowDebugMode(shadowDebug);
 				}
 
-				ImGui::SliderInt("Draw distance", &gDrawDistance, 441, 1800);
 				ImGui::EndDisabled();
+				ImGui::SliderInt("Draw distance", &gDrawDistance, 441, 1800);
 				if (nativeGraphics)
-					ImGui::TextWrapped("Native draw-distance integration is pending sector coverage. Field of view uses the game's projection-distance units.");
+					ImGui::TextWrapped("Draw distance counts original cell visits, with PVS/event selection. Field of view uses the game's projection-distance units.");
 				int fieldOfView = gCameraDefaultScrZ;
 				if (ImGui::SliderInt("Field of view", &fieldOfView, 128, 384))
 					gCameraDefaultScrZ = (short)fieldOfView;

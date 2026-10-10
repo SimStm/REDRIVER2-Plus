@@ -52,6 +52,7 @@
 
 #ifdef _WIN32
 #include <SDL_syswm.h>
+#include <vector>
 #include "NativeRenderer.h"
 #endif
 
@@ -557,6 +558,11 @@ static NativeInstance s_regionDrawInstances[NATIVE_MAX_INSTANCES];
 // Published presentation owns its placement values while the catalog prepares
 // another sector. Never resolve active LOD poses through the mutable catalog.
 static AssetCatalogGameDrawPlacement s_regionDrawPlacements[NATIVE_MAX_INSTANCES];
+static std::vector<NativeWorldCellReference> s_regionDrawCellReferences;
+static NativeInstance s_regionDrawVisibleInstances[NATIVE_MAX_INSTANCES];
+static unsigned char s_regionDrawVisible[NATIVE_MAX_INSTANCES];
+static int s_regionDrawVisibleCount = 0;
+static int s_regionDrawVisibilityFailed = 0;
 
 // E03 visual-parity P9 LOD tier: both resource keys per instance (the detail
 // model and its distinct LOD variant, when the placement has one) plus the last
@@ -692,6 +698,9 @@ static void NativeRenderer_ResetRegionDrawState(void)
 	s_regionDrawValidFrames = 0;
 	s_regionDrawSubmittedCount = 0;
 	s_regionDrawKeysBuilt = 0;
+	s_regionDrawCellReferences.clear();
+	s_regionDrawVisibleCount = 0;
+	s_regionDrawVisibilityFailed = 0;
 	s_regionDrawSelectionValid = 0;
 	s_regionDrawLodSelectedCount = 0;
 	s_regionDrawHighDetailSelectedCount = 0;
@@ -965,6 +974,20 @@ static int NativeRenderer_SelectRegionDrawInstances(void)
 	const int count = s_regionDrawSubmittedCount;
 	if (count <= 0)
 		return 0;
+	unsigned char objectMask[ASSET_CATALOG_GAME_MAX_REGION_PLACEMENTS];
+	char visibilityError[256];
+	if (!NativeWorldVisibility_BuildObjectMask(s_regionDrawCellReferences.empty() ? NULL : s_regionDrawCellReferences.data(),
+		(int)s_regionDrawCellReferences.size(), objectMask, sizeof(objectMask), visibilityError, sizeof(visibilityError)))
+	{
+		if (!s_regionDrawVisibilityFailed)
+			PsyX_Log_Warning("native region visibility: %s\n", visibilityError);
+		s_regionDrawVisibilityFailed = 1;
+		s_regionDrawVisibleCount = 0;
+		s_regionDrawSelectionValid = 0;
+		NativeRenderer_ClearInstances();
+		return 0;
+	}
+	s_regionDrawVisibilityFailed = 0;
 
 	// Per-frame tier selection, exactly like the legacy world draw:
 	//   * a TILE-classified placement with camera-space Z <= DRAW_LOD_DIST_HIGH
@@ -978,10 +1001,19 @@ static int NativeRenderer_SelectRegionDrawInstances(void)
 	int changed = !s_regionDrawSelectionValid;
 	int lodSelectedCount = 0;
 	int highDetailSelectedCount = 0;
+	int visibleCount = 0;
 
 	for (int i = 0; i < count; ++i)
 	{
 		const AssetCatalogGameDrawPlacement& placement = s_regionDrawPlacements[i];
+		const int visible = placement.sourceObjectIndex >= 0 && placement.sourceObjectIndex < (int)sizeof(objectMask)
+			&& objectMask[placement.sourceObjectIndex];
+		if (s_regionDrawVisible[i] != visible)
+		{
+			changed = 1;
+			s_regionDrawVisible[i] = (unsigned char)visible;
+		}
+		visibleCount += visible;
 
 		const int z = LegacyPlacementZ(placement);
 		const int wantHighDetail = s_regionDrawHasHighDetail[i] && z <= DRAW_LOD_DIST_HIGH;
@@ -999,16 +1031,18 @@ static int NativeRenderer_SelectRegionDrawInstances(void)
 			s_regionDrawLodSelected[i] = (unsigned char)wantLod;
 		}
 
-		lodSelectedCount += wantLod;
-		highDetailSelectedCount += wantHighDetail;
+		lodSelectedCount += wantLod && visible;
+		highDetailSelectedCount += wantHighDetail && visible;
 	}
 
 	s_regionDrawLodSelectedCount = lodSelectedCount;
 	s_regionDrawHighDetailSelectedCount = highDetailSelectedCount;
+	s_regionDrawVisibleCount = visibleCount;
 
 	if (!changed)
-		return count;
+		return visibleCount;
 
+	int copiedVisible = 0;
 	for (int i = 0; i < count; ++i)
 	{
 		NativeInstance& instance = s_regionDrawInstances[i];
@@ -1016,14 +1050,17 @@ static int NativeRenderer_SelectRegionDrawInstances(void)
 			? s_regionDrawHighDetailKeys[i]
 			: (s_regionDrawLodSelected[i] ? s_regionDrawLodKeys[i] : s_regionDrawDetailKeys[i]);
 		snprintf(instance.resourceKey, sizeof(instance.resourceKey), "%s", key);
+		if (s_regionDrawVisible[i])
+			s_regionDrawVisibleInstances[copiedVisible++] = instance;
 	}
 
 	char error[256];
-	if (!NativeRenderer_SetInstances(s_regionDrawInstances, count, error, sizeof(error)))
+	if (!NativeRenderer_SetInstances(s_regionDrawVisibleInstances, copiedVisible, error, sizeof(error)))
 	{
 		PsyX_Log_Warning("native region draw: set instances failed: %s\n", error);
 		s_regionDrawInstancesSet = 1; // do not retry every frame
 		s_regionDrawSubmittedCount = 0;
+		s_regionDrawVisibleCount = 0;
 		return 0;
 	}
 
@@ -1038,7 +1075,7 @@ static int NativeRenderer_SelectRegionDrawInstances(void)
 		s_regionDrawRetainedFrames = 0;
 		s_regionDrawLoadingFrames = 0;
 	}
-	return count;
+	return visibleCount;
 }
 
 static int NativeRenderer_KeepRegionDrawPublication(void)
@@ -1103,6 +1140,7 @@ static int NativeRenderer_DevRegionDrawSubmit(const float view[16])
 		NativeRenderer_ClearInstances();
 		s_regionDrawSelectionValid = 0;
 		s_regionDrawSubmittedCount = 0;
+		s_regionDrawVisibleCount = 0;
 		if (refresh < 0 && !s_regionDrawRefreshFailed)
 			PsyX_Log_Warning("native region draw: publication unavailable: %s\n", refreshStatus);
 		s_regionDrawRefreshFailed = refresh < 0;
@@ -1175,6 +1213,15 @@ static int NativeRenderer_DevRegionDrawSubmit(const float view[16])
 			return 0;
 
 		const int count = placementCount < NATIVE_MAX_INSTANCES ? placementCount : NATIVE_MAX_INSTANCES;
+		const int referenceCount = AssetCatalogGame_GetRegionCellReferences(NULL, 0);
+		s_regionDrawCellReferences.resize(referenceCount);
+		if (AssetCatalogGame_GetRegionCellReferences(s_regionDrawCellReferences.empty() ? NULL : s_regionDrawCellReferences.data(),
+			referenceCount) != referenceCount)
+		{
+			PsyX_Log_Warning("native region draw: cell membership publication changed unexpectedly\n");
+			NativeRenderer_ResetRegionDrawState();
+			return 0;
+		}
 
 		for (int i = 0; i < count; ++i)
 		{
@@ -1480,9 +1527,9 @@ static void NativeRenderer_DevRegionDrawReport(int submitted, const float view[1
 	// back to the renderer's key diagnostic when it found one the bridge scan
 	// did not (for example an all-missing submission).
 	int unresolvedIndex = -1;
-	for (int i = 0; i < s_regionDrawSubmittedCount && i < NATIVE_MAX_INSTANCES; ++i)
+	for (int i = 0; i < s_regionDrawVisibleCount && i < NATIVE_MAX_INSTANCES; ++i)
 	{
-		if (!NativeRenderer_ResourceResident(s_regionDrawInstances[i].resourceKey))
+		if (!NativeRenderer_ResourceResident(s_regionDrawVisibleInstances[i].resourceKey))
 		{
 			unresolvedIndex = i;
 			break;
@@ -1491,7 +1538,7 @@ static void NativeRenderer_DevRegionDrawReport(int submitted, const float view[1
 
 	if (unresolvedIndex >= 0)
 	{
-		const NativeInstance& instance = s_regionDrawInstances[unresolvedIndex];
+		const NativeInstance& instance = s_regionDrawVisibleInstances[unresolvedIndex];
 
 		// Name the unresolved instance's origin. The resource registry already
 		// told the bridge this slot has no published key; to tell a failed
@@ -1561,7 +1608,7 @@ static void NativeRenderer_DevRegionDrawReport(int submitted, const float view[1
 		AssetCatalogGame_RegionDrawLodSlotCount(), s_regionDrawLodSelectedCount,
 		AssetCatalogGame_RegionDrawHighDetailSlotCount(), s_regionDrawHighDetailSelectedCount,
 		cameraPosition[0], cameraPosition[1], cameraPosition[2], view[0], view[5], view[10],
-		zFirst, zMin, zMax, inFrustum, statsSubmitted, onScreen, statsSubmitted,
+		zFirst, zMin, zMax, inFrustum, sampled, onScreen, sampled,
 		GameLevel, (int)GetCityType(), AssetCatalogGame_LevelGeneration(), diagText);
 
 	const char* capture = getenv("RED2_NATIVE_REGION_CAPTURE");
@@ -1706,11 +1753,12 @@ static void NativeRenderer_ReportPerformance(double submitMilliseconds)
 	FILE* log = fopen("native_performance.log", "a");
 	if (log)
 	{
-		fprintf(log, "native-perf fps=%.2f submit=%.3fms draw=%.3fms ui=%.3fms flush=%.3fms present=%.3fms draws=%u instances=%d culled=%u ticks=%u dropped=%u cap=%d vsync=%d tick=%u buffers=%u\n",
+		fprintf(log, "native-perf fps=%.2f submit=%.3fms draw=%.3fms ui=%.3fms flush=%.3fms present=%.3fms draws=%u instances=%d culled=%u ticks=%u dropped=%u cap=%d vsync=%d tick=%u buffers=%u visible=%d cells=%d drawDistance=%d memberships=%u\n",
 			frames / elapsed, submitSum / frames, drawSum / frames, overlaySum / frames, flushSum / frames,
 			presentSum / frames, stats.drawCalls, s_regionDrawSubmittedCount, stats.culledInstances,
 			ProjectClock_GetTickCount() - tickStart, ProjectClock_GetDroppedTicks() - dropStart,
-			ProjectClock_GetPresentationFps(), g_cfg_swapInterval, ProjectClock_GetTickCount(), stats.swapChainBuffers);
+			ProjectClock_GetPresentationFps(), g_cfg_swapInterval, ProjectClock_GetTickCount(), stats.swapChainBuffers,
+			s_regionDrawVisibleCount, NativeWorldVisibility_SelectedCellCount(), gDrawDistance, (unsigned int)s_regionDrawCellReferences.size());
 		fclose(log);
 	}
 	start = now;

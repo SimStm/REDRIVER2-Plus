@@ -34,6 +34,9 @@ The old rework branch is reference-only; do not resume its unfinished R03 here.
 - Keep published visual placement values/resource keys independent of a mutable
   preparation catalog. Replace instances before retiring old keys; reset at level
   boundaries/errors and diagnose bounded staging-capacity loading explicitly.
+- A resident inventory union is not active visibility. Preserve all cell/list aliases
+  and select original event lists explicitly; do not replace cell-count draw distance
+  with a world-origin radius or union event/default objects in the presented scene.
 - Never recover a native scene by drawing the old world. Backend/platform support
   remains an independent declared contract; no premature OpenGL deletion.
 - Record real validation and pending scope. A build or old-renderer screenshot
