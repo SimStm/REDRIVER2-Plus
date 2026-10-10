@@ -694,6 +694,21 @@ void State_GameInit(void* param)
 			printWarning("AssetCatalog: %s\n", convertStatus);
 	}
 
+	// E03 block 2 item 4: the -drawmodel <slot> [count] developer flag converts
+	// one resident model slot through the existing path and collects a bounded
+	// set of its resident placements for the native per-instance draw. Warn-only:
+	// a failure must never interrupt the game, and the native bridge draws the
+	// instances once the native renderer is active.
+	if (AssetCatalogGame_NativeDrawRequested())
+	{
+		char drawStatus[512];
+
+		if (AssetCatalogGame_PrepareNativeDraw(drawStatus, sizeof(drawStatus)))
+			printInfo("AssetCatalog: %s\n", drawStatus);
+		else
+			printWarning("AssetCatalog: %s\n", drawStatus);
+	}
+
 	// The playground replaces the loaded world with a generated, resident
 	// fixture while reusing the donor level's car, texture and sound data.
 	if (NewLevel)
@@ -1911,6 +1926,7 @@ void PrintCommandLineArguments()
 		"  -assetinventory : write a level asset inventory report after loading\n"
 		"  -modelptypes : write a model polygon-type report after loading\n"
 		"  -convertmodel <slot> : convert one resident model slot to a native GLB\n"
+		"  -drawmodel <slot> [count] : native per-instance draw of one converted model slot\n"
 #endif // DEBUG_OPTIONS
 		"  -replay <filename.d2rp> : starts replay from file\n"
 #ifdef CUTSCENE_RECORDER
@@ -2159,6 +2175,19 @@ int redriver2_main(int argc, char** argv)
 			// command line helper popup.
 			if (argc - i >= 2)
 				i++;
+		}
+		else if (!strcmp(argv[i], "-drawmodel"))
+		{
+			// Consumed by AssetCatalogGame_ConfigureFromCommandLine in the
+			// platform entry point; skip the optional slot/count values here
+			// only to avoid the command line helper popup.
+			if (argc - i >= 2)
+			{
+				i++; // slot
+
+				if (argc - i >= 2 && argv[i + 1][0] != '-')
+					i++; // optional count
+			}
 		}
 #ifdef DEBUG_OPTIONS
 		else if (!strcmp(argv[i], "-exportxasubtitles"))

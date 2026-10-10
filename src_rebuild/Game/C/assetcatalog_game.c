@@ -42,6 +42,14 @@ static bool s_modelPtypesRequested = false;
 static bool s_convertModelRequested = false;
 static int s_convertModelSlot = -1;
 
+// Developer flag: bounded native per-instance draw of one converted model slot
+// once after SpoolSYNC. Never interrupts the game on failure.
+static bool s_nativeDrawRequested = false;
+static int s_nativeDrawSlot = -1;
+static int s_nativeDrawCount = 0; // 0 -> the default bound
+
+#define ASSET_CATALOG_GAME_DEFAULT_DRAW_COUNT 32
+
 void AssetCatalogGame_ConfigureFromCommandLine(int argc, char** argv)
 {
 	for (int i = 1; i < argc; i++)
@@ -57,6 +65,22 @@ void AssetCatalogGame_ConfigureFromCommandLine(int argc, char** argv)
 			{
 				s_convertModelSlot = atoi(argv[i + 1]);
 				i++;
+			}
+		}
+		else if (strcmp(argv[i], "-drawmodel") == 0)
+		{
+			s_nativeDrawRequested = true;
+			if (i + 1 < argc)
+			{
+				s_nativeDrawSlot = atoi(argv[i + 1]);
+				i++;
+
+				// The optional count follows only when it is not another flag.
+				if (i + 1 < argc && argv[i + 1][0] != '-')
+				{
+					s_nativeDrawCount = atoi(argv[i + 1]);
+					i++;
+				}
 			}
 		}
 	}
@@ -82,8 +106,32 @@ int AssetCatalogGame_ConvertModelSlot(void)
 	return s_convertModelSlot;
 }
 
+bool AssetCatalogGame_NativeDrawRequested(void)
+{
+	return s_nativeDrawRequested;
+}
+
+int AssetCatalogGame_NativeDrawSlot(void)
+{
+	return s_nativeDrawSlot;
+}
+
+int AssetCatalogGame_NativeDrawCount(void)
+{
+	return s_nativeDrawCount > 0 ? s_nativeDrawCount : ASSET_CATALOG_GAME_DEFAULT_DRAW_COUNT;
+}
+
 namespace
 {
+// Bounded slot->published-resource registry and the last collected placements.
+// Both are cleared when a new level starts so a level change never serves a
+// stale resource or placement set.
+AssetCatalogGameModelResource s_modelResources[ASSET_CATALOG_GAME_MAX_MODEL_RESOURCES];
+int s_modelResourceCount = 0;
+
+AssetCatalogGameDrawPlacement s_drawPlacements[ASSET_CATALOG_GAME_MAX_DRAW_PLACEMENTS];
+int s_drawPlacementCount = 0;
+
 // Per-slot probe record. The loader reports each model once at its size-live
 // site; a reused slot replaces its record in place.
 struct ModelPtypeSlotRecord
@@ -158,6 +206,11 @@ void AssetCatalogGame_BeginLevel(void)
 	// always safe and never interrupts the game; the probe itself stays
 	// flag-gated in AssetCatalogGame_RecordModelSpan.
 	s_ptypeSlotCount = 0;
+
+	// The published-resource registry and collected placements belong to the
+	// previous level; a level change must not serve them to the native draw.
+	s_modelResourceCount = 0;
+	s_drawPlacementCount = 0;
 }
 
 void AssetCatalogGame_RegisterModel(int modelIndex)
@@ -785,20 +838,45 @@ static unsigned long long HashSourceMesh(const SourceMesh& mesh)
 	return ConversionCache_HashBytes(bytes.data(), (int)bytes.size());
 }
 
-bool AssetCatalogGame_ConvertModel(char* status, int statusCapacity)
+// Stores (or replaces) the published resource of a slot. The registry is
+// capacity-limited; a full table is a named warning and drops the new entry
+// rather than evicting a resident one.
+static void StoreModelResource(int slot, const char* resourceKey, const char* glbPath,
+	const char* contentHash, unsigned long long sourceHash)
 {
-	if (status == NULL || statusCapacity <= 0)
-		return false;
-
-	status[0] = '\0';
-
-	if (!s_convertModelRequested)
+	for (int i = 0; i < s_modelResourceCount; i++)
 	{
-		snprintf(status, statusCapacity, "convert-model not requested");
-		return false;
+		if (s_modelResources[i].modelSlot != slot)
+			continue;
+
+		AssetCatalogGameModelResource& entry = s_modelResources[i];
+		snprintf(entry.resourceKey, sizeof(entry.resourceKey), "%s", resourceKey);
+		snprintf(entry.glbPath, sizeof(entry.glbPath), "%s", glbPath);
+		snprintf(entry.contentHash, sizeof(entry.contentHash), "%s", contentHash);
+		entry.sourceHash = sourceHash;
+		return;
 	}
 
-	const int slot = s_convertModelSlot;
+	if (s_modelResourceCount >= ASSET_CATALOG_GAME_MAX_MODEL_RESOURCES)
+	{
+		printWarning("AssetCatalog: model resource registry full (%d); slot %d resource not tracked\n",
+			ASSET_CATALOG_GAME_MAX_MODEL_RESOURCES, slot);
+		return;
+	}
+
+	AssetCatalogGameModelResource& entry = s_modelResources[s_modelResourceCount++];
+	entry.modelSlot = slot;
+	snprintf(entry.resourceKey, sizeof(entry.resourceKey), "%s", resourceKey);
+	snprintf(entry.glbPath, sizeof(entry.glbPath), "%s", glbPath);
+	snprintf(entry.contentHash, sizeof(entry.contentHash), "%s", contentHash);
+	entry.sourceHash = sourceHash;
+}
+
+// Converts one resident model slot and registers its published resource. The
+// caller owns the request gating; this is the shared core of the
+// `-convertmodel` flag and the `-drawmodel` preparation.
+static bool ConvertModelSlot(int slot, char* status, int statusCapacity)
+{
 	if (slot < 0 || slot >= MAX_MODEL_SLOTS)
 	{
 		snprintf(status, statusCapacity, "convert-model: slot %d is out of range", slot);
@@ -876,11 +954,208 @@ bool AssetCatalogGame_ConvertModel(char* status, int statusCapacity)
 		return false;
 	}
 
+	// Record the published resource so the native-draw bridge can register it
+	// by key without re-decoding. A key-format failure leaves the entry out and
+	// is a named warning, not a conversion failure.
+	char keyText[CONVERSION_CACHE_KEY_CAPACITY];
+	if (ConversionCache_FormatKey(&key, keyText, sizeof(keyText)) > 0)
+		StoreModelResource(slot, keyText, published.glbPath, published.contentHash, sourceHash);
+	else
+		printWarning("AssetCatalog: convert-model: slot %d key formatting failed; resource not tracked\n", slot);
+
 	snprintf(status, statusCapacity,
 		"convert-model: slot %d, span %d bytes, submeshes %d, vertices %d, triangles %d, skipped %u, "
 		"source-hash %016llx, content-hash %s -> %s",
 		slot, span, built.submeshCount, built.vertexCount, built.triangleCount, decoded.skippedCount,
 		sourceHash, published.contentHash, published.glbPath);
+	return true;
+}
+
+bool AssetCatalogGame_ConvertModel(char* status, int statusCapacity)
+{
+	if (status == NULL || statusCapacity <= 0)
+		return false;
+
+	status[0] = '\0';
+
+	if (!s_convertModelRequested)
+	{
+		snprintf(status, statusCapacity, "convert-model not requested");
+		return false;
+	}
+
+	return ConvertModelSlot(s_convertModelSlot, status, statusCapacity);
+}
+
+// Bounded resident-placement collector for the native draw. It reuses the level
+// inventory walker (VisitLevelObject/AddLevelPlacement via
+// CollectBarrelPlacements) without the report path, decodes each referenced
+// object once through QuickUnpackCellObject (never a source-model re-decode),
+// and keeps only the target model slot's placements up to the bound.
+int AssetCatalogGame_CollectDrawPlacements(int modelSlot, int maxPlacements,
+	char* status, int statusCapacity)
+{
+	if (status && statusCapacity > 0)
+		status[0] = '\0';
+
+	s_drawPlacementCount = 0;
+
+	if (!s_nativeDrawRequested)
+	{
+		if (status && statusCapacity > 0)
+			snprintf(status, statusCapacity, "native draw not requested");
+		return 0;
+	}
+
+	if (modelSlot < 0 || modelSlot >= MAX_MODEL_SLOTS)
+	{
+		if (status && statusCapacity > 0)
+			snprintf(status, statusCapacity, "native draw: slot %d is out of range", modelSlot);
+		return 0;
+	}
+
+	if (maxPlacements <= 0)
+	{
+		if (status && statusCapacity > 0)
+			snprintf(status, statusCapacity, "native draw: no placement bound");
+		return 0;
+	}
+
+	if (maxPlacements > ASSET_CATALOG_GAME_MAX_DRAW_PLACEMENTS)
+		maxPlacements = ASSET_CATALOG_GAME_MAX_DRAW_PLACEMENTS;
+
+	if (!AssetCatalog_IsValid())
+	{
+		if (status && statusCapacity > 0)
+			snprintf(status, statusCapacity, "native draw: no level catalog context; load a level first");
+		return 0;
+	}
+
+	if (cell_objects == NULL || cell_ptrs == NULL || cells == NULL || cell_objects_add[4] <= 0)
+	{
+		if (status && statusCapacity > 0)
+			snprintf(status, statusCapacity, "native draw: no map region data is resident");
+		return 0;
+	}
+
+	if (MAP_REGION_SIZE != 32 || MAP_CELL_SIZE <= 0 || regions_across <= 0 ||
+		num_straddlers < 0 || num_straddlers > ASSET_CATALOG_MAX_PLACEMENTS ||
+		cell_objects_add[4] > ASSET_CATALOG_MAX_PLACEMENTS - num_straddlers)
+	{
+		if (status && statusCapacity > 0)
+			snprintf(status, statusCapacity, "native draw: invalid map dimensions or object capacity");
+		return 0;
+	}
+
+	const int totalSlots = num_straddlers + cell_objects_add[4];
+	const int placementCapacity = totalSlots < ASSET_CATALOG_MAX_PLACEMENTS ? totalSlots : ASSET_CATALOG_MAX_PLACEMENTS;
+
+	AssetCatalogPlacement* placements = (AssetCatalogPlacement*)malloc((size_t)placementCapacity * sizeof(AssetCatalogPlacement));
+	unsigned char* visited = (unsigned char*)calloc(ASSET_CATALOG_MAX_PLACEMENTS, 1);
+
+	if (placements == NULL || visited == NULL)
+	{
+		free(placements);
+		free(visited);
+		if (status && statusCapacity > 0)
+			snprintf(status, statusCapacity, "native draw: placement allocation failed");
+		return 0;
+	}
+
+	LevelPlacementWalk walk = {};
+	walk.placements = placements;
+	walk.capacity = placementCapacity;
+	walk.totalSlots = totalSlots;
+	walk.visited = visited;
+
+	for (int barrel = 0; barrel < 4; barrel++)
+		CollectBarrelPlacements(walk, barrel);
+
+	// The model handle carries the slot revision so the bridge can detect a
+	// stale handle; the renderer itself only ever sees the resource key.
+	const int record = AssetCatalog_FindModel(modelSlot);
+	AssetCatalogHandle handle = {};
+	if (record >= 0)
+		handle = AssetCatalog_GetModelHandle(record);
+
+	int copied = 0;
+	for (int i = 0; i < walk.count && copied < maxPlacements; i++)
+	{
+		if (walk.placements[i].modelNumber != modelSlot)
+			continue;
+
+		AssetCatalogGameDrawPlacement& placement = s_drawPlacements[copied++];
+		placement.x = walk.placements[i].x;
+		placement.y = walk.placements[i].y;
+		placement.z = walk.placements[i].z;
+		placement.rotation = walk.placements[i].rotation;
+		placement.sourceObjectIndex = walk.placements[i].sourceObjectIndex;
+		placement.modelSlot = modelSlot;
+		placement.modelRevision = handle.revision;
+	}
+
+	s_drawPlacementCount = copied;
+
+	if (status && statusCapacity > 0)
+	{
+		if (copied == 0)
+			snprintf(status, statusCapacity, "native draw: slot %d has no resident placements", modelSlot);
+		else
+			snprintf(status, statusCapacity, "native draw: slot %d, %d placements (bound %d)", modelSlot, copied, maxPlacements);
+	}
+
+	free(placements);
+	free(visited);
+	return copied;
+}
+
+bool AssetCatalogGame_PrepareNativeDraw(char* status, int statusCapacity)
+{
+	if (status == NULL || statusCapacity <= 0)
+		return false;
+
+	status[0] = '\0';
+
+	if (!s_nativeDrawRequested)
+	{
+		snprintf(status, statusCapacity, "native draw not requested");
+		return false;
+	}
+
+	// Convert through the existing one-model path so the published resource is
+	// registered; a failed conversion leaves the bridge without a key and the
+	// scene stays on its existing content/placeholder path.
+	char convertStatus[512];
+	if (!ConvertModelSlot(s_nativeDrawSlot, convertStatus, sizeof(convertStatus)))
+	{
+		snprintf(status, statusCapacity, "native draw: %s", convertStatus);
+		return false;
+	}
+
+	char collectStatus[256];
+	const int count = AssetCatalogGame_CollectDrawPlacements(s_nativeDrawSlot,
+		AssetCatalogGame_NativeDrawCount(), collectStatus, sizeof(collectStatus));
+
+	if (count <= 0)
+	{
+		snprintf(status, statusCapacity, "native draw: slot %d converted; %s", s_nativeDrawSlot, collectStatus);
+		return false;
+	}
+
+	char resourceKey[CONVERSION_CACHE_KEY_CAPACITY];
+	char contentHash[CONVERSION_CACHE_HASH_CAPACITY];
+	unsigned long long sourceHash = 0;
+
+	if (!AssetCatalogGame_GetModelResource(s_nativeDrawSlot, resourceKey, sizeof(resourceKey),
+		NULL, 0, contentHash, sizeof(contentHash), &sourceHash))
+	{
+		snprintf(status, statusCapacity, "native draw: slot %d placements collected but resource missing", s_nativeDrawSlot);
+		return false;
+	}
+
+	snprintf(status, statusCapacity,
+		"native draw: slot %d, %d placements, source-hash %016llx, content-hash %s, key %s",
+		s_nativeDrawSlot, count, sourceHash, contentHash, resourceKey);
 	return true;
 }
 
@@ -910,7 +1185,69 @@ bool AssetCatalogGame_ConvertModel(char* status, int statusCapacity)
 	return false;
 }
 
+int AssetCatalogGame_CollectDrawPlacements(int modelSlot, int maxPlacements,
+	char* status, int statusCapacity)
+{
+	(void)modelSlot;
+	(void)maxPlacements;
+
+	if (status != NULL && statusCapacity > 0)
+		snprintf(status, statusCapacity, "Native draw placement collection is currently available on Windows only");
+
+	return 0;
+}
+
+bool AssetCatalogGame_PrepareNativeDraw(char* status, int statusCapacity)
+{
+	if (status != NULL && statusCapacity > 0)
+		snprintf(status, statusCapacity, "Native draw preparation is currently available on Windows only");
+
+	return false;
+}
+
 #endif // _WIN32
+
+// Reads the bounded placement store on every non-PSX platform; it is only
+// populated by the Windows-only collector.
+int AssetCatalogGame_GetDrawPlacements(AssetCatalogGameDrawPlacement* out, int capacity)
+{
+	if (out == NULL || capacity <= 0)
+		return 0;
+
+	const int count = s_drawPlacementCount < capacity ? s_drawPlacementCount : capacity;
+	for (int i = 0; i < count; i++)
+		out[i] = s_drawPlacements[i];
+
+	return count;
+}
+
+// Reads the published-resource registry on every non-PSX platform; it is only
+// populated by the Windows-only conversion path.
+bool AssetCatalogGame_GetModelResource(int modelSlot,
+	char* resourceKey, int resourceKeyCapacity,
+	char* glbPath, int glbPathCapacity,
+	char* contentHash, int contentHashCapacity,
+	unsigned long long* sourceHash)
+{
+	for (int i = 0; i < s_modelResourceCount; i++)
+	{
+		if (s_modelResources[i].modelSlot != modelSlot)
+			continue;
+
+		const AssetCatalogGameModelResource& entry = s_modelResources[i];
+		if (resourceKey && resourceKeyCapacity > 0)
+			snprintf(resourceKey, resourceKeyCapacity, "%s", entry.resourceKey);
+		if (glbPath && glbPathCapacity > 0)
+			snprintf(glbPath, glbPathCapacity, "%s", entry.glbPath);
+		if (contentHash && contentHashCapacity > 0)
+			snprintf(contentHash, contentHashCapacity, "%s", entry.contentHash);
+		if (sourceHash)
+			*sourceHash = entry.sourceHash;
+		return true;
+	}
+
+	return false;
+}
 
 #else
 
@@ -943,12 +1280,73 @@ int AssetCatalogGame_ConvertModelSlot(void)
 	return -1;
 }
 
+bool AssetCatalogGame_NativeDrawRequested(void)
+{
+	return false;
+}
+
+int AssetCatalogGame_NativeDrawSlot(void)
+{
+	return -1;
+}
+
+int AssetCatalogGame_NativeDrawCount(void)
+{
+	return 0;
+}
+
 bool AssetCatalogGame_ConvertModel(char* status, int statusCapacity)
 {
 	if (status != NULL && statusCapacity > 0)
 		status[0] = '\0';
 
 	return false;
+}
+
+bool AssetCatalogGame_PrepareNativeDraw(char* status, int statusCapacity)
+{
+	if (status != NULL && statusCapacity > 0)
+		status[0] = '\0';
+
+	return false;
+}
+
+bool AssetCatalogGame_GetModelResource(int modelSlot,
+	char* resourceKey, int resourceKeyCapacity,
+	char* glbPath, int glbPathCapacity,
+	char* contentHash, int contentHashCapacity,
+	unsigned long long* sourceHash)
+{
+	(void)modelSlot;
+	(void)resourceKey;
+	(void)resourceKeyCapacity;
+	(void)glbPath;
+	(void)glbPathCapacity;
+	(void)contentHash;
+	(void)contentHashCapacity;
+	(void)sourceHash;
+
+	return false;
+}
+
+int AssetCatalogGame_CollectDrawPlacements(int modelSlot, int maxPlacements,
+	char* status, int statusCapacity)
+{
+	(void)modelSlot;
+	(void)maxPlacements;
+
+	if (status != NULL && statusCapacity > 0)
+		status[0] = '\0';
+
+	return 0;
+}
+
+int AssetCatalogGame_GetDrawPlacements(AssetCatalogGameDrawPlacement* out, int capacity)
+{
+	(void)out;
+	(void)capacity;
+
+	return 0;
 }
 
 void AssetCatalogGame_RecordModelSpan(int modelIndex, const unsigned char* modelBegin, int spanBytes)

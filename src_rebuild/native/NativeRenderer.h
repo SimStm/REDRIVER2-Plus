@@ -11,27 +11,77 @@
  * the implementation. The header is Windows-only because the selected E03
  * desktop scope is Win32 + Vulkan; other platforms keep their existing path.
  *
- * The scene draw is camera-driven and depth-tested. It draws converted E02
- * content when one has been loaded through NativeRenderer_LoadContent and falls
- * back to a built-in placeholder otherwise. RenderSceneToRGBA runs the same
- * draw into an offscreen readback target for tests and evidence capture.
+ * The scene draw is camera-driven and depth-tested. It draws submitted
+ * instances when any are set, otherwise converted E02 content loaded through
+ * NativeRenderer_LoadContent, otherwise a built-in placeholder.
+ * RenderSceneToRGBA runs the same draw into an offscreen readback target for
+ * tests and evidence capture.
  *
  * Coordinate/unit policy (pinned by tests/SourceModelDecoderTests.cpp): the
  * camera `view` matrix, decoded vertices and the projection near/far must share
  * one unit. The game and the decoder use raw game units (4096 per metre), and
  * the bridge keeps the camera translation raw while scaling only the rotation by
- * 1/4096, so a raw-unit scene needs raw-unit near/far. The current
- * BuildPerspective call still uses the metre-scale 0.02/300 pair and is not a
- * valid raw-unit scene projection; supplying raw-unit near/far (or converting
- * the whole scene consistently) is a later block and is not done here.
+ * 1/4096, so a raw-unit scene needs raw-unit near/far. NativeRenderer_SetClipPlanes
+ * supplies that pair (the bridge passes ~100 / ~125000); the default 0.02 / 300
+ * is only valid for metre-scale synthetic fixtures.
  *
- * Winding policy: decoder-emitted quads (v0,v1,v3,v2) are front-facing when the
- * first triangle (v0,v1,v3) has a positive signed area in the y-up NDC, so the
- * scene pipelines cull back faces (CULL_MODE_BACK, FrontCounterClockwise True
- * under Diligent's Vulkan D3D emulation).
+ * Vertical convention: the game camera space is +Y-down. GTE screen space is
+ * +Y-down (PsyX_GTE.cpp:395-396, SY = OFY + IR2*h/sz, so a camera-space +y
+ * point lands below the screen centre), and the game's inv_camera_matrix row 1
+ * is the camera Y axis (rndrasm.c), while Diligent's Vulkan backend flips the
+ * viewport to Direct3D's +Y-up convention (DeviceContextVkImpl.cpp "Turn the
+ * viewport upside down"). The scene projection therefore negates camera-space y
+ * (BuildPerspective out[5] = -f) so a camera-space +y point maps to the LOWER
+ * half of the target, exactly as the game and the project's modern-mesh path
+ * (PsyX_ModernMesh.cpp:105, `-view.y`) do. The camera `view` matrix is fed
+ * unchanged: the game's inv_camera_matrix already carries the game axes and the
+ * negation lives only in the projection (NativeCameraView_Compose stays as-is).
+ *
+ * Winding policy: the y negation above is a reflection, so it flips the signed
+ * area sign of every triangle in the NDC. The decoder emits quads
+ * (v0,v1,v3,v2) whose first triangle (v0,v1,v3) is the game's gte_nclip
+ * triangle (draw.c:780-796); under the reflected projection that game-front
+ * triangle has a NEGATIVE signed area, so the scene pipelines cull back faces
+ * with CULL_MODE_BACK and FrontCounterClockwise False (Diligent's Vulkan D3D
+ * emulation). The reflection and the flipped pin cancel: exactly the same world
+ * faces remain front as before the vertical fix. The projection is +Z-forward
+ * (the game/GTE convention, GR_Perspective3D clip.w = +z), so geometry ahead of
+ * the camera has positive camera-space z and a positive clip w; the game's
+ * inv_camera_matrix is fed directly with no reflection.
+ *
+ * Residency and submission are separate: resources are registered by key
+ * (NativeRenderer_RegisterResource), and a frame submits a bounded list of
+ * instances (NativeRenderer_SetInstances) that reference those keys. A missing
+ * key is skipped with a counter and a first-key diagnostic; it is never fatal
+ * and never falls back to the placeholder. The draw mode is explicit:
+ * instances when the list is non-empty, otherwise loaded content, otherwise the
+ * built-in placeholder.
  */
 
 #ifdef _WIN32
+
+/* Bounded residency and per-frame submission limits. Reaching a limit is a
+   named error; the renderer never evicts a resource or an instance silently. */
+#define NATIVE_MAX_RESOURCES 16
+#define NATIVE_MAX_INSTANCES 256
+#define NATIVE_RESOURCE_KEY_CAPACITY 160
+#define NATIVE_INSTANCE_DIAGNOSTIC_CAPACITY 256
+
+/* One instance submission. `resourceKey` is the canonical text key of a
+   registered resource (Game/C/conversioncache.h FormatKey). `transform` is the
+   column-major world matrix (utils/NativeInstanceTransform.h composes the game
+   Translate * RotY placement). The integer fields are diagnostics only: the
+   renderer is game-agnostic and never interprets them. */
+typedef struct NativeInstance
+{
+	char resourceKey[NATIVE_RESOURCE_KEY_CAPACITY];
+	float transform[16];
+	int level;
+	int variant;
+	int sourceObjectIndex;
+	int modelSlot;
+	int modelRevision;
+} NativeInstance;
 
 #ifdef __cplusplus
 extern "C" {
@@ -59,10 +109,13 @@ int NativeRenderer_RenderClearAndPresent(float red, float green, float blue, flo
    current draw target's aspect on the next scene draw. */
 void NativeRenderer_SetCamera(const float view[16], float fovYRadians);
 
-/* Draws the native scene (loaded converted content when present, otherwise a
-   textured ground and pillars, depth-tested) with the last camera and presents
-   it. Returns 1 on success, or 0 with a diagnostic in `error`. Creates its
-   pipeline and depth buffer lazily on first use and after a resize. */
+/* Draws the native scene (submitted instances when any are set, otherwise the
+   loaded converted content, otherwise a textured ground and pillars) with the
+   last camera and presents it. Returns 1 on success, or 0 with a diagnostic in
+   `error`. Creates its pipeline and depth buffer lazily on first use and after
+   a resize. With instances set, the draw is ONLY those instances: an
+   all-unresolved submission clears and reports a diagnostic, and never falls
+   back to the placeholder. */
 int NativeRenderer_RenderScene(char* error, int errorCapacity);
 
 /* Loads converted content from a .glb (the E02 record: one mesh/primitive with
@@ -85,6 +138,54 @@ int NativeRenderer_HasContent(void);
 /* Vertex and triangle counts of the loaded content; both 0 when none. Either
    pointer may be NULL. */
 void NativeRenderer_GetContentStats(int* vertexCount, int* triangleCount);
+
+/* Registers a converted .glb under a canonical `key` and uploads its immutable
+   GPU resources. Idempotent: re-registering a resident key is a no-op that
+   returns 1. Returns 0 with a diagnostic in `error` when the key or path is
+   empty, the renderer is inactive, the file cannot be loaded, or the resource
+   capacity (NATIVE_MAX_RESOURCES) is already full; a full table never evicts a
+   resident resource. Requires an active renderer. */
+int NativeRenderer_RegisterResource(const char* key, const char* glbPath,
+	char* error, int errorCapacity);
+
+/* Releases one registered resource and its GPU buffers. Safe when the key is
+   unknown or nothing is registered. */
+void NativeRenderer_UnregisterResource(const char* key);
+
+/* Releases every registered resource. Safe to call when none are registered. */
+void NativeRenderer_ClearResources(void);
+
+/* Non-zero while `key` has a resident resource. */
+int NativeRenderer_ResourceResident(const char* key);
+
+/* Copies a bounded instance list for the next draws. Everything is copied; the
+   caller may release its array afterwards. A key with no resident resource is
+   skipped with a counter and a first-key diagnostic (see
+   NativeRenderer_GetFirstInstanceDiagnostic); it is not an error. Returns 0
+   with a diagnostic in `error` only when the renderer is inactive, the list is
+   NULL with a positive count, or the count exceeds NATIVE_MAX_INSTANCES. */
+int NativeRenderer_SetInstances(const NativeInstance* instances, int count,
+	char* error, int errorCapacity);
+
+/* Clears the instance list, returning the renderer to the content/placeholder
+   modes. */
+void NativeRenderer_ClearInstances(void);
+
+/* Sets the projection near/far clip planes, in the same unit as the camera and
+   vertices (raw game units for the game scene). A non-positive near or a far
+   not greater than near is ignored. Defaults to 0.02 / 300. */
+void NativeRenderer_SetClipPlanes(float nearPlane, float farPlane);
+
+/* Counts from the last NativeRenderer_SetInstances / scene draw. `submitted` is
+   the instance count, `drawn` how many were actually drawn, `skippedUnresolved`
+   how many had no resident resource, and `residentResources` the current
+   resource count. Any pointer may be NULL. */
+void NativeRenderer_GetInstanceStats(int* submitted, int* drawn,
+	int* skippedUnresolved, int* residentResources);
+
+/* Copies the first instance diagnostic (an unresolved key or an all-missing
+   submission) into `out`. Returns 1 when one is present, else 0. */
+int NativeRenderer_GetFirstInstanceDiagnostic(char* out, int capacity);
 
 /* Renders the same scene draw as NativeRenderer_RenderScene (content when
    loaded, else placeholder) with the last camera into an offscreen RGBA8 target

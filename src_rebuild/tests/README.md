@@ -134,6 +134,39 @@ cl.exe /nologo /TP /EHsc /std:c++14 /O2 /Gy tests\SourceModelDecoderTests.cpp ut
 build\SourceModelDecoderTests.exe
 ```
 
+## Native instance placement helper tests
+
+`NativeInstanceTransformTests.cpp` tests the pure E03 block 2 item 4 helper
+(`utils/NativeInstanceTransform.*`), which composes the game's instance world
+matrix `T = Translate(pos) * RotY(yang * 64)` in raw units, column-major, with no
+Diligent/GPU/game headers. Synthetic fixtures pin the cardinal angles (yang
+0/16/32/48), the translation and affine layout, the yang wrap (yang, yang+64 and
+yang+128 select the same matrix), and agreement with the independent analytic
+`RotMatrixY(yang * 64)` including orthonormality and the fixed Y axis. It creates
+no files:
+
+```bat
+cl.exe /nologo /TP /EHsc /std:c++14 /O2 /Gy tests\NativeInstanceTransformTests.cpp utils\NativeInstanceTransform.cpp /Fo:build\ /Fe:build\NativeInstanceTransformTests.exe /link /OPT:REF
+build\NativeInstanceTransformTests.exe
+```
+
+## Native camera view helper tests
+
+`NativeCameraViewTests.cpp` tests the pure E03 block 2 item 4 helper
+(`utils/NativeCameraView.*`), which composes the raw-unit world->camera view
+matrix `view = [ R | -R*cam ]` from the game's inverse camera rotation (fixed
+point, 4096 = 1.0) and the camera position, with no Diligent/GPU/game headers.
+Synthetic fixtures pin the identity pass-through at the origin, the raw-unit
+camera translation, a +90 degree yaw, the composition against the independent
+`R * (world - cam)`, the unit/orthogonal rotation columns and the affine bottom
+row, and that +Z is ahead (a point behind has negative camera z). It creates no
+files:
+
+```bat
+cl.exe /nologo /TP /EHsc /std:c++14 /O2 /Gy tests\NativeCameraViewTests.cpp utils\NativeCameraView.cpp /Fo:build\ /Fe:build\NativeCameraViewTests.exe /link /OPT:REF
+build\NativeCameraViewTests.exe
+```
+
 ## World mesh builder tests
 
 `WorldMeshBuilderTests.cpp` tests the E03 block 2 item 3 world mesh builder
@@ -301,8 +334,15 @@ depth-tested graphics pipeline into an offscreen target and checks the nearer
 one wins the centre pixel, samples a base-colour texture on a textured quad and
 checks a translated constant-buffer MVP moves it off the centre pixel, resizes
 the swap chain, presents again and shuts down.
-It needs the Diligent libraries from `scripts/fetch_diligent.ps1`, a
-Vulkan-capable GPU/driver, and no game assets. Run it with:
+It also covers the E03 block 2 item 4 per-instance API and the +Z-forward camera
+convention: resource registration/residency/capacity, three instances (including
+a yang=16 yaw) at expected screen regions, a back-winding instance culled, the
+nearer instance occluding the farther, set/clear/re-register transitions, an
+unresolved key skipped with a named diagnostic and no placeholder fallback, and
+a real-style camera where an object ahead is visible, one behind is clipped, and
+the placeholder is visible in the no-instances mode. It needs the Diligent
+libraries from `scripts/fetch_diligent.ps1`, a Vulkan-capable GPU/driver, and no
+game assets. Run it with:
 
 ```powershell
 pwsh -NoProfile -File scripts/run_native_renderer_smoke.ps1

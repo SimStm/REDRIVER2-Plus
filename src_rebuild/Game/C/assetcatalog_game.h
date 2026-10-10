@@ -11,6 +11,8 @@
 
 #include <stdbool.h>
 
+#include "conversioncache.h"
+
 /* Enter the level/variant context before any texture or model is registered. */
 void AssetCatalogGame_BeginLevel(void);
 
@@ -95,5 +97,78 @@ bool AssetCatalogGame_ConvertModel(char* status, int statusCapacity);
    Windows-only because the atomic publisher is Win32; other platforms return
    false with an explanatory status. */
 bool AssetCatalogGame_ReconcileLevel(char* status, int statusCapacity);
+
+/* --- E03 block 2 item 4 native per-instance draw source ------------------- */
+
+/* Bounded slot->resource registry and bounded placement collector. The
+   registry is populated by a successful one-model conversion and read by the
+   native-draw bridge; the collector reuses the level inventory walker without
+   the report path and never re-decodes a model. */
+#define ASSET_CATALOG_GAME_MAX_MODEL_RESOURCES 16
+#define ASSET_CATALOG_GAME_MAX_DRAW_PLACEMENTS 64
+
+/* One published model resource. `resourceKey` is the canonical
+   ConversionCacheKey text used for the publish, `sourceHash` the source digest
+   the key was built from, and `glbPath`/`contentHash` the published artifact. */
+typedef struct AssetCatalogGameModelResource
+{
+	int modelSlot;
+	char resourceKey[CONVERSION_CACHE_KEY_CAPACITY];
+	char glbPath[CONVERSION_CACHE_PATH_CAPACITY];
+	char contentHash[CONVERSION_CACHE_HASH_CAPACITY];
+	unsigned long long sourceHash;
+} AssetCatalogGameModelResource;
+
+/* One bounded resident placement of the native-draw target model slot. The
+   model handle {modelSlot, modelRevision} is carried for staleness diagnostics;
+   the renderer only ever sees the resource key. */
+typedef struct AssetCatalogGameDrawPlacement
+{
+	int x;
+	int y;
+	int z;
+	int rotation;			/* packed yang */
+	int sourceObjectIndex;	/* 14-bit cell object index, provenance only */
+	int modelSlot;
+	unsigned int modelRevision;
+} AssetCatalogGameDrawPlacement;
+
+/* True when the developer `-drawmodel <slot> [count]` flag requested a bounded
+   native per-instance draw. */
+bool AssetCatalogGame_NativeDrawRequested(void);
+
+/* The model slot given to `-drawmodel`, or -1 when absent/unparsed. */
+int AssetCatalogGame_NativeDrawSlot(void);
+
+/* The requested instance bound given to `-drawmodel`, or the default when the
+   optional count was omitted. */
+int AssetCatalogGame_NativeDrawCount(void);
+
+/* Converts the `-drawmodel` slot through the existing one-model conversion path
+   (which registers its published resource), then collects up to the requested
+   bound of that slot's resident placements. Warn-only: a failure leaves a named
+   diagnostic in `status` and never interrupts the game. */
+bool AssetCatalogGame_PrepareNativeDraw(char* status, int statusCapacity);
+
+/* Collects up to `maxPlacements` resident placements of `modelSlot` into the
+   bounded store read by AssetCatalogGame_GetDrawPlacements. It reuses the level
+   inventory walker without the report path and never re-decodes a model, and is
+   a no-op (0) unless the native-draw flag is set. A named diagnostic is written
+   to `status`. */
+int AssetCatalogGame_CollectDrawPlacements(int modelSlot, int maxPlacements,
+	char* status, int statusCapacity);
+
+/* Looks up the published resource of `modelSlot`. Returns true and fills the
+   requested outputs when the slot has a published resource; any output pointer
+   may be NULL. `sourceHash` may be NULL. */
+bool AssetCatalogGame_GetModelResource(int modelSlot,
+	char* resourceKey, int resourceKeyCapacity,
+	char* glbPath, int glbPathCapacity,
+	char* contentHash, int contentHashCapacity,
+	unsigned long long* sourceHash);
+
+/* Copies up to `capacity` of the collected placements. Returns the number
+   copied (0 when none were collected or the native-draw flag is off). */
+int AssetCatalogGame_GetDrawPlacements(AssetCatalogGameDrawPlacement* out, int capacity);
 
 #endif /* ASSET_CATALOG_GAME_H */

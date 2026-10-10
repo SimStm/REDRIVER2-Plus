@@ -131,6 +131,68 @@ SceneResources g_scene;
 OffscreenTargets g_offscreen;
 float g_view[16] = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
 float g_fovY = 1.0472f; // 60 degrees
+float g_clipNear = 0.02f;
+float g_clipFar = 300.0f;
+
+// Registered resources, keyed by the canonical conversion-cache text key. The
+// item owns its immutable GPU buffers/texture/sampler and its shader bindings;
+// the shared constant buffer is updated per instance at draw time.
+struct ResourceEntry
+{
+	char key[NATIVE_RESOURCE_KEY_CAPACITY];
+	SceneDrawItem item;
+
+	ResourceEntry() { key[0] = '\0'; }
+};
+
+ResourceEntry g_resources[NATIVE_MAX_RESOURCES];
+int g_resourceCount = 0;
+
+NativeInstance g_instances[NATIVE_MAX_INSTANCES];
+int g_instanceCount = 0;
+int g_instanceDrawn = 0;
+int g_instanceSkipped = 0;
+char g_instanceDiagnostic[NATIVE_INSTANCE_DIAGNOSTIC_CAPACITY] = "";
+
+ResourceEntry* FindResource(const char* key)
+{
+	if (!key || !key[0])
+		return nullptr;
+	for (int i = 0; i < g_resourceCount; ++i)
+	{
+		if (strcmp(g_resources[i].key, key) == 0)
+			return &g_resources[i];
+	}
+	return nullptr;
+}
+
+void SetInstanceDiagnosticKey(const char* prefix, const char* key)
+{
+	snprintf(g_instanceDiagnostic, sizeof(g_instanceDiagnostic), "%s%s",
+		prefix, key ? key : "");
+}
+
+// Resolves the current instance list against resident resources. Fills `items`
+// with one pointer per submitted instance (NULL when unresolved) and counts the
+// unresolved ones. `items` may be NULL when only the count is needed.
+int ResolveInstances(const SceneDrawItem** items)
+{
+	int skipped = 0;
+	for (int i = 0; i < g_instanceCount; ++i)
+	{
+		ResourceEntry* entry = FindResource(g_instances[i].resourceKey);
+		if (items)
+			items[i] = entry ? &entry->item : nullptr;
+		if (!entry)
+		{
+			if (skipped == 0)
+				SetInstanceDiagnosticKey("unresolved instance key: ",
+					g_instances[i].resourceKey);
+			++skipped;
+		}
+	}
+	return skipped;
+}
 
 void MultiplyColumnMajor(const float a[16], const float b[16], float out[16])
 {
@@ -146,16 +208,39 @@ void MultiplyColumnMajor(const float a[16], const float b[16], float out[16])
 	}
 }
 
+// Diligent/Vulkan left-handed perspective projection: the camera looks down
+// +Z, so a point ahead has positive camera-space z and a positive clip w. The
+// NDC z range is [0, 1] (Diligent's Vulkan D3D emulation; BasicMath.hpp
+// SetNearFarClipPlanes with NegativeOneToOneZ = false), giving
+//   out[10] = far / (far - near)
+//   out[11] = +1
+//   out[14] = -near * far / (far - near)
+//
+// Vertical convention: out[5] = -f negates camera-space y. The game camera
+// space is +Y-down: GTE screen space is +Y-down (PsyX_GTE.cpp:395-396,
+// SY = OFY + IR2*h/sz, so a camera-space +y point lands BELOW the screen
+// centre), and the game's inv_camera_matrix row 1 is the camera Y axis
+// (rndrasm.c). Diligent's Vulkan backend flips the viewport to Direct3D's
+// +Y-up convention (DeviceContextVkImpl.cpp "Turn the viewport upside down to
+// be consistent with Direct3D"). Mapping camera +y to +NDC.y (out[5] = +f)
+// would therefore render the world vertically mirrored against the game.
+// Negating it maps camera +y to -NDC.y (the lower half), matching the game and
+// the project's modern-mesh precedent (PsyX_ModernMesh.cpp:105,
+// `-view.y * u_xyScale.y`). out[11] stays +1, so the projection is still
+// +Z-forward (clip.w = +z) and the game's inv_camera_matrix is fed directly
+// with no reflection. The negation is a y reflection: it flips the NDC
+// signed-area sign of every triangle, which the scene cull pin compensates for
+// (see CreateScenePipeline). Column-major, mul(MVP, float4(pos, 1)).
 void BuildPerspective(float fovY, float aspect, float nearPlane, float farPlane, float out[16])
 {
 	for (int i = 0; i < 16; ++i)
 		out[i] = 0.0f;
 	const float f = 1.0f / tanf(fovY * 0.5f);
 	out[0] = f / aspect;
-	out[5] = f;
-	out[10] = farPlane / (nearPlane - farPlane);
-	out[11] = -1.0f;
-	out[14] = nearPlane * farPlane / (nearPlane - farPlane);
+	out[5] = -f;
+	out[10] = farPlane / (farPlane - nearPlane);
+	out[11] = 1.0f;
+	out[14] = -nearPlane * farPlane / (farPlane - nearPlane);
 }
 
 void AddQuad(std::vector<SceneVertex>& out,
@@ -259,15 +344,22 @@ int CreateScenePipeline(TEXTURE_FORMAT colorFormat, const char* name, IPipelineS
 	psoCI.GraphicsPipeline.PrimitiveTopology = PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
 	// Winding policy (pinned by tests/SourceModelDecoderTests.cpp and asserted by
 	// tests/NativeRendererSmoke.cpp): the decoder emits world quads as
-	// (v0,v1,v3,v2) and fans them (0,1,2)+(0,2,3); for a front-facing face the
-	// first triangle (v0,v1,v3) has a positive signed area in the y-up NDC.
+	// (v0,v1,v3,v2) and fans them (0,1,2)+(0,2,3); the first triangle (v0,v1,v3)
+	// is exactly the triangle the runtime feeds to gte_nclip (draw.c:780-796).
+	// BuildPerspective negates camera-space y (out[5] = -f) to match the game's
+	// +Y-down screen convention, which reflects the NDC and flips every
+	// triangle's signed-area sign: the game-front triangle is now NEGATIVE-area.
 	// Under Diligent's Vulkan D3D emulation (negative viewport height),
-	// FrontCounterClockwise = True is the setting that treats those positive-area
-	// (counter-clockwise in the y-up NDC) triangles as front-facing; CULL_MODE_BACK
-	// then removes the reversed back faces. CULL_MODE_NONE is not an accepted
-	// policy.
+	// FrontCounterClockwise = False treats those negative-area triangles as
+	// front-facing; CULL_MODE_BACK then removes the reversed back faces. The
+	// projection reflection and this pin flip cancel, so exactly the same world
+	// faces remain front as before the vertical fix. CULL_MODE_NONE is not an
+	// accepted policy. Changing the projection's z handedness does not change
+	// the NDC area sign for a fixed local triangle; it only changes which
+	// camera-space z is in front, so the setting stays False and the fixtures
+	// move to +Z.
 	psoCI.GraphicsPipeline.RasterizerDesc.CullMode = CULL_MODE_BACK;
-	psoCI.GraphicsPipeline.RasterizerDesc.FrontCounterClockwise = True;
+	psoCI.GraphicsPipeline.RasterizerDesc.FrontCounterClockwise = False;
 	psoCI.GraphicsPipeline.DepthStencilDesc.DepthEnable = True;
 	psoCI.GraphicsPipeline.InputLayout.LayoutElements = elements;
 	psoCI.GraphicsPipeline.InputLayout.NumElements = 2;
@@ -647,44 +739,18 @@ int EnsureOffscreenTargets(Uint32 width, Uint32 height)
 	return 1;
 }
 
-// Shared scene draw used by RenderScene (swap chain) and RenderSceneToRGBA
-// (offscreen). Draws only the loaded content when one is present so the
-// pixel-level tests stay deterministic; the placeholder is the fallback.
-int RenderSceneInto(ITextureView* renderTarget, ITextureView* depthView,
-	Uint32 width, Uint32 height, int offscreenTarget)
+// Uploads the per-draw constants and issues one draw for an item. The shared
+// constant buffer is written per call, so the caller must commit and draw
+// before the next UpdateBuffer (the per-instance loop relies on this).
+void DrawItem(const SceneDrawItem& item, IPipelineState* pipeline,
+	IShaderResourceBinding* srb, const float mvp[16])
 {
-	const SceneDrawItem& item = g_scene.content.ready ? g_scene.content : g_scene.placeholder;
-	IPipelineState* pipeline = offscreenTarget
-		? g_scene.offscreenPipeline.RawPtr()
-		: g_scene.pipeline.RawPtr();
-	IShaderResourceBinding* srb = offscreenTarget
-		? item.srbOffscreen.RawPtr()
-		: item.srb.RawPtr();
-	if (!item.ready || !pipeline || !srb || !item.vertices)
-		return 0;
-
-	// MVP = projection * view * model. The model is the content node transform
-	// (identity for the placeholder); world units remain raw game units.
-	float viewModel[16];
-	MultiplyColumnMajor(g_view, item.transform, viewModel);
-	float projection[16];
-	const float aspect = height > 0 ? (float)width / (float)height : 1.0f;
-	BuildPerspective(g_fovY, aspect, 0.02f, 300.0f, projection);
-	float mvp[16];
-	MultiplyColumnMajor(projection, viewModel, mvp);
-
 	SceneConstants constants;
 	for (int i = 0; i < 16; ++i)
 		constants.mvp[i] = mvp[i];
 	for (int i = 0; i < 4; ++i)
 		constants.baseColor[i] = item.baseColor[i];
 	g_context->UpdateBuffer(g_scene.constants, 0, sizeof(SceneConstants), &constants,
-		RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
-
-	const float clearColor[4] = { 0.05f, 0.07f, 0.12f, 1.0f };
-	g_context->SetRenderTargets(1, &renderTarget, depthView, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
-	g_context->ClearRenderTarget(renderTarget, clearColor, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
-	g_context->ClearDepthStencil(depthView, CLEAR_DEPTH_FLAG, 1.0f, 0,
 		RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
 
 	g_context->SetPipelineState(pipeline);
@@ -709,6 +775,80 @@ int RenderSceneInto(ITextureView* renderTarget, ITextureView* depthView,
 		draw.Flags = DRAW_FLAG_NONE;
 		g_context->Draw(draw);
 	}
+}
+
+// Shared scene draw used by RenderScene (swap chain) and RenderSceneToRGBA
+// (offscreen). The mode is explicit: a non-empty instance list draws ONLY those
+// instances (each with its own world transform, no instancing), otherwise the
+// loaded content, otherwise the placeholder. The pixel-level tests stay
+// deterministic because each mode draws only its own geometry.
+int RenderSceneInto(ITextureView* renderTarget, ITextureView* depthView,
+	Uint32 width, Uint32 height, int offscreenTarget)
+{
+	IPipelineState* pipeline = offscreenTarget
+		? g_scene.offscreenPipeline.RawPtr()
+		: g_scene.pipeline.RawPtr();
+	if (!pipeline)
+		return 0;
+
+	float projection[16];
+	const float aspect = height > 0 ? (float)width / (float)height : 1.0f;
+	BuildPerspective(g_fovY, aspect, g_clipNear, g_clipFar, projection);
+
+	const float clearColor[4] = { 0.05f, 0.07f, 0.12f, 1.0f };
+	g_context->SetRenderTargets(1, &renderTarget, depthView, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+	g_context->ClearRenderTarget(renderTarget, clearColor, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+	g_context->ClearDepthStencil(depthView, CLEAR_DEPTH_FLAG, 1.0f, 0,
+		RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+
+	if (g_instanceCount > 0)
+	{
+		// Instances mode: no placeholder fallback. Unresolved keys are skipped
+		// with a counter and a first-key diagnostic; an all-unresolved
+		// submission leaves the clear colour and reports the diagnostic.
+		const SceneDrawItem* items[NATIVE_MAX_INSTANCES];
+		g_instanceSkipped = ResolveInstances(items);
+		g_instanceDrawn = 0;
+		for (int i = 0; i < g_instanceCount; ++i)
+		{
+			const SceneDrawItem* item = items[i];
+			if (!item || !item->ready || !item->vertices)
+				continue;
+			IShaderResourceBinding* srb = offscreenTarget
+				? item->srbOffscreen.RawPtr()
+				: item->srb.RawPtr();
+			if (!srb)
+				continue;
+
+			// MVP = projection * view * instance transform; raw game units.
+			float viewModel[16];
+			MultiplyColumnMajor(g_view, g_instances[i].transform, viewModel);
+			float mvp[16];
+			MultiplyColumnMajor(projection, viewModel, mvp);
+			DrawItem(*item, pipeline, srb, mvp);
+			++g_instanceDrawn;
+		}
+		if (g_instanceDrawn == 0 && g_instanceDiagnostic[0] == '\0')
+			SetInstanceDiagnosticKey("no instance could be drawn; first key: ",
+				g_instances[0].resourceKey);
+		return 1;
+	}
+
+	// Content mode when a converted GLB is loaded, placeholder mode otherwise.
+	const SceneDrawItem& item = g_scene.content.ready ? g_scene.content : g_scene.placeholder;
+	IShaderResourceBinding* srb = offscreenTarget
+		? item.srbOffscreen.RawPtr()
+		: item.srb.RawPtr();
+	if (!item.ready || !srb || !item.vertices)
+		return 0;
+
+	// MVP = projection * view * model. The model is the content node transform
+	// (identity for the placeholder); world units remain raw game units.
+	float viewModel[16];
+	MultiplyColumnMajor(g_view, item.transform, viewModel);
+	float mvp[16];
+	MultiplyColumnMajor(projection, viewModel, mvp);
+	DrawItem(item, pipeline, srb, mvp);
 	return 1;
 }
 } // namespace
@@ -910,6 +1050,170 @@ void NativeRenderer_GetContentStats(int* vertexCount, int* triangleCount)
 		*triangleCount = g_scene.content.ready ? g_scene.content.triangleCount : 0;
 }
 
+int NativeRenderer_RegisterResource(const char* key, const char* glbPath,
+	char* error, int errorCapacity)
+{
+	if (error && errorCapacity > 0)
+		error[0] = '\0';
+	if (!key || !key[0])
+	{
+		SetError(error, errorCapacity, "a resource key is required");
+		return 0;
+	}
+	if (!glbPath || !glbPath[0])
+	{
+		SetError(error, errorCapacity, "a converted content path is required");
+		return 0;
+	}
+	if (!g_active || !g_device || !g_context)
+	{
+		SetError(error, errorCapacity, "the native renderer is not active");
+		return 0;
+	}
+	if (strlen(key) >= NATIVE_RESOURCE_KEY_CAPACITY)
+	{
+		SetError(error, errorCapacity, "the resource key is too long");
+		return 0;
+	}
+
+	// Idempotent: a resident key is left untouched.
+	if (FindResource(key))
+		return 1;
+
+	if (g_resourceCount >= NATIVE_MAX_RESOURCES)
+	{
+		SetError(error, errorCapacity,
+			"the native resource capacity is full; no resource was evicted");
+		return 0;
+	}
+
+	GltfMeshData mesh;
+	if (Gltf_LoadFile(glbPath, &mesh, error, errorCapacity) != 0)
+		return 0;
+
+	if (!EnsureScenePipelines())
+	{
+		SetError(error, errorCapacity, "the native scene pipeline could not be created");
+		return 0;
+	}
+
+	SceneDrawItem item;
+	if (!CreateContentItem(mesh, item, error, errorCapacity))
+		return 0; // the partial item releases itself; resident resources stay untouched
+
+	ResourceEntry& entry = g_resources[g_resourceCount];
+	snprintf(entry.key, sizeof(entry.key), "%s", key);
+	entry.item = item;
+	++g_resourceCount;
+	return 1;
+}
+
+void NativeRenderer_UnregisterResource(const char* key)
+{
+	if (!key || !key[0])
+		return;
+	for (int i = 0; i < g_resourceCount; ++i)
+	{
+		if (strcmp(g_resources[i].key, key) != 0)
+			continue;
+		// Shift the tail down; the last slot is cleared so its GPU resources
+		// are released promptly.
+		for (int j = i; j + 1 < g_resourceCount; ++j)
+			g_resources[j] = g_resources[j + 1];
+		--g_resourceCount;
+		g_resources[g_resourceCount] = ResourceEntry();
+		return;
+	}
+}
+
+void NativeRenderer_ClearResources(void)
+{
+	for (int i = 0; i < g_resourceCount; ++i)
+		g_resources[i] = ResourceEntry();
+	g_resourceCount = 0;
+}
+
+int NativeRenderer_ResourceResident(const char* key)
+{
+	return FindResource(key) != nullptr;
+}
+
+int NativeRenderer_SetInstances(const NativeInstance* instances, int count,
+	char* error, int errorCapacity)
+{
+	if (error && errorCapacity > 0)
+		error[0] = '\0';
+	if (count < 0)
+	{
+		SetError(error, errorCapacity, "the instance count cannot be negative");
+		return 0;
+	}
+	if (count > NATIVE_MAX_INSTANCES)
+	{
+		SetError(error, errorCapacity,
+			"the instance count exceeds NATIVE_MAX_INSTANCES");
+		return 0;
+	}
+	if (count > 0 && !instances)
+	{
+		SetError(error, errorCapacity, "an instance array is required for a positive count");
+		return 0;
+	}
+
+	for (int i = 0; i < count; ++i)
+		g_instances[i] = instances[i];
+	g_instanceCount = count;
+
+	// Resolve now so the stats and the first-key diagnostic are available
+	// before the next draw. Unresolved keys are counted, not fatal.
+	g_instanceDiagnostic[0] = '\0';
+	g_instanceSkipped = ResolveInstances(nullptr);
+	g_instanceDrawn = 0;
+	return 1;
+}
+
+void NativeRenderer_ClearInstances(void)
+{
+	g_instanceCount = 0;
+	g_instanceDrawn = 0;
+	g_instanceSkipped = 0;
+	g_instanceDiagnostic[0] = '\0';
+}
+
+void NativeRenderer_SetClipPlanes(float nearPlane, float farPlane)
+{
+	if (!(nearPlane > 0.0f) || !(farPlane > nearPlane))
+		return;
+	g_clipNear = nearPlane;
+	g_clipFar = farPlane;
+}
+
+void NativeRenderer_GetInstanceStats(int* submitted, int* drawn,
+	int* skippedUnresolved, int* residentResources)
+{
+	if (submitted)
+		*submitted = g_instanceCount;
+	if (drawn)
+		*drawn = g_instanceDrawn;
+	if (skippedUnresolved)
+		*skippedUnresolved = g_instanceSkipped;
+	if (residentResources)
+		*residentResources = g_resourceCount;
+}
+
+int NativeRenderer_GetFirstInstanceDiagnostic(char* out, int capacity)
+{
+	if (!out || capacity <= 0)
+		return 0;
+	if (g_instanceDiagnostic[0] == '\0')
+	{
+		out[0] = '\0';
+		return 0;
+	}
+	snprintf(out, capacity, "%s", g_instanceDiagnostic);
+	return 1;
+}
+
 int NativeRenderer_RenderSceneToRGBA(unsigned char* rgba, int width, int height,
 	char* error, int errorCapacity)
 {
@@ -981,6 +1285,8 @@ void* NativeRenderer_GetContext(void)
 
 void NativeRenderer_Shutdown(void)
 {
+	NativeRenderer_ClearInstances();
+	NativeRenderer_ClearResources();
 	ReleaseSceneResources();
 	g_swapChain.Release();
 	g_context.Release();

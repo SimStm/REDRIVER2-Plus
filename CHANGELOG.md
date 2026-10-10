@@ -8,6 +8,20 @@ where release policy permits it.
 
 ## [Unreleased]
 
+### Changed
+
+- E03 block 2 item 4 camera convention: the native scene projection is +Z-forward
+  with a [0,1] NDC depth range (`out[10]=F/(F-N)`, `out[11]=+1`,
+  `out[14]=-N*F/(F-N)`, Diligent's convention) and +Y-down like the game; the F-A
+  fix negates camera-space Y (`BuildPerspective out[5]=-f`) because the game camera
+  is +Y-down (GTE `SY=OFY+IR2*h/sz`) while Diligent's D3D-like viewport is +Y-up.
+  The reflection is cancelled by the cull pin flip (`CULL_MODE_BACK` +
+  `FrontCounterClockwise=False` keeps the same world faces front; `CULL_MODE_NONE`
+  is still rejected), and the `SourceModelDecoderTests` projection/winding/unit
+  fixtures are re-pinned to view-space +Z (frontArea<0/backArea>0). New
+  `NativeRenderer_SetClipPlanes(near, far)` replaces the hardcoded metre-scale
+  0.02/300 for raw-unit scenes (the bridge supplies ~100 / ~125000).
+
 ### Added
 
 - E03 source MODEL decoder foundation (Block 1, extended in Block 2):
@@ -58,10 +72,11 @@ where release policy permits it.
   `RotMatrixY(yang*64)` (4096-unit turn), view = `R_cam*(R_obj*p + pos - cam)`,
   the NDC signed-area winding of the decoder's `(v0,v1,v3,v2)`->`(0,1,2)+(0,2,3)`
   emission, and the raw-unit policy (0.02/300 is not a valid raw-unit projection).
-  Renderer scene pipelines changed from `CULL_MODE_NONE` to `CULL_MODE_BACK` with
-  `FrontCounterClockwise=True` (Vulkan negative-viewport emulation), asserted
-  through the real offscreen pipeline. Native renderer smoke 46 checks (38
-  preserved + 8 new). Near/far and the game camera bridge remain deferred to B2.6.
+  Renderer scene pipelines changed from `CULL_MODE_NONE` to `CULL_MODE_BACK`
+  (Vulkan negative-viewport emulation), asserted through the real offscreen
+  pipeline; the `FrontCounterClockwise` pin was re-derived in item 4 (`False` after
+  the F-A +Y-down fix). Native renderer smoke 46 checks (38 preserved + 8 new).
+  Near/far and the game camera bridge are covered by item 4.
 
 - E03 Block 2 gate: attempt 1 found one High must-fix (ptype 10 is drawn by the
   runtime, not skipped) plus probe counting/reset items; remediation was applied
@@ -112,6 +127,73 @@ where release policy permits it.
   from the project decode plus a writer extension); flat normals only (stored gouraud
   point normals not consumed); one material = mean face colour; multi-submesh models
   unsupported in this block.
+
+- E03 Block 2 item 4 (per-instance draw + game camera): `native/NativeRenderer.*`
+  gains a bounded resource/instance API. `NATIVE_MAX_RESOURCES` is 16 and
+  `NATIVE_MAX_INSTANCES` 256; `NativeInstance` carries `resourceKey[160]`, a
+  column-major `transform[16]`, and level/variant/sourceObjectIndex/modelSlot/
+  modelRevision diagnostics. `RegisterResource`/`UnregisterResource`/`ClearResources`/
+  `ResourceResident` are idempotent (capacity is a named error, no eviction);
+  `SetInstances`/`ClearInstances` copy by value and skip unresolved keys with a
+  counter and a first-key diagnostic, never fatally; `SetClipPlanes`,
+  `GetInstanceStats` and `GetFirstInstanceDiagnostic` are added. The no-fallback rule
+  holds: with instances set the draw is only the instances (an all-unresolved
+  submission clears and reports, never the placeholder), the modes
+  placeholder|content|instances are explicit, and `LoadContent` stays the N=1 compat
+  path. The projection is +Z-forward with a [0,1] depth range (`out[10]=F/(F-N)`,
+  `out[11]=+1`, `out[14]=-N*F/(F-N)`) and +Y-down like the game: the F-A fix negates
+  camera-space Y (`BuildPerspective out[5]=-f`) because the game camera is +Y-down
+  (GTE `SY=OFY+IR2*h/sz`) while Diligent's D3D-like viewport is +Y-up
+  (`DeviceContextVkImpl.cpp:1812-1837`; the project's modern-mesh path already negated
+  Y, `PsyX_ModernMesh.cpp:105`). The reflection is cancelled by the cull pin flip
+  (`CULL_MODE_BACK` + `FrontCounterClockwise=False` keeps the same world faces front;
+  the game-front triangle `(v0,v1,v3)` area is negative after the reflection), pinned
+  by the new smoke test `TestVerticalConvention` (a +y marker, which the game maps
+  downward, must appear in the lower half; reverting to the old convention fails
+  exactly the three vertical checks) and by the re-pinned winding fixture
+  (`SourceModelDecoderTests` asserts frontArea<0/backArea>0). New pure helpers
+  `utils/NativeInstanceTransform.*` (`T = Translate(pos)*RotY(yang*64)` raw
+  column-major; 392 checks) and `utils/NativeCameraView.*` (raw view `[R|-R*cam]`;
+  9 checks). The game bridge (`redriver2_psxpc.cpp`) feeds the real game camera
+  (`inv_camera_matrix` + `camera_position`) through `NativeCameraView_Compose` with
+  raw clip planes 100/125000 (`draw.c farClipLimit`); a one-shot report/dump is gated
+  on a valid camera (non-degenerate view + non-zero `camera_position` + 3 consecutive
+  frames; a degenerate first frame was the observed cause of an early clear dump) and
+  submits the K placements nearest the camera (in-frustum and laterally-visible
+  preferred, fallback nearest), logging camera-position, view diag, camera-z
+  first/min/max, inFrustum and laterallyVisible, then dumping one 640x360 offscreen
+  RGBA frame via the public readback. Stale-level safety: a registry miss clears
+  instances/unregisters and resets the one-shot state (F-C). The instance source
+  (`Game/C/assetcatalog_game.{h,c}`) adds a bounded slot->{key, glbPath, contentHash}
+  registry populated on publish and a bounded resident-placements collector reusing
+  the level walker (no re-decode, <=64 placements per slot with the model handle
+  revision); the `-drawmodel <slot> [count]` developer flag (accepted in `main.c`;
+  warn-only, named diagnostics) drives it. Evidence: native renderer smoke 130 checks
+  / 0 failures (was 46 at the start of item 4; adds instance lifecycle, screen regions
+  including yang=16, culling, depth, no-fallback, real-style +Z camera, vertical
+  convention and placeholder); all inspector suites pass (SourceModelDecoder 1186,
+  NativeInstanceTransform 392, NativeCameraView 9, WorldMeshBuilder 122, others
+  unchanged); `Release_dev` and `Release_dev_native` builds exit 0. Real bounded run
+  (Release_dev, `RED2_NATIVE_RENDERER=1 -nointro -nofmv -mission 1 -drawmodel 169
+  32`): slot 169, 18 real placements, submitted 18, drawn 18, skippedUnresolved 0,
+  residentResources 1; camera-position 17387,-1050,142670; camera-z first 10824.0, min
+  -1481.9, max 77735.4, inFrustum 14/18, laterallyVisible 10/18; offscreen frame
+  640x360 rgba-hash `241175f1491c392b` with 4 non-clear pixels at y[286..307] (the
+  same x band at y[52..73] before the F-A fix = 360-y, empirically confirming the
+  vertical correction). This proves the end-to-end pipeline executes and rasterizes
+  the converted resource at its real placements with the game camera; it does NOT
+  prove on-screen shape/region beyond what the offscreen suite establishes, because
+  the selected model is a micro-prop (parsed POSITION bounds 134x130x68 raw ~3.2 cm)
+  and larger buildings are multi-submesh. Limits: one slot + bounded K;
+  single-primitive meshes only - bigger buildings fail with the named
+  `multiple-submeshes-unsupported`, so the multi-primitive writer extension is the
+  next mandatory item before any "visible building/region" claim; unreferenced slots
+  have no placements by data; FOV 1.0472 native vs the game's 0.9265 is deferred; the
+  GLB node transform is ignored in instance mode (latent, resources are identity
+  today); no textures/LOD/streaming/cars/animation/performance. Gate: attempt 1
+  verdict was commit-conditional on F-A (vertical) verification/fix and the docs;
+  F-A and F-C/F-D were remediated and verified; this documentation update resolves
+  F-B.
 
 - ODT-to-GLB tooling spike (bounded, external, temp-only; no repository
   integration): OpenDriver2Tools master @

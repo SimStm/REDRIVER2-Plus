@@ -20,11 +20,13 @@
 #include "../native/NativeRenderer.h"
 #include "../utils/GltfLoader.h"
 #include "../utils/GltfWriter.h"
+#include "../utils/NativeInstanceTransform.h"
 
 #ifdef _WIN32
 #define NOMINMAX
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -566,11 +568,11 @@ static bool NoRedPixels(const unsigned char* rgba, int pixelCount)
 }
 
 // E03-A: drives converted E02 content through the renderer's own scene path.
-// The quad's world placement lives only in the GLB node transform (z = -5) and
-// the camera comes through SetCamera, so a red centre pixel proves both the
-// content and the camera reached the draw; moving the camera must move it off
-// the centre. Content is then released and re-loaded to cover the ownership
-// transitions.
+// The quad's world placement lives only in the GLB node transform (z = +5,
+// ahead of the +Z-forward camera) and the camera comes through SetCamera, so a
+// red centre pixel proves both the content and the camera reached the draw;
+// moving the camera must move it off the centre. Content is then released and
+// re-loaded to cover the ownership transitions.
 static void TestConvertedContentScene()
 {
 	const float identity[16] = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
@@ -587,7 +589,7 @@ static void TestConvertedContentScene()
 	quad.baseColorFactor[3] = 1.0f;
 	for (int i = 0; i < 16; ++i)
 		quad.transform[i] = identity[i];
-	quad.transform[14] = -5.0f; // the only placement: translate to z = -5
+	quad.transform[14] = 5.0f; // the only placement: translate to z = +5 (ahead)
 
 	char error[256];
 	Check(Gltf_WriteFile("content-scene.glb", quad, error, sizeof(error)) == 0,
@@ -683,22 +685,25 @@ static void TestConvertedContentScene()
 		"replaced content resources still draw the quad");
 }
 
-// E03-B2.5: pins the decoder's winding to the renderer's cull mode. The decoder
-// emits a world quad as (v0,v1,v3,v2) and fans it (0,1,2)+(0,2,3); the first
-// triangle (v0,v1,v3) has a positive signed area in the y-up NDC for a
-// front-facing face. The scene pipelines cull back faces with CULL_MODE_BACK and
-// FrontCounterClockwise = True (native/NativeRenderer.cpp), so a front-winding
-// quad must be visible and a reversed back-winding quad must be culled. Both
-// quads sit at z = -5 under an identity camera.
+// E03-B2.5/item4: pins the decoder's winding to the renderer's cull mode under
+// the +Z-forward projection. The decoder emits a world quad as (v0,v1,v3,v2)
+// and fans it (0,1,2)+(0,2,3); the first triangle (v0,v1,v3) is the game's
+// gte_nclip triangle (draw.c:780-796). BuildPerspective negates camera-space y
+// (out[5] = -f) to match the game's +Y-down screen convention, which reflects
+// the NDC and makes that game-front triangle NEGATIVE-area. The scene pipelines
+// cull back faces with CULL_MODE_BACK and FrontCounterClockwise = False
+// (native/NativeRenderer.cpp): the reflection and the flipped pin cancel, so a
+// front-winding quad is still visible and a reversed back-winding quad is still
+// culled. Both quads sit at z = +5 (ahead) under an identity camera.
 static void TestWindingCullPolicy()
 {
 	const float identity[16] = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
 	NativeRenderer_SetCamera(identity, 1.0472f); // 60 degrees
 
 	GltfMeshData quad;
-	// Symmetric proxy quad stored in boundary order; the fan below is the same
-	// (0,1,2)+(0,2,3) emission the decoder produces, and the pure winding
-	// fixture pins the (v0,v1,v3,v2) vertex mapping.
+	// Stored order c0..c3 is the convex counter-clockwise boundary order; the
+	// decoder stores (v0,v1,v3,v2), so c2 is v3 and c3 is v2.
+	// c0=(-1,-1), c1=(1,-1), c2=(1,1), c3=(-1,1).
 	quad.positions = { -1, -1, 0,  1, -1, 0,  1, 1, 0,  -1, 1, 0 };
 	quad.uvs = { 0, 0,  1, 0,  1, 1,  0, 1 };
 	quad.vertexCount = 4;
@@ -709,7 +714,7 @@ static void TestWindingCullPolicy()
 	quad.baseColorFactor[3] = 1.0f;
 	for (int i = 0; i < 16; ++i)
 		quad.transform[i] = identity[i];
-	quad.transform[14] = -5.0f;
+	quad.transform[14] = 5.0f;
 
 	char error[256];
 
@@ -731,8 +736,9 @@ static void TestWindingCullPolicy()
 			frontCentre[0], frontCentre[1], frontCentre[2], frontCentre[3]);
 	Check(frontVisible, "front-winding quad is kept by the pinned back-face cull");
 
-	// Back winding: reversed index order gives a negative NDC signed area and
-	// must be culled, leaving the scene clear colour at the centre.
+	// Back winding: reversed index order gives a positive NDC signed area under
+	// the y-negated projection and must be culled, leaving the scene clear
+	// colour at the centre.
 	GltfMeshData back = quad;
 	back.indices = { 0, 2, 1,  0, 3, 2 };
 	Check(Gltf_WriteFile("winding-back.glb", back, error, sizeof(error)) == 0,
@@ -752,6 +758,521 @@ static void TestWindingCullPolicy()
 	Check(backCulled, "back-winding quad is culled by the pinned back-face cull");
 
 	NativeRenderer_ClearContent();
+}
+
+// ---------------------------------------------------------------------------
+// E03 block 2 item 4: per-instance draw API, resource residency and the
+// +Z-forward camera convention. The fixtures are raw-unit rectangles (4096
+// units per metre) so the same unit policy as the game applies.
+// ---------------------------------------------------------------------------
+
+// Writes a horizontal (x-z plane) rectangle with the decoder's stored order
+// (c0=v0, c1=v1, c2=v3, c3=v2), which for a convex quad is the counter-clockwise
+// boundary order, and the (0,1,2)+(0,2,3) fan. `backWinding` reverses the index
+// order so the same geometry is culled.
+static bool WriteRectangleFixture(const char* path, float halfX, float halfZ,
+	bool backWinding, const float rgba[4], char* error, int errorCapacity)
+{
+	GltfMeshData quad;
+	quad.positions = { -halfX, 0, -halfZ,  halfX, 0, -halfZ,  halfX, 0, halfZ,  -halfX, 0, halfZ };
+	quad.uvs = { 0, 0,  1, 0,  0, 1,  1, 1 };
+	quad.vertexCount = 4;
+	quad.triangleCount = 2;
+	if (backWinding)
+		quad.indices = { 0, 2, 1,  0, 3, 2 };
+	else
+		quad.indices = { 0, 1, 2,  0, 2, 3 };
+	quad.baseColorFactor[0] = rgba[0];
+	quad.baseColorFactor[1] = rgba[1];
+	quad.baseColorFactor[2] = rgba[2];
+	quad.baseColorFactor[3] = rgba[3];
+	return Gltf_WriteFile(path, quad, error, errorCapacity) == 0;
+}
+
+// Writes a vertical (x-y plane) marker quad facing a camera that looks down +Z,
+// with the same front winding as the decoder's world quads (c0=v0, c1=v1,
+// c2=v3, c3=v2 and the (0,1,2)+(0,2,3) fan). Used by the vertical-convention
+// pin so a marker's camera-space y is exactly its world y under an identity
+// camera.
+static bool WriteVerticalMarkerFixture(const char* path, float halfSize,
+	const float rgba[4], char* error, int errorCapacity)
+{
+	GltfMeshData quad;
+	quad.positions = { -halfSize, -halfSize, 0,  halfSize, -halfSize, 0,
+		halfSize, halfSize, 0,  -halfSize, halfSize, 0 };
+	quad.uvs = { 0, 0,  1, 0,  1, 1,  0, 1 };
+	quad.vertexCount = 4;
+	quad.triangleCount = 2;
+	quad.indices = { 0, 1, 2,  0, 2, 3 };
+	quad.baseColorFactor[0] = rgba[0];
+	quad.baseColorFactor[1] = rgba[1];
+	quad.baseColorFactor[2] = rgba[2];
+	quad.baseColorFactor[3] = rgba[3];
+	return Gltf_WriteFile(path, quad, error, errorCapacity) == 0;
+}
+
+static void MakeInstance(NativeInstance& instance, const char* key,
+	const float pos[3], unsigned int yang, int level, int variant,
+	int sourceObjectIndex, int modelSlot, int modelRevision)
+{
+	snprintf(instance.resourceKey, sizeof(instance.resourceKey), "%s", key);
+	const int ipos[3] = { (int)pos[0], (int)pos[1], (int)pos[2] };
+	NativeInstance_ComposeTransform(ipos, yang, instance.transform);
+	instance.level = level;
+	instance.variant = variant;
+	instance.sourceObjectIndex = sourceObjectIndex;
+	instance.modelSlot = modelSlot;
+	instance.modelRevision = modelRevision;
+}
+
+// A top-down game-style camera at (0, height, 0) looking down -Y: world +X maps
+// to screen right and camera depth = height - world.y. World +Z maps to
+// camera-space +y, which under the game's +Y-down convention (see
+// NativeRenderer.cpp BuildPerspective) appears toward the BOTTOM of the screen.
+static void BuildTopDownView(float height, float view[16])
+{
+	view[0] = 1.0f;  view[4] = 0.0f;  view[8] = 0.0f;   view[12] = 0.0f;
+	view[1] = 0.0f;  view[5] = 0.0f;  view[9] = 1.0f;   view[13] = 0.0f;
+	view[2] = 0.0f;  view[6] = -1.0f; view[10] = 0.0f;  view[14] = height;
+	view[3] = 0.0f;  view[7] = 0.0f;  view[11] = 0.0f;  view[15] = 1.0f;
+}
+
+// An angled game-style camera at (0, height, zOffset), pitched down by
+// `pitch` so it looks forward (+Z) and down at the ground; camera depth grows
+// with world z, so "ahead" is +Z and "behind" is negative camera z.
+static void BuildAngledView(float height, float zOffset, float pitch, float view[16])
+{
+	const float c = cosf(pitch);
+	const float s = sinf(pitch);
+	// R rows: (1,0,0), (0,c,s), (0,-s,c); t = -R * cam.
+	view[0] = 1.0f;  view[4] = 0.0f;  view[8] = 0.0f;   view[12] = -s * zOffset;
+	view[1] = 0.0f;  view[5] = c;     view[9] = s;      view[13] = -(c * height + s * zOffset);
+	view[2] = 0.0f;  view[6] = -s;    view[10] = c;     view[14] = s * height - c * zOffset;
+	view[3] = 0.0f;  view[7] = 0.0f;  view[11] = 0.0f;  view[15] = 1.0f;
+}
+
+static bool IsRed(const unsigned char* pixel)
+{
+	return pixel[0] >= 200 && pixel[1] <= 64 && pixel[2] <= 64;
+}
+
+static bool IsGreen(const unsigned char* pixel)
+{
+	return pixel[1] >= 200 && pixel[0] <= 64 && pixel[2] <= 64;
+}
+
+static bool IsClear(const unsigned char* pixel)
+{
+	return pixel[0] >= 9 && pixel[0] <= 17 &&
+		pixel[1] >= 14 && pixel[1] <= 22 &&
+		pixel[2] >= 27 && pixel[2] <= 35 && pixel[3] == 255;
+}
+
+static int CountRed(const unsigned char* image, int width, int height)
+{
+	int count = 0;
+	for (int i = 0; i < width * height; ++i)
+		if (IsRed(image + (size_t)i * 4))
+			++count;
+	return count;
+}
+
+static int CountGreen(const unsigned char* image, int width, int height)
+{
+	int count = 0;
+	for (int i = 0; i < width * height; ++i)
+		if (IsGreen(image + (size_t)i * 4))
+			++count;
+	return count;
+}
+
+// Mean row (0 = top) of the pixels matching `red` or green, or -1 when none.
+// Used by the vertical-convention pin to place a marker in a screen half.
+static float MeanRowOf(const unsigned char* image, int width, int height, bool red)
+{
+	long long sum = 0;
+	int count = 0;
+	for (int y = 0; y < height; ++y)
+	{
+		for (int x = 0; x < width; ++x)
+		{
+			const unsigned char* pixel = image + ((size_t)y * width + x) * 4;
+			if (red ? IsRed(pixel) : IsGreen(pixel))
+			{
+				sum += y;
+				++count;
+			}
+		}
+	}
+	return count > 0 ? (float)sum / (float)count : -1.0f;
+}
+
+static int CountNonClear(const unsigned char* image, int width, int height)
+{
+	int count = 0;
+	for (int i = 0; i < width * height; ++i)
+		if (!IsClear(image + (size_t)i * 4))
+			++count;
+	return count;
+}
+
+// Bounding box of the red pixels within columns [x0, x1). Returns false when
+// there are none.
+static bool RedBoundingBox(const unsigned char* image, int width, int height,
+	int x0, int x1, int* minX, int* minY, int* maxX, int* maxY)
+{
+	bool found = false;
+	for (int y = 0; y < height; ++y)
+	{
+		for (int x = x0; x < x1 && x < width; ++x)
+		{
+			if (!IsRed(image + ((size_t)y * width + x) * 4))
+				continue;
+			if (!found)
+			{
+				*minX = *maxX = x;
+				*minY = *maxY = y;
+				found = true;
+			}
+			else
+			{
+				if (x < *minX) *minX = x;
+				if (x > *maxX) *maxX = x;
+				if (y < *minY) *minY = y;
+				if (y > *maxY) *maxY = y;
+			}
+		}
+	}
+	return found;
+}
+
+// Acceptance (a): three instances (including a yawed one) at known transforms
+// appear in their expected screen regions, and the yaw is observable through
+// the footprint aspect.
+static void TestInstanceScreenRegions()
+{
+	char error[256];
+	NativeRenderer_ClearInstances();
+	NativeRenderer_ClearResources();
+
+	const float red[4] = { 1.0f, 0.0f, 0.0f, 1.0f };
+	Check(WriteRectangleFixture("instance-red.glb", 2500.0f, 1500.0f, false, red, error, sizeof(error)),
+		"instance rectangle fixture written");
+	Check(NativeRenderer_RegisterResource("quad-red", "instance-red.glb", error, sizeof(error)) == 1,
+		"instance rectangle resource registered");
+
+	float view[16];
+	BuildTopDownView(20000.0f, view);
+	NativeRenderer_SetCamera(view, 1.0472f);
+	NativeRenderer_SetClipPlanes(100.0f, 125000.0f);
+
+	NativeInstance instances[3];
+	const float leftPos[3] = { -9000.0f, 0.0f, 8000.0f };
+	const float centrePos[3] = { 0.0f, 0.0f, 8000.0f };
+	const float rightPos[3] = { 9000.0f, 0.0f, 8000.0f };
+	MakeInstance(instances[0], "quad-red", leftPos, 0, 1, 0, 10, 3, 7);
+	MakeInstance(instances[1], "quad-red", centrePos, 0, 1, 0, 11, 3, 7);
+	MakeInstance(instances[2], "quad-red", rightPos, 16, 1, 0, 12, 3, 7); // yawed
+
+	Check(NativeRenderer_SetInstances(instances, 3, error, sizeof(error)) == 1,
+		"three instances set");
+
+	unsigned char image[64 * 64 * 4] = {};
+	Check(NativeRenderer_RenderSceneToRGBA(image, 64, 64, error, sizeof(error)) == 1,
+		"three instances rendered offscreen");
+
+	int drawn = 0, skipped = 0;
+	NativeRenderer_GetInstanceStats(nullptr, &drawn, &skipped, nullptr);
+	Check(drawn == 3 && skipped == 0, "all three instances drawn");
+
+	int minX = 0, minY = 0, maxX = 0, maxY = 0;
+	const bool left = RedBoundingBox(image, 64, 64, 0, 14, &minX, &minY, &maxX, &maxY);
+	Check(left, "the left instance appears in the left screen region");
+	const bool centre = RedBoundingBox(image, 64, 64, 25, 39, &minX, &minY, &maxX, &maxY);
+	Check(centre, "the centre instance appears in the centre screen region");
+	const int centreWidth = maxX - minX + 1;
+	const int centreHeight = maxY - minY + 1;
+	const bool right = RedBoundingBox(image, 64, 64, 50, 64, &minX, &minY, &maxX, &maxY);
+	Check(right, "the yang=16 instance appears in the right screen region");
+	const int rightWidth = maxX - minX + 1;
+	const int rightHeight = maxY - minY + 1;
+
+	if (!(centreWidth > centreHeight))
+		printf("    (centre footprint %dx%d, expected wider than tall)\n", centreWidth, centreHeight);
+	if (!(rightHeight > rightWidth))
+		printf("    (right footprint %dx%d, expected taller than wide after the yaw)\n", rightWidth, rightHeight);
+	Check(centreWidth > centreHeight, "the unyawed instance footprint is wider than tall");
+	Check(rightHeight > rightWidth, "the yang=16 yaw swaps the footprint aspect");
+
+	// A back-winding instance is culled by the same pinned policy.
+	const float backRed[4] = { 1.0f, 0.0f, 0.0f, 1.0f };
+	Check(WriteRectangleFixture("instance-back.glb", 6000.0f, 4000.0f, true, backRed, error, sizeof(error)),
+		"back-winding instance fixture written");
+	Check(NativeRenderer_RegisterResource("quad-back", "instance-back.glb", error, sizeof(error)) == 1,
+		"back-winding instance resource registered");
+	NativeInstance backInstance;
+	MakeInstance(backInstance, "quad-back", centrePos, 0, 1, 0, 13, 3, 7);
+	Check(NativeRenderer_SetInstances(&backInstance, 1, error, sizeof(error)) == 1,
+		"back-winding instance set");
+	unsigned char backImage[64 * 64 * 4] = {};
+	Check(NativeRenderer_RenderSceneToRGBA(backImage, 64, 64, error, sizeof(error)) == 1,
+		"back-winding instance rendered offscreen");
+	Check(CountRed(backImage, 64, 64) == 0, "the back-winding instance is culled");
+
+	// Acceptance (b): the nearer instance occludes the farther one. Draw the
+	// nearer green first and the farther red second so draw order cannot pass
+	// the check; only the depth test can keep green.
+	NativeRenderer_ClearInstances();
+	NativeRenderer_ClearResources();
+	const float green[4] = { 0.0f, 1.0f, 0.0f, 1.0f };
+	Check(WriteRectangleFixture("instance-green.glb", 2500.0f, 1500.0f, false, green, error, sizeof(error)),
+		"instance green fixture written");
+	Check(NativeRenderer_RegisterResource("quad-red", "instance-red.glb", error, sizeof(error)) == 1,
+		"red resource re-registered for the depth test");
+	Check(NativeRenderer_RegisterResource("quad-green", "instance-green.glb", error, sizeof(error)) == 1,
+		"green resource registered");
+
+	NativeInstance depth[2];
+	// Both project to the same NDC y under the top-down camera (z / (H - y) is
+	// equal: 5600 / 14000 == 8000 / 20000; the projection's y negation scales
+	// both by the same -f, so they still share one screen row), so the nearer
+	// green quad (camera depth 14000) is larger and fully covers the farther red
+	// one (depth 20000).
+	const float nearPos[3] = { 0.0f, 6000.0f, 5600.0f }; // nearer: camera depth 14000
+	const float farPos[3] = { 0.0f, 0.0f, 8000.0f };    // farther: camera depth 20000
+	MakeInstance(depth[0], "quad-green", nearPos, 0, 1, 0, 20, 4, 1);
+	MakeInstance(depth[1], "quad-red", farPos, 0, 1, 0, 21, 4, 1);
+	Check(NativeRenderer_SetInstances(depth, 2, error, sizeof(error)) == 1,
+		"overlapping depth instances set");
+
+	unsigned char depthImage[64 * 64 * 4] = {};
+	Check(NativeRenderer_RenderSceneToRGBA(depthImage, 64, 64, error, sizeof(error)) == 1,
+		"overlapping depth instances rendered offscreen");
+	Check(CountGreen(depthImage, 64, 64) > 50,
+		"the nearer instance wins the overlapping region");
+	Check(CountRed(depthImage, 64, 64) == 0, "the farther instance is fully occluded");
+}
+
+// Acceptance (c)/(d): residency, set/clear/re-register transitions, unresolved
+// keys, the named diagnostic, the no-fallback rule and the resource capacity.
+static void TestInstanceResidencyAndDiagnostics()
+{
+	char error[256];
+	NativeRenderer_ClearInstances();
+	NativeRenderer_ClearResources();
+
+	const float red[4] = { 1.0f, 0.0f, 0.0f, 1.0f };
+	Check(WriteRectangleFixture("instance-red.glb", 2500.0f, 1500.0f, false, red, error, sizeof(error)),
+		"residency fixture written");
+
+	Check(NativeRenderer_RegisterResource("quad-red", "instance-red.glb", error, sizeof(error)) == 1,
+		"residency resource registered");
+	Check(NativeRenderer_ResourceResident("quad-red") == 1, "registered resource reports resident");
+	Check(NativeRenderer_RegisterResource("quad-red", "instance-red.glb", error, sizeof(error)) == 1,
+		"re-registering a resident key is an idempotent no-op");
+	Check(NativeRenderer_ResourceResident("quad-missing") == 0, "an unknown key is not resident");
+
+	float view[16];
+	BuildTopDownView(20000.0f, view);
+	NativeRenderer_SetCamera(view, 1.0472f);
+	NativeRenderer_SetClipPlanes(100.0f, 125000.0f);
+
+	NativeInstance instance;
+	const float pos[3] = { 0.0f, 0.0f, 8000.0f };
+	MakeInstance(instance, "quad-red", pos, 0, 1, 0, 30, 5, 2);
+
+	int submitted = 0, drawn = 0, skipped = 0, resident = 0;
+	Check(NativeRenderer_SetInstances(&instance, 1, error, sizeof(error)) == 1, "one instance set");
+	NativeRenderer_GetInstanceStats(&submitted, &drawn, &skipped, &resident);
+	Check(submitted == 1 && skipped == 0 && resident == 1,
+		"one submitted, none unresolved, one resident");
+
+	unsigned char image[64 * 64 * 4] = {};
+	Check(NativeRenderer_RenderSceneToRGBA(image, 64, 64, error, sizeof(error)) == 1,
+		"instance rendered offscreen");
+	NativeRenderer_GetInstanceStats(&submitted, &drawn, &skipped, &resident);
+	Check(drawn == 1, "the resolved instance was drawn");
+	Check(CountRed(image, 64, 64) > 50, "the instance is visible");
+
+	// set -> render -> clear -> absent
+	NativeRenderer_ClearInstances();
+	NativeRenderer_GetInstanceStats(&submitted, &drawn, &skipped, &resident);
+	Check(submitted == 0 && drawn == 0, "clearing instances resets the submission stats");
+	unsigned char cleared[64 * 64 * 4] = {};
+	Check(NativeRenderer_RenderSceneToRGBA(cleared, 64, 64, error, sizeof(error)) == 1,
+		"rendered after clearing instances");
+	Check(CountRed(cleared, 64, 64) == 0, "the cleared instance is absent");
+
+	// re-register / set -> present
+	NativeRenderer_UnregisterResource("quad-red");
+	Check(NativeRenderer_ResourceResident("quad-red") == 0, "unregistered resource is gone");
+	Check(NativeRenderer_RegisterResource("quad-red", "instance-red.glb", error, sizeof(error)) == 1,
+		"resource re-registered after unregister");
+	Check(NativeRenderer_SetInstances(&instance, 1, error, sizeof(error)) == 1, "instance set again");
+	unsigned char reloaded[64 * 64 * 4] = {};
+	Check(NativeRenderer_RenderSceneToRGBA(reloaded, 64, 64, error, sizeof(error)) == 1,
+		"re-registered instance rendered");
+	Check(CountRed(reloaded, 64, 64) > 50, "the re-registered instance is present again");
+
+	// Acceptance (d): an unregistered key is skipped with a named diagnostic and
+	// the placeholder is NOT drawn.
+	NativeInstance missing;
+	MakeInstance(missing, "unregistered-key", pos, 0, 1, 0, 31, 5, 2);
+	Check(NativeRenderer_SetInstances(&missing, 1, error, sizeof(error)) == 1,
+		"an unresolved key is not a fatal submission error");
+	NativeRenderer_GetInstanceStats(&submitted, &drawn, &skipped, &resident);
+	Check(submitted == 1 && skipped == 1 && drawn == 0, "the unresolved key is counted, not drawn");
+
+	char diagnostic[NATIVE_INSTANCE_DIAGNOSTIC_CAPACITY] = "";
+	Check(NativeRenderer_GetFirstInstanceDiagnostic(diagnostic, sizeof(diagnostic)) == 1 &&
+		strstr(diagnostic, "unregistered-key") != nullptr,
+		"the first unresolved key is named in the diagnostic");
+
+	unsigned char noFallback[64 * 64 * 4] = {};
+	Check(NativeRenderer_RenderSceneToRGBA(noFallback, 64, 64, error, sizeof(error)) == 1,
+		"an all-unresolved submission still renders");
+	Check(CountRed(noFallback, 64, 64) == 0 && CountNonClear(noFallback, 64, 64) == 0,
+		"an all-unresolved submission draws neither the instance nor the placeholder");
+	NativeRenderer_GetInstanceStats(&submitted, &drawn, &skipped, &resident);
+	Check(drawn == 0, "no instance is drawn for an all-unresolved submission");
+
+	// Capacity: the 17th distinct resource is a named error and never evicts a
+	// resident one.
+	NativeRenderer_ClearResources();
+	for (int i = 0; i < NATIVE_MAX_RESOURCES; ++i)
+	{
+		char key[32];
+		snprintf(key, sizeof(key), "cap-%d", i);
+		Check(NativeRenderer_RegisterResource(key, "instance-red.glb", error, sizeof(error)) == 1,
+			"capacity resource registered");
+	}
+	char capacityError[256] = "";
+	Check(NativeRenderer_RegisterResource("cap-overflow", "instance-red.glb", capacityError, sizeof(capacityError)) == 0 &&
+		capacityError[0] != '\0', "registering past the capacity fails with a diagnostic");
+	NativeRenderer_GetInstanceStats(nullptr, nullptr, nullptr, &resident);
+	Check(resident == NATIVE_MAX_RESOURCES, "a full table keeps every resident resource");
+
+	NativeRenderer_ClearResources();
+	NativeRenderer_ClearInstances();
+}
+
+// Acceptance (e): the +Z-forward camera convention. With a real-style angled
+// camera an object ahead is visible and one behind is not, and the placeholder
+// is still visible in the no-instances mode. This check is depth-sensitive
+// (camera-space z), not vertical: the projection's y negation mirrors the scene
+// vertically but does not change which camera-space z is in front, so "ahead
+// visible / behind clipped" is unaffected. The placeholder check counts
+// non-clear pixels, so it survives the vertical mirror as long as the ground
+// still fills the view (it does).
+static void TestCameraConventionAndPlaceholder()
+{
+	char error[256];
+	NativeRenderer_ClearInstances();
+	NativeRenderer_ClearResources();
+
+	const float red[4] = { 1.0f, 0.0f, 0.0f, 1.0f };
+	Check(WriteRectangleFixture("instance-red.glb", 6000.0f, 4000.0f, false, red, error, sizeof(error)),
+		"camera-convention fixture written");
+	Check(NativeRenderer_RegisterResource("quad-red", "instance-red.glb", error, sizeof(error)) == 1,
+		"camera-convention resource registered");
+
+	float view[16];
+	BuildAngledView(8000.0f, -20000.0f, 0.349f /* 20 degrees */, view);
+	NativeRenderer_SetCamera(view, 1.0472f);
+	NativeRenderer_SetClipPlanes(100.0f, 125000.0f);
+
+	// No instances: the placeholder (ground and pillars) is visible.
+	unsigned char placeholder[64 * 64 * 4] = {};
+	Check(NativeRenderer_RenderSceneToRGBA(placeholder, 64, 64, error, sizeof(error)) == 1,
+		"placeholder rendered with the angled camera");
+	const int placeholderPixels = CountNonClear(placeholder, 64, 64);
+	if (placeholderPixels < 64)
+		printf("    (placeholder only %d non-clear pixels, expected the ground to fill the view)\n",
+			placeholderPixels);
+	Check(placeholderPixels > 64, "the placeholder is visible in the no-instances mode");
+
+	// An instance ahead (+Z) is visible.
+	NativeInstance ahead;
+	const float aheadPos[3] = { 0.0f, 0.0f, 8000.0f };
+	MakeInstance(ahead, "quad-red", aheadPos, 0, 1, 0, 40, 6, 1);
+	Check(NativeRenderer_SetInstances(&ahead, 1, error, sizeof(error)) == 1, "ahead instance set");
+	unsigned char aheadImage[64 * 64 * 4] = {};
+	Check(NativeRenderer_RenderSceneToRGBA(aheadImage, 64, 64, error, sizeof(error)) == 1,
+		"ahead instance rendered");
+	Check(CountRed(aheadImage, 64, 64) > 50, "the object ahead of the camera is visible");
+
+	// An instance behind the camera is not visible, and the instances mode never
+	// falls back to the placeholder.
+	NativeInstance behind;
+	const float behindPos[3] = { 0.0f, 0.0f, -40000.0f };
+	MakeInstance(behind, "quad-red", behindPos, 0, 1, 0, 41, 6, 1);
+	Check(NativeRenderer_SetInstances(&behind, 1, error, sizeof(error)) == 1, "behind instance set");
+	unsigned char behindImage[64 * 64 * 4] = {};
+	Check(NativeRenderer_RenderSceneToRGBA(behindImage, 64, 64, error, sizeof(error)) == 1,
+		"behind instance rendered");
+	Check(CountRed(behindImage, 64, 64) == 0 && CountNonClear(behindImage, 64, 64) == 0,
+		"the object behind the camera is clipped and no placeholder is drawn");
+
+	NativeRenderer_ClearInstances();
+	NativeRenderer_ClearResources();
+}
+
+// E03 vertical-convention pin. The game camera space is +Y-down
+// (PsyX_GTE.cpp:395-396, SY = OFY + IR2*h/sz, so a camera-space +y point lands
+// below the screen centre), while Diligent's Vulkan backend flips the viewport
+// to Direct3D's +Y-up convention (DeviceContextVkImpl.cpp "Turn the viewport
+// upside down"). BuildPerspective negates out[5] so a camera-space +y point
+// lands in the LOWER half, matching the game and the modern-mesh precedent
+// (PsyX_ModernMesh.cpp:105, `-view.y`). Two vertical markers sit at
+// camera-space +y (green) and -y (red) under an identity camera; the game
+// convention puts green LOW and red HIGH. Under the old +f projection the two
+// swap, so this test fails under the old convention and passes under the new.
+static void TestVerticalConvention()
+{
+	char error[256];
+	NativeRenderer_ClearInstances();
+	NativeRenderer_ClearResources();
+
+	const float green[4] = { 0.0f, 1.0f, 0.0f, 1.0f };
+	const float red[4] = { 1.0f, 0.0f, 0.0f, 1.0f };
+	Check(WriteVerticalMarkerFixture("marker-green.glb", 600.0f, green, error, sizeof(error)),
+		"vertical marker green fixture written");
+	Check(WriteVerticalMarkerFixture("marker-red.glb", 600.0f, red, error, sizeof(error)),
+		"vertical marker red fixture written");
+	Check(NativeRenderer_RegisterResource("marker-green", "marker-green.glb", error, sizeof(error)) == 1,
+		"vertical marker green resource registered");
+	Check(NativeRenderer_RegisterResource("marker-red", "marker-red.glb", error, sizeof(error)) == 1,
+		"vertical marker red resource registered");
+
+	const float identity[16] = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
+	NativeRenderer_SetCamera(identity, 1.0472f);
+	NativeRenderer_SetClipPlanes(100.0f, 125000.0f);
+
+	// Camera-space +y marker (green) and -y marker (red), both ahead (+z).
+	NativeInstance markers[2];
+	const float upPos[3] = { 0.0f, 3000.0f, 8000.0f };
+	const float downPos[3] = { 0.0f, -3000.0f, 8000.0f };
+	MakeInstance(markers[0], "marker-green", upPos, 0, 1, 0, 50, 7, 1);
+	MakeInstance(markers[1], "marker-red", downPos, 0, 1, 0, 51, 7, 1);
+	Check(NativeRenderer_SetInstances(markers, 2, error, sizeof(error)) == 1,
+		"vertical markers set");
+
+	unsigned char image[64 * 64 * 4] = {};
+	Check(NativeRenderer_RenderSceneToRGBA(image, 64, 64, error, sizeof(error)) == 1,
+		"vertical markers rendered offscreen");
+
+	const float greenRow = MeanRowOf(image, 64, 64, false);
+	const float redRow = MeanRowOf(image, 64, 64, true);
+	Check(greenRow >= 0.0f && redRow >= 0.0f, "both vertical markers are visible");
+	if (!(greenRow > 32.0f && redRow < 32.0f))
+		printf("    (green mean row %.1f, red mean row %.1f; game +y must be lower)\n",
+			greenRow, redRow);
+	Check(greenRow > 32.0f, "camera-space +y (game down) appears in the lower half");
+	Check(redRow < 32.0f, "camera-space -y appears in the upper half");
+	Check(greenRow > redRow, "the +y marker is below the -y marker");
+
+	NativeRenderer_ClearInstances();
+	NativeRenderer_ClearResources();
 }
 
 static void TestTriangleDraw()
@@ -809,6 +1330,10 @@ int main()
 	TestTexturedQuad();
 	TestConvertedContentScene();
 	TestWindingCullPolicy();
+	TestInstanceScreenRegions();
+	TestInstanceResidencyAndDiagnostics();
+	TestCameraConventionAndPlaceholder();
+	TestVerticalConvention();
 
 	NativeRenderer_Resize(640, 480);
 	Check(NativeRenderer_RenderClearAndPresent(0.3f, 0.1f, 0.2f, 1.0f, error, sizeof(error)) == 1,

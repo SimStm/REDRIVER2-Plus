@@ -8,7 +8,7 @@ tags: [okf, status, agents]
 # Recent engineering context
 
 > Updated: 2026-10-09.
-> Read the handoff below first: E03 Block 2 (2a/2.1/2.4/2.5/item 3) and E04 A1; next item 4 (per-instance draw).
+> Read the handoff below first: E03 Block 2 (2a/2.1/2.4/2.5, item 3, item 4) and E04 A1; next the multi-primitive writer extension.
 > Older task narratives are condensed; their change records
 > hold the detail.
 
@@ -83,10 +83,10 @@ fixed ticks independent of presentation FPS and CPU speed.
   `RotMatrixY(yang*64)` (4096-unit turn), view = `R_cam*(R_obj*p + pos - cam)`,
   the NDC signed-area winding of the decoder's `(v0,v1,v3,v2)`->`(0,1,2)+(0,2,3)`
   emission, and the raw-unit policy (0.02/300 is not a valid raw-unit projection).
-  Renderer scene pipelines changed from `CULL_MODE_NONE` to `CULL_MODE_BACK` with
-  `FrontCounterClockwise=True` (Vulkan negative-viewport emulation), asserted
-  through the real offscreen pipeline; near/far and the game camera bridge remain
-  deferred to B2.6. Native renderer smoke 46 checks (38 preserved + 8 new).
+  Renderer scene pipelines changed from `CULL_MODE_NONE` to `CULL_MODE_BACK`
+  (Vulkan negative-viewport emulation), asserted through the real offscreen
+  pipeline; the `FrontCounterClockwise` pin was re-derived in item 4 (`False` after
+  the F-A +Y-down fix). Native renderer smoke 46 checks (38 preserved + 8 new).
 - E03 Block 2 gate: attempt 1 found one High must-fix (ptype 10 is drawn by the
   runtime, not skipped) plus probe counting/reset items; remediation applied and
   verified; attempt 2 verdict COMMIT-ready on code (remaining item was this
@@ -132,13 +132,65 @@ fixed ticks independent of presentation FPS and CPU speed.
   textures/embedded images here (follow-up: per-face `texture_id`/CLUT + `TEXINF`
   sub-rect recovery + writer extension), flat normals only (stored gouraud point
   normals not consumed), one material = mean face colour, multi-submesh unsupported.
+- E03 Block 2 item 4 (2026-10-10, per-instance draw + game camera): `native/NativeRenderer.*` adds
+  bounded resources (`NATIVE_MAX_RESOURCES` 16) and instances (`NATIVE_MAX_INSTANCES` 256);
+  `NativeInstance` (resourceKey[160], column-major transform[16],
+  level/variant/sourceObjectIndex/modelSlot/modelRevision diagnostics);
+  `RegisterResource`/`UnregisterResource`/`ClearResources`/`ResourceResident` (idempotent, capacity =
+  named error, no eviction); `SetInstances`/`ClearInstances` (copied by value; unresolved keys skipped
+  with a counter + first-key diagnostic, never fatal); `SetClipPlanes`; `GetInstanceStats`;
+  `GetFirstInstanceDiagnostic`. No-fallback rule: with instances set the draw is only the instances
+  (all-unresolved -> clear + diagnostic, never the placeholder); modes placeholder|content|instances are
+  explicit and `LoadContent` stays the N=1 compat path. Projection is +Z-forward with [0,1] depth
+  (`out[10]=F/(F-N)`, `out[11]=+1`, `out[14]=-N*F/(F-N)`, Diligent's convention) and +Y-down like the
+  game: the F-A fix negates camera-space Y (`BuildPerspective out[5]=-f`) because the game camera is
+  +Y-down (GTE `SY=OFY+IR2*h/sz`) while Diligent's D3D-like viewport is +Y-up
+  (`DeviceContextVkImpl.cpp:1812-1837`; the modern-mesh path already negated Y, `PsyX_ModernMesh.cpp:105`).
+  The reflection is cancelled by the cull pin flip (`CULL_MODE_BACK` + `FrontCounterClockwise=False` keeps
+  the same world faces front; the game-front triangle `(v0,v1,v3)` area is negative after the reflection),
+  pinned by the new smoke `TestVerticalConvention` (a +y marker the game maps downward must appear in the
+  lower half; reverting the fix fails exactly the three vertical checks) and the re-pinned winding fixture
+  (`SourceModelDecoderTests` asserts frontArea<0/backArea>0). New pure `utils/NativeInstanceTransform.*`
+  (T = `Translate(pos)*RotY(yang*64)` raw column-major; 392 checks) and `utils/NativeCameraView.*` (raw
+  view = `[R|-R*cam]`; 9 checks). `redriver2_psxpc.cpp` feeds the real game camera (`inv_camera_matrix` +
+  `camera_position`) through `NativeCameraView_Compose` with raw clip planes 100/125000 (`draw.c
+  farClipLimit`); a one-shot report/dump is gated on a valid camera (non-degenerate view + non-zero
+  `camera_position` + 3 consecutive frames; a degenerate first frame caused an early clear dump) and
+  submits the K placements nearest the camera (in-frustum and laterally-visible preferred, fallback
+  nearest), logging camera-position, view diag, camera-z first/min/max, inFrustum and laterallyVisible,
+  then dumping one 640x360 offscreen RGBA frame via the public readback; a registry miss clears
+  instances/unregisters and resets the one-shot state (F-C). `Game/C/assetcatalog_game.{h,c}` gains a
+  bounded slot->{key, glbPath, contentHash} registry populated on publish and a bounded resident-placements
+  collector reusing the level walker (no re-decode, <=64 placements per slot with the model handle
+  revision); the `-drawmodel <slot> [count]` dev flag (accepted in `main.c`; warn-only, named diagnostics).
+  Evidence: native renderer smoke 130 checks / 0 failures (was 46 at the start of item 4; adds instance
+  lifecycle, screen regions incl. yang=16, culling, depth, no-fallback, real-style +Z camera, vertical
+  convention, placeholder); all inspector suites pass (SourceModelDecoder 1186, NativeInstanceTransform
+  392, NativeCameraView 9, WorldMeshBuilder 122, others unchanged); `Release_dev` and `Release_dev_native`
+  builds exit 0. Real bounded run (Release_dev, `RED2_NATIVE_RENDERER=1 -nointro -nofmv -mission 1
+  -drawmodel 169 32`): slot 169, 18 real placements, submitted 18, drawn 18, skippedUnresolved 0,
+  residentResources 1; camera-position 17387,-1050,142670; camera-z first 10824.0, min -1481.9, max
+  77735.4, inFrustum 14/18, laterallyVisible 10/18; offscreen 640x360 rgba-hash `241175f1491c392b` with 4
+  non-clear pixels at y[286..307] (the same x band at y[52..73] before F-A = 360-y, empirically confirming
+  the vertical correction). This proves the end-to-end pipeline executes and rasterizes the converted
+  resource at its real placements with the game camera; it does NOT prove on-screen shape/region beyond
+  what the offscreen suite establishes, because the selected model is a micro-prop (POSITION bounds
+  134x130x68 raw ~3.2 cm) and larger buildings are multi-submesh. Limits: one slot + bounded K;
+  single-primitive meshes only - bigger buildings fail with the named `multiple-submeshes-unsupported`, so
+  the multi-primitive writer extension is the next mandatory item before any "visible building/region"
+  claim; unreferenced slots have no placements by data; FOV 1.0472 native vs the game's 0.9265 is deferred;
+  the GLB node transform is ignored in instance mode (latent, resources are identity today); no
+  textures/LOD/streaming/cars/animation/performance. Gate: attempt 1 verdict was commit-conditional on F-A
+  (vertical) verification/fix and the docs; F-A and F-C/F-D were remediated and verified; this
+  documentation update resolves F-B.
 
-**Current step: E03 Block 2 item 4 next.** E03 Block 2 (2a/2.1/2.4/2.5 and item 3)
-is complete and gate-approved on code; E04 A1 is complete (below). Next: the
-per-instance draw API + sector/instance transforms + converted region with the game
-camera (item 4). Gate 4B approved the SDK-isolated service only, not consumer
-migration or audible correctness; E03 still has no playable original-world native
-slice, and no game consumers are migrated.
+**Current step: E03 Block 2 item 4 done; multi-primitive writer extension next.**
+E03 Block 2 (2a/2.1/2.4/2.5, item 3 and item 4) is complete and gate-approved on
+code (item 4 attempt 1 was commit-conditional on F-A and the docs; F-A/F-C/F-D are
+remediated and this update resolves F-B); E04 A1 is complete (below). Next mandatory
+item: the multi-primitive writer extension (larger buildings currently fail
+`multiple-submeshes-unsupported`), then E04 remaining consumer slices. E03 still has
+no playable original-world native slice, and no game consumers are migrated.
 Evidence and boundaries:
 - Fix-5 originally reported AudioContractTests 221/0 and AudioServiceSmoke 49/0;
   the final smoke follow-up is 57/0. Implemented
@@ -217,25 +269,25 @@ Evidence and boundaries:
   limits: [inventory evidence](engine-migration/e02/chicago-inventory.md).
 
 **Remaining before full acceptance:**
-1. E03 Block 2 remainder — the per-instance draw API + sector/instance transforms
-   + converted region with the game camera (item 4), then the original-world
+1. E03 Block 2 — item 4 (per-instance draw + game camera) is done; the next
+   mandatory item is the multi-primitive writer extension (larger buildings
+   currently fail `multiple-submeshes-unsupported`), then the original-world
    conversion seam (blocked on the E02 city conversion slice). Block 2a loader span
    capture, `sourceObjectIndex` identity, ptype coverage, the camera/unit/winding
-   fixture, B2.4 CPU texture decode and item 3 (`WorldMeshBuilder` +
-   `-convertmodel`) are done.
+   fixture, B2.4 CPU texture decode, item 3 and item 4 are done.
 2. E04 remaining consumer slices — A1 (FESound routing + service lifecycle) is
    complete; migrate the remaining audio consumers.
 3. E02 — other cities/variants and dynamic/streamed categories (E06 coverage);
    debug configurations are not wired (only the Release Diligent libraries exist).
 
-**Next concrete action:** implement E03 Block 2 item 4 and the remaining E04
-consumer slices as separately scoped work. Gate approval does not authorize
-audible acceptance. E05/E06 remain pending.
+**Next concrete action:** implement the E03 multi-primitive writer extension and
+the remaining E04 consumer slices as separately scoped work. Gate approval does not
+authorize audible acceptance. E05/E06 remain pending.
 
 **Commands:** build `Release_dev|x64` or `Release_dev_native|x64` with
 `premake5.exe vs2022` + MSBuild (env `SDL2_DIR`/`OPENAL_DIR`/`JPEG_DIR`,
 `RED2_BUILD_DIR=build_e00`, `RED2_BIN_DIR=bin/Release_dev`);
-`pwsh -NoProfile -File scripts/run_native_renderer_smoke.ps1` (46 checks);
+`pwsh -NoProfile -File scripts/run_native_renderer_smoke.ps1` (130 checks);
 Previous smoke commands/results are historical where noted; do not treat bounded
 SDK-isolated service approval as consumer or audible correctness.
 
@@ -253,14 +305,16 @@ Uncommitted after that checkpoint: the E02 inventory; the E04 blocks
 `knowledge/rules/fmod-integration.md`), the E04 P0 seam
 (`Game/C/sounddecode.{h,c}`, `Game/C/sound.c`, `tests/AudioServiceSmoke.cpp`,
 `scripts/run_audio_service_smoke.ps1`) and E04 A1
-(`Game/C/audiofmod_adapter.{h,c}`, `redriver2_psxpc.cpp`); the E03 Block 1/2
-decoder, probe and world-mesh builder (`utils/SourceModelDecoder.{h,c}`,
-`utils/WorldMeshBuilder.{h,cpp}`, `Game/C/modelptypeprobe.{h,c}`,
-`Game/C/assetcatalog*`, `Game/C/models.*`, `Game/C/spool.c`, `Game/C/main.c`,
-`native/NativeRenderer.*`, `tests/SourceModelDecoderTests.cpp`,
-`tests/ModelPtypeProbeTests.cpp`, `tests/WorldMeshBuilderTests.cpp`,
-`tests/AssetCatalogTests.cpp`, `tests/NativeRendererSmoke.cpp`,
-`scripts/run_inspector_tests.ps1`, `tests/README.md`); and the suite
+(`Game/C/audiofmod_adapter.{h,c}`, `redriver2_psxpc.cpp`); the E03 Block 1-4
+decoder, probe, world-mesh builder and item-4 draw path
+(`utils/SourceModelDecoder.{h,c}`, `utils/WorldMeshBuilder.{h,cpp}`,
+`utils/NativeInstanceTransform.{h,c}`, `utils/NativeCameraView.{h,c}`,
+`Game/C/modelptypeprobe.{h,c}`, `Game/C/assetcatalog*`, `Game/C/models.*`,
+`Game/C/spool.c`, `Game/C/main.c`, `native/NativeRenderer.*`,
+`tests/SourceModelDecoderTests.cpp`, `tests/ModelPtypeProbeTests.cpp`,
+`tests/WorldMeshBuilderTests.cpp`, `tests/AssetCatalogTests.cpp`,
+`tests/NativeRendererSmoke.cpp` plus the new NativeInstanceTransform/NativeCameraView
+test suites, `scripts/run_inspector_tests.ps1`, `tests/README.md`); and the suite
 registration/README plus the status/handoff/changelog updates. The ignored FMOD SDK
 is present locally at `src_rebuild/dependencies/fmod/core`; its local version
 metadata identifies 2.03.15.
@@ -347,8 +401,9 @@ E00/E01 implementation details and bounded validation are summarized in
 [`CURRENT_STATUS.md`](CURRENT_STATUS.md) and the dated records linked there.
 E02 inventory findings and limitations are in
 [`chicago-inventory.md`](engine-migration/e02/chicago-inventory.md). E03 Block 1
-and Block 2 (2a/2.1/2.4/2.5 and item 3) are done; E03 still has no playable
-original-world native slice, and item 4 (per-instance draw) follows. E04 has the
+and Block 2 (2a/2.1/2.4/2.5, item 3 and item 4) are done; E03 still has no playable
+original-world native slice, and the multi-primitive writer extension follows (larger
+buildings currently fail `multiple-submeshes-unsupported`). E04 has the
 PCM decode + registration seam (P0) and
 A1 routing; neither is audible acceptance — do not describe historical
 smoke/contract results as accepted correctness. Continue only the requested

@@ -1017,7 +1017,9 @@ static void TestSpanViolations()
 //    (0,1,2)+(0,2,3) (utils/SourceModelDecoder.cpp:384-393). The first triangle
 //    (v0,v1,v3) is exactly the triangle the runtime feeds to gte_nclip
 //    (draw.c:780-796). These fixtures pin the NDC sign of that triangle and the
-//    Diligent cull policy it implies.
+//    Diligent cull policy it implies, under the game's +Y-down projection
+//    (BuildPerspectiveFixture negates camera y, so the game-front triangle has
+//    a negative NDC signed area and the pin is FrontCounterClockwise False).
 //  * unit policy: translation, vertices and projection near/far share one raw
 //    game unit (4096 per metre).
 //
@@ -1276,7 +1278,13 @@ static void TestBlock2ViewComposition()
 	}
 }
 
-// Right-handed perspective, matching native/NativeRenderer.cpp BuildPerspective.
+// Left-handed +Z-forward perspective with the [0, 1] NDC z range, matching
+// native/NativeRenderer.cpp BuildPerspective and Diligent's Vulkan/D3D
+// convention (BasicMath.hpp SetNearFarClipPlanes, NegativeOneToOneZ = false).
+// The camera looks down +Z, so clip.w = +zView. out[5] is negated to match the
+// game's +Y-down screen convention (NativeRenderer.cpp BuildPerspective), so a
+// camera-space +y point maps to the lower half; this is a y reflection, so it
+// flips the NDC signed-area sign of every triangle.
 static void BuildPerspectiveFixture(float fovY, float aspect, float nearPlane,
 	float farPlane, float out[16])
 {
@@ -1284,10 +1292,10 @@ static void BuildPerspectiveFixture(float fovY, float aspect, float nearPlane,
 		out[i] = 0.0f;
 	const float f = 1.0f / tanf(fovY * 0.5f);
 	out[0] = f / aspect;
-	out[5] = f;
-	out[10] = farPlane / (nearPlane - farPlane);
-	out[11] = -1.0f;
-	out[14] = nearPlane * farPlane / (nearPlane - farPlane);
+	out[5] = -f;
+	out[10] = farPlane / (farPlane - nearPlane);
+	out[11] = 1.0f;
+	out[14] = -nearPlane * farPlane / (farPlane - nearPlane);
 }
 
 // NDC z of a camera-space point on the view axis, matching the fixture
@@ -1297,7 +1305,7 @@ static float NdcZFixture(float nearPlane, float farPlane, float zView)
 	float projection[16];
 	BuildPerspectiveFixture(1.0472f, 1.0f, nearPlane, farPlane, projection);
 	const float clipZ = projection[10] * zView + projection[14];
-	const float w = projection[11] * zView; // = -zView (camera looks down -Z)
+	const float w = projection[11] * zView; // = +zView (camera looks down +Z)
 	return clipZ / w;
 }
 
@@ -1333,10 +1341,10 @@ static void TestBlock2WindingAndCullPolicy()
 	// using the pinned raw-unit projection window. The near/far choice does not
 	// affect the winding sign; it is kept consistent with the unit policy below.
 	// The mesh is local (the decoder emits local vertices); the view carries the
-	// placement.
+	// placement. The projection is +Z-forward (Option B), so "in front" is +z.
 	const float identity[3][3] = { { 1, 0, 0 }, { 0, 1, 0 }, { 0, 0, 1 } };
 	const float origin[3] = { 0, 0, 0 };
-	const float objectPos[3] = { 0, 0, -40960 };
+	const float objectPos[3] = { 0, 0, 40960 };
 	float view[16];
 	ComposeInstanceView(identity, origin, objectPos, 0, view);
 	float projection[16];
@@ -1355,27 +1363,32 @@ static void TestBlock2WindingAndCullPolicy()
 	const float n2[2] = { clip2[0] / clip2[3], clip2[1] / clip2[3] };
 
 	const float frontArea = SignedAreaNdc(n0, n1, n2);
-	CHECK(frontArea > 0.0f); // counter-clockwise in the y-up NDC
+	CHECK(frontArea < 0.0f); // clockwise in the y-up NDC after the y negation
 
 	// Reversing the winding flips the sign: this is the back face.
 	const float backArea = SignedAreaNdc(n0, n2, n1);
-	CHECK(backArea < 0.0f);
+	CHECK(backArea > 0.0f);
 	CHECK(Near(frontArea, -backArea, 1e-5f));
 
-	// Pinned cull policy. Front faces are the decoder's positive-NDC-area
-	// (counter-clockwise in the y-up NDC) triangles. Diligent runs on Vulkan
-	// through a negative viewport height to emulate Direct3D, which inverts the
-	// effective winding relative to the y-up NDC, so the scene pipeline culls
-	// back faces with CULL_MODE_BACK and FrontCounterClockwise = True; the
-	// reversed negative-area back faces are removed. CULL_MODE_NONE is not an
-	// accepted policy. tests/NativeRendererSmoke.cpp asserts the pixel result.
-	CHECK(frontArea > 0.0f);
-	CHECK(backArea < 0.0f);
+	// Pinned cull policy. BuildPerspective negates camera-space y (out[5] = -f)
+	// to match the game's +Y-down screen convention, which reflects the NDC and
+	// flips the signed-area sign of every triangle: the decoder's game-front
+	// triangle (the same (v0,v1,v3) the runtime feeds to gte_nclip,
+	// draw.c:780-796) now has NEGATIVE NDC signed area. Diligent runs on Vulkan
+	// through a negative viewport height to emulate Direct3D, so the scene
+	// pipeline culls back faces with CULL_MODE_BACK and
+	// FrontCounterClockwise = False: the reflection and the flipped pin cancel,
+	// so exactly the same world faces remain front. The reversed winding still
+	// has positive area and is culled. CULL_MODE_NONE is not an accepted policy.
+	// tests/NativeRendererSmoke.cpp asserts the pixel result.
+	CHECK(frontArea < 0.0f);
+	CHECK(backArea > 0.0f);
 }
 
 // Pins the unit policy: translation, vertices and projection near/far share one
-// raw game unit (4096 per metre). It asserts the current renderer pair is not a
-// valid raw-unit scene projection; it does not change the renderer values.
+// raw game unit (4096 per metre). It asserts the renderer's default pair is not
+// a valid raw-unit scene projection and that a raw-unit pair is; it does not
+// change the renderer's defaults.
 static void TestBlock2UnitPolicy()
 {
 	const float rawUnitsPerMetre = 4096.0f; // PSX ONE/FIXED
@@ -1386,19 +1399,21 @@ static void TestBlock2UnitPolicy()
 	// DeveloperModernMesh.cpp:496-525). A raw-unit scene therefore needs
 	// raw-unit near/far as well.
 
-	// The current pair is metre-scale (native/NativeRenderer.cpp:672): read as
-	// raw units, its far plane (300) is smaller than one world metre, so every
-	// raw vertex beyond 0.07 m is clipped away.
+	// The default pair is metre-scale (native/NativeRenderer.cpp defaults,
+	// overridable through NativeRenderer_SetClipPlanes): read as raw units, its
+	// far plane (300) is smaller than one world metre, so every raw vertex
+	// beyond 0.07 m is clipped away.
 	CHECK(300.0f < rawUnitsPerMetre);
 	CHECK(0.02f < 1.0f); // the near plane is below one raw unit
 
 	// A representative raw scene depth (24 m) is far beyond that far plane.
+	// The camera looks down +Z, so the view-space depth is positive.
 	const float sceneDepthRaw = 24.0f * rawUnitsPerMetre; // 98304 raw units
-	CHECK(NdcZFixture(0.02f, 300.0f, -sceneDepthRaw) > 1.0f); // clipped: beyond far
+	CHECK(NdcZFixture(0.02f, 300.0f, sceneDepthRaw) > 1.0f); // clipped: beyond far
 
 	// The same depth is inside a raw-unit window, so raw-unit near/far is the
-	// required policy.
-	CHECK(fabsf(NdcZFixture(100.0f, 1000000.0f, -sceneDepthRaw)) <= 1.0f);
+	// required policy (the bridge supplies ~100 / ~125000).
+	CHECK(fabsf(NdcZFixture(100.0f, 1000000.0f, sceneDepthRaw)) <= 1.0f);
 }
 
 // --- F-F: material grouping -------------------------------------------------

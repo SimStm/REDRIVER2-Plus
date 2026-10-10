@@ -3,6 +3,10 @@
 
 #include <SDL_keyboard.h>
 
+#include <math.h>
+#include <stdio.h>
+#include <string.h>
+
 #include "platform.h"
 
 #include "driver2.h"
@@ -28,6 +32,8 @@
 #include "utils/DeveloperInputMapping.h"
 #include "utils/DeveloperModernMesh.h"
 #include "utils/DeveloperVkFixture.h"
+#include "utils/NativeCameraView.h"
+#include "utils/NativeInstanceTransform.h"
 #include "utils/DeterministicBaseline.h"
 #include "utils/HdTextureOverrides.h"
 #include "utils/InputService.h"
@@ -503,13 +509,413 @@ void SwitchMappings(int menu)
 // swapchain) and the native renderer owns the window's presentation. Its scene
 // is drawn from a post-frame handler with the game's own camera, so the frame
 // stays in step with the simulation. The default PsyCross path is untouched.
-// The view rotation is derived from the game's inv_camera_matrix exactly like
-// the modern-mesh path (rotation-only, 1/4096-scaled).
+// The view matrix is the game's raw-unit world->camera matrix, composed by the
+// pure NativeCameraView helper from inv_camera_matrix and camera_position.
 static int s_nativeRendererActive = 0;
 static int s_nativeRendererFrames = 0;
 static int s_nativeRendererFailureStreak = 0;
 static int s_nativeRendererWidth = 0;
 static int s_nativeRendererHeight = 0;
+
+// Bounded per-instance native draw driven by `-drawmodel <slot> [count]`. The
+// resource is registered once from the published-resource registry and the
+// collected placements are submitted each frame; a missing resource or an empty
+// placement set leaves the existing content/placeholder path untouched.
+static int s_nativeDrawRegistered = 0;
+static char s_nativeDrawRegisteredKey[CONVERSION_CACHE_KEY_CAPACITY];
+static int s_nativeDrawInstancesSet = 0;
+static int s_nativeDrawReported = 0;
+static int s_nativeDrawWaitingLogged = 0;
+static int s_nativeDrawValidFrames = 0;
+
+// Raw clip planes shared by SetClipPlanes and the visibility selection.
+static const float kNativeDrawClipNear = 100.0f;
+static const float kNativeDrawClipFar = 125000.0f;
+
+// Vertical field of view the bridge sets, and the offscreen dump size. The
+// visibility ranking uses the dump's aspect so a placement ranked as visible is
+// actually inside the dumped frame (a square dump narrows the horizontal FOV).
+static const float kNativeDrawFovY = 1.0472f;
+static const int kNativeDrawDumpWidth = 640;
+static const int kNativeDrawDumpHeight = 360;
+static const float kNativeDrawDumpAspect = (float)kNativeDrawDumpWidth / (float)kNativeDrawDumpHeight;
+
+// The one-shot report waits this many valid-camera frames before it fires, so a
+// transient early camera state cannot produce a meaningless report or dump.
+static const int kNativeDrawReportDelayFrames = 3;
+
+// The submitted order (nearest/visible first) and its camera-space z evidence,
+// captured by DevDrawSubmit and read by the one-shot report.
+static int s_nativeDrawOrder[ASSET_CATALOG_GAME_MAX_DRAW_PLACEMENTS];
+static int s_nativeDrawSubmittedCount = 0;
+static float s_nativeDrawFirstZ = 0.0f;
+static float s_nativeDrawMinZ = 0.0f;
+static float s_nativeDrawMaxZ = 0.0f;
+static int s_nativeDrawInFrustum = 0;
+static int s_nativeDrawLaterallyVisible = 0;
+
+// Raw camera-space position of a placement under the composed view, using the
+// same inputs the bridge feeds the camera (view = [R | -R*cam]).
+static void CameraSpace(const float view[16], int x, int y, int z, float out[3])
+{
+	const float fx = (float)x, fy = (float)y, fz = (float)z;
+	out[0] = view[0] * fx + view[4] * fy + view[8] * fz + view[12];
+	out[1] = view[1] * fx + view[5] * fy + view[9] * fz + view[13];
+	out[2] = view[2] * fx + view[6] * fy + view[10] * fz + view[14];
+}
+
+// True when a camera-space point is inside the dumped frame: in front of the
+// camera, within the clip range and inside the vertical/horizontal field of
+// view for the dump aspect. `zInRange` optionally reports the depth-range test
+// alone, so the log can separate "in depth range" from "actually on screen".
+static int PlacementOnScreen(const float cam[3], int* zInRange)
+{
+	const int inRange = cam[2] >= kNativeDrawClipNear && cam[2] <= kNativeDrawClipFar;
+	if (zInRange)
+		*zInRange = inRange;
+
+	if (!inRange)
+		return 0;
+
+	const float tanHalfY = tanf(kNativeDrawFovY * 0.5f);
+	const float tanHalfX = tanHalfY * kNativeDrawDumpAspect;
+	return fabsf(cam[0]) <= tanHalfX * cam[2] && fabsf(cam[1]) <= tanHalfY * cam[2];
+}
+
+// Ranks the collected placements so the truly visible ones come first, then the
+// nearest camera-space ones, and returns how many to submit (the bounded K, at
+// least one for any non-empty input). The selection is an explicit O(n^2) pick
+// because the bound is small. Camera-space z evidence and the in-range /
+// on-screen counts are reported for the submitted set.
+static int RankPlacements(const AssetCatalogGameDrawPlacement* placements, int count,
+	const float view[16], int bound, int order[ASSET_CATALOG_GAME_MAX_DRAW_PLACEMENTS],
+	float* firstZ, float* minZ, float* maxZ, int* inFrustum, int* laterallyVisible)
+{
+	const int submitCount = count < bound ? count : bound;
+	if (submitCount <= 0)
+		return 0;
+
+	unsigned char used[ASSET_CATALOG_GAME_MAX_DRAW_PLACEMENTS];
+	memset(used, 0, sizeof(used));
+
+	for (int slot = 0; slot < submitCount; ++slot)
+	{
+		int best = -1;
+		int bestOnScreen = 0;
+		float bestDistSq = 0.0f;
+
+		for (int i = 0; i < count; ++i)
+		{
+			if (used[i])
+				continue;
+
+			float cam[3];
+			CameraSpace(view, placements[i].x, placements[i].y, placements[i].z, cam);
+			const int onScreen = PlacementOnScreen(cam, NULL);
+			const float distSq = cam[0] * cam[0] + cam[1] * cam[1] + cam[2] * cam[2];
+
+			// Prefer truly visible placements, then the nearest one.
+			const int better = best < 0 ||
+				(onScreen && !bestOnScreen) ||
+				(onScreen == bestOnScreen && distSq < bestDistSq);
+			if (better)
+			{
+				best = i;
+				bestOnScreen = onScreen;
+				bestDistSq = distSq;
+			}
+		}
+
+		used[best] = 1;
+		order[slot] = best;
+	}
+
+	float zFirst = 0.0f, zMin = 0.0f, zMax = 0.0f;
+	int inRangeCount = 0;
+	int onScreenCount = 0;
+	for (int slot = 0; slot < submitCount; ++slot)
+	{
+		float cam[3];
+		const AssetCatalogGameDrawPlacement& p = placements[order[slot]];
+		CameraSpace(view, p.x, p.y, p.z, cam);
+
+		if (slot == 0)
+		{
+			zFirst = cam[2];
+			zMin = cam[2];
+			zMax = cam[2];
+		}
+		else
+		{
+			if (cam[2] < zMin) zMin = cam[2];
+			if (cam[2] > zMax) zMax = cam[2];
+		}
+
+		int zInRange = 0;
+		if (PlacementOnScreen(cam, &zInRange))
+			onScreenCount++;
+		if (zInRange)
+			inRangeCount++;
+	}
+
+	*firstZ = zFirst;
+	*minZ = zMin;
+	*maxZ = zMax;
+	*inFrustum = inRangeCount;
+	*laterallyVisible = onScreenCount;
+	return submitCount;
+}
+
+static int NativeRenderer_DevDrawSubmit(const float view[16])
+{
+	if (!AssetCatalogGame_NativeDrawRequested())
+		return 0;
+
+	const int slot = AssetCatalogGame_NativeDrawSlot();
+	char key[CONVERSION_CACHE_KEY_CAPACITY];
+	char glbPath[CONVERSION_CACHE_PATH_CAPACITY];
+
+	if (!AssetCatalogGame_GetModelResource(slot, key, sizeof(key), glbPath, sizeof(glbPath),
+		NULL, 0, NULL))
+	{
+		// The registry miss (for example after a level change clears it) must
+		// not leave the previous level's instances drawn under the new camera.
+		// Drop them, release the stale resource and reset the dev-draw state so
+		// the new level re-registers and its one-shot report can fire.
+		if (s_nativeDrawInstancesSet)
+		{
+			NativeRenderer_ClearInstances();
+			s_nativeDrawInstancesSet = 0;
+		}
+		if (s_nativeDrawRegistered)
+		{
+			NativeRenderer_UnregisterResource(s_nativeDrawRegisteredKey);
+			s_nativeDrawRegistered = 0;
+			s_nativeDrawRegisteredKey[0] = '\0';
+		}
+		s_nativeDrawReported = 0;
+		s_nativeDrawWaitingLogged = 0;
+		s_nativeDrawValidFrames = 0;
+		s_nativeDrawSubmittedCount = 0;
+		return 0;
+	}
+
+	if (!s_nativeDrawRegistered)
+	{
+		char error[256];
+		if (!NativeRenderer_RegisterResource(key, glbPath, error, sizeof(error)))
+		{
+			if (!s_nativeDrawReported)
+			{
+				PsyX_Log_Warning("native draw: register resource failed: %s\n", error);
+				s_nativeDrawReported = 1;
+			}
+			return 0;
+		}
+		s_nativeDrawRegistered = 1;
+		snprintf(s_nativeDrawRegisteredKey, sizeof(s_nativeDrawRegisteredKey), "%s", key);
+		PsyX_Log_Info("native draw: registered resource %s\n", key);
+	}
+
+	AssetCatalogGameDrawPlacement placements[ASSET_CATALOG_GAME_MAX_DRAW_PLACEMENTS];
+	const int count = AssetCatalogGame_GetDrawPlacements(placements, ASSET_CATALOG_GAME_MAX_DRAW_PLACEMENTS);
+
+	if (count <= 0)
+	{
+		// No instances: drop a previously submitted list so the renderer returns
+		// to its content/placeholder mode instead of drawing a stale set.
+		if (s_nativeDrawInstancesSet)
+		{
+			NativeRenderer_ClearInstances();
+			s_nativeDrawInstancesSet = 0;
+		}
+		s_nativeDrawSubmittedCount = 0;
+		return 0;
+	}
+
+	// Submit the nearest placements to the current camera, preferring those in
+	// the clip range; when none are in range the nearest are submitted anyway so
+	// the diagnostics still describe the real data.
+	const int submitCount = RankPlacements(placements, count, view, AssetCatalogGame_NativeDrawCount(),
+		s_nativeDrawOrder, &s_nativeDrawFirstZ, &s_nativeDrawMinZ, &s_nativeDrawMaxZ,
+		&s_nativeDrawInFrustum, &s_nativeDrawLaterallyVisible);
+
+	if (submitCount <= 0)
+		return 0;
+
+	NativeInstance instances[ASSET_CATALOG_GAME_MAX_DRAW_PLACEMENTS];
+	for (int slotIndex = 0; slotIndex < submitCount; ++slotIndex)
+	{
+		const AssetCatalogGameDrawPlacement& placement = placements[s_nativeDrawOrder[slotIndex]];
+
+		NativeInstance& instance = instances[slotIndex];
+		memset(&instance, 0, sizeof(instance));
+		strncpy(instance.resourceKey, key, sizeof(instance.resourceKey) - 1);
+
+		const int pos[3] = { placement.x, placement.y, placement.z };
+		NativeInstance_ComposeTransform(pos, (unsigned int)placement.rotation, instance.transform);
+
+		instance.level = GameLevel;
+		instance.variant = (int)GetCityType();
+		instance.sourceObjectIndex = placement.sourceObjectIndex;
+		instance.modelSlot = placement.modelSlot;
+		instance.modelRevision = (int)placement.modelRevision;
+	}
+
+	char error[256];
+	if (!NativeRenderer_SetInstances(instances, submitCount, error, sizeof(error)))
+	{
+		if (!s_nativeDrawReported)
+		{
+			PsyX_Log_Warning("native draw: set instances failed: %s\n", error);
+			s_nativeDrawReported = 1;
+		}
+		return 0;
+	}
+
+	s_nativeDrawInstancesSet = 1;
+	s_nativeDrawSubmittedCount = submitCount;
+	return submitCount;
+}
+
+static unsigned long long HashBytes(const unsigned char* bytes, int length)
+{
+	unsigned long long hash = 1469598103934665603ULL; // FNV-1a 64 offset basis
+	for (int i = 0; i < length; ++i)
+	{
+		hash ^= bytes[i];
+		hash *= 1099511628211ULL;
+	}
+	return hash;
+}
+
+// One-shot offscreen frame for the bounded dev draw: the same instance scene
+// through the public readback path, written next to the log with a content hash.
+static void NativeRenderer_DevDrawCaptureFrame(int slot)
+{
+	// Dump at the window aspect (16:9), not square, so a placement ranked as
+	// on-screen is inside the dumped frame's horizontal field of view.
+	const int width = kNativeDrawDumpWidth;
+	const int height = kNativeDrawDumpHeight;
+	static unsigned char rgba[kNativeDrawDumpWidth * kNativeDrawDumpHeight * 4];
+
+	char error[256];
+	if (!NativeRenderer_RenderSceneToRGBA(rgba, width, height, error, sizeof(error)))
+	{
+		PsyX_Log_Warning("native draw: offscreen frame failed: %s\n", error);
+		return;
+	}
+
+	const unsigned long long hash = HashBytes(rgba, (int)sizeof(rgba));
+	char path[96];
+	snprintf(path, sizeof(path), "native_draw_slot_%d.rgba", slot);
+
+	FILE* file = fopen(path, "wb");
+	if (!file)
+	{
+		PsyX_Log_Warning("native draw: offscreen frame write failed for %s\n", path);
+		return;
+	}
+	fwrite(rgba, 1, sizeof(rgba), file);
+	fclose(file);
+	PsyX_Log_Info("native draw: offscreen frame %dx%d -> %s (rgba-hash %016llx)\n",
+		width, height, path, hash);
+}
+
+// True when the game camera is usable for a meaningful report/dump: the
+// composed view rotation is non-degenerate and camera_position is non-zero (the
+// first native frames can run before the game camera is initialized, which
+// collapses every camera-space point to the origin and dumps a clear frame).
+static int CameraValid(const float view[16], const int cameraPosition[3])
+{
+	const float rotationScale = fabsf(view[0]) + fabsf(view[4]) + fabsf(view[8]) +
+		fabsf(view[1]) + fabsf(view[5]) + fabsf(view[9]) +
+		fabsf(view[2]) + fabsf(view[6]) + fabsf(view[10]);
+	const int rotationNonZero = rotationScale > 1e-3f;
+
+	const int cameraNonZero = cameraPosition[0] != 0 || cameraPosition[1] != 0 ||
+		cameraPosition[2] != 0;
+
+	return rotationNonZero && cameraNonZero;
+}
+
+// One line per run with the instance stats, the resource identity and a few
+// submitted instance identities. Never repeats. Gated on a valid game camera so
+// an early degenerate frame cannot produce a meaningless report or dump.
+static void NativeRenderer_DevDrawReport(int submitted, const float view[16],
+	const int cameraPosition[3])
+{
+	if (submitted <= 0 || s_nativeDrawReported)
+		return;
+
+	if (!CameraValid(view, cameraPosition))
+	{
+		// Retry on later frames; log once that the report is held back.
+		s_nativeDrawValidFrames = 0;
+		if (!s_nativeDrawWaitingLogged)
+		{
+			PsyX_Log_Info("native draw: report waiting for a valid game camera\n");
+			s_nativeDrawWaitingLogged = 1;
+		}
+		return;
+	}
+
+	// Belt-and-braces: require a few consecutive valid frames before firing.
+	if (++s_nativeDrawValidFrames < kNativeDrawReportDelayFrames)
+		return;
+
+	s_nativeDrawReported = 1;
+
+	const int slot = AssetCatalogGame_NativeDrawSlot();
+	char key[CONVERSION_CACHE_KEY_CAPACITY];
+	char contentHash[CONVERSION_CACHE_HASH_CAPACITY];
+	unsigned long long sourceHash = 0;
+	AssetCatalogGame_GetModelResource(slot, key, sizeof(key), NULL, 0, contentHash,
+		sizeof(contentHash), &sourceHash);
+
+	int statsSubmitted = 0, drawn = 0, skipped = 0, resident = 0;
+	NativeRenderer_GetInstanceStats(&statsSubmitted, &drawn, &skipped, &resident);
+
+	char diagnostic[256];
+	const int hasDiagnostic = NativeRenderer_GetFirstInstanceDiagnostic(diagnostic, sizeof(diagnostic));
+
+	AssetCatalogGameDrawPlacement placements[ASSET_CATALOG_GAME_MAX_DRAW_PLACEMENTS];
+	AssetCatalogGame_GetDrawPlacements(placements, ASSET_CATALOG_GAME_MAX_DRAW_PLACEMENTS);
+
+	// Sample the submitted (nearest/visible-first) identities, not the raw
+	// collection order.
+	char sample[192];
+	size_t offset = 0;
+	sample[0] = '\0';
+	const int sampleCount = s_nativeDrawSubmittedCount < 3 ? s_nativeDrawSubmittedCount : 3;
+	for (int i = 0; i < sampleCount; ++i)
+	{
+		const AssetCatalogGameDrawPlacement& placement = placements[s_nativeDrawOrder[i]];
+		const int written = snprintf(sample + offset, sizeof(sample) - offset,
+			" (src %d pos %d,%d,%d yang %d)", placement.sourceObjectIndex,
+			placement.x, placement.y, placement.z, placement.rotation);
+		if (written <= 0 || (size_t)written >= sizeof(sample) - offset)
+			break;
+		offset += (size_t)written;
+	}
+
+	char diagText[288];
+	diagText[0] = '\0';
+	if (hasDiagnostic)
+		snprintf(diagText, sizeof(diagText), "; diag: %s", diagnostic);
+
+	PsyX_Log_Info("native draw: slot %d, submitted %d, drawn %d, skippedUnresolved %d, residentResources %d, "
+		"camera-position %d,%d,%d, view diag %.5f/%.5f/%.5f, "
+		"camera-z first %.1f, min %.1f, max %.1f, inFrustum %d/%d, laterallyVisible %d/%d, "
+		"source-hash %016llx, content-hash %s, level %d variant %d, key %s%s%s\n",
+		slot, statsSubmitted, drawn, skipped, resident,
+		cameraPosition[0], cameraPosition[1], cameraPosition[2], view[0], view[5], view[10],
+		s_nativeDrawFirstZ, s_nativeDrawMinZ, s_nativeDrawMaxZ, s_nativeDrawInFrustum, statsSubmitted,
+		s_nativeDrawLaterallyVisible, statsSubmitted,
+		sourceHash, contentHash, GameLevel, (int)GetCityType(), key, sample, diagText);
+
+	NativeRenderer_DevDrawCaptureFrame(slot);
+}
 
 static void NativeRenderer_Frame()
 {
@@ -532,26 +938,25 @@ static void NativeRenderer_Frame()
 		}
 	}
 
-	const float scale = 1.0f / 4096.0f;
-	float rotation[16];
-	rotation[0] = inv_camera_matrix.m[0][0] * scale; rotation[4] = inv_camera_matrix.m[0][1] * scale; rotation[8] = inv_camera_matrix.m[0][2] * scale; rotation[12] = 0.0f;
-	rotation[1] = inv_camera_matrix.m[1][0] * scale; rotation[5] = inv_camera_matrix.m[1][1] * scale; rotation[9] = inv_camera_matrix.m[1][2] * scale; rotation[13] = 0.0f;
-	rotation[2] = inv_camera_matrix.m[2][0] * scale; rotation[6] = inv_camera_matrix.m[2][1] * scale; rotation[10] = inv_camera_matrix.m[2][2] * scale; rotation[14] = 0.0f;
-	rotation[3] = 0.0f; rotation[7] = 0.0f; rotation[11] = 0.0f; rotation[15] = 1.0f;
+	// Game camera in raw game units: view = [R | -R*cam] with R the game's
+	// inverse camera rotation (4096 = 1.0). The native projection is +Z-forward
+	// (Option B), so inv_camera_matrix is fed directly with no reflection, and a
+	// raw-unit scene needs raw-unit clip planes (the game's far clip limit is
+	// 125000; draw.c).
+	const int rotation[9] = {
+		inv_camera_matrix.m[0][0], inv_camera_matrix.m[0][1], inv_camera_matrix.m[0][2],
+		inv_camera_matrix.m[1][0], inv_camera_matrix.m[1][1], inv_camera_matrix.m[1][2],
+		inv_camera_matrix.m[2][0], inv_camera_matrix.m[2][1], inv_camera_matrix.m[2][2],
+	};
+	const int cameraPosition[3] = { camera_position.vx, camera_position.vy, camera_position.vz };
 
-	// Full world->camera matrix: rotation plus the camera translation, in the
-	// same raw game units the game's modern-mesh path uses.
 	float view[16];
-	for (int i = 0; i < 16; ++i)
-		view[i] = rotation[i];
-	const float px = (float)camera_position.vx;
-	const float py = (float)camera_position.vy;
-	const float pz = (float)camera_position.vz;
-	view[12] = -(rotation[0] * px + rotation[4] * py + rotation[8] * pz);
-	view[13] = -(rotation[1] * px + rotation[5] * py + rotation[9] * pz);
-	view[14] = -(rotation[2] * px + rotation[6] * py + rotation[10] * pz);
+	NativeCameraView_Compose(rotation, cameraPosition, view);
 
-	NativeRenderer_SetCamera(view, 1.0472f); // 60 degrees
+	NativeRenderer_SetClipPlanes(kNativeDrawClipNear, kNativeDrawClipFar);
+	NativeRenderer_SetCamera(view, kNativeDrawFovY); // 60 degrees
+
+	const int devDrawInstances = NativeRenderer_DevDrawSubmit(view);
 
 	char error[256];
 	if (!NativeRenderer_RenderScene(error, sizeof(error)))
@@ -573,6 +978,8 @@ static void NativeRenderer_Frame()
 	if (s_nativeRendererFrames == 0)
 		PsyX_Log_Info("native renderer drawing the game window with the game camera\n");
 	++s_nativeRendererFrames;
+
+	NativeRenderer_DevDrawReport(devDrawInstances, view, cameraPosition);
 }
 
 static void NativeRenderer_AttachGameWindow()
