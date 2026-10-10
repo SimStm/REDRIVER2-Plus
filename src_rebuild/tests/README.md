@@ -134,6 +134,29 @@ cl.exe /nologo /TP /EHsc /std:c++14 /O2 /Gy tests\SourceModelDecoderTests.cpp ut
 build\SourceModelDecoderTests.exe
 ```
 
+## World mesh builder tests
+
+`WorldMeshBuilderTests.cpp` tests the E03 block 2 item 3 world mesh builder
+(`utils/WorldMeshBuilder.*`), which turns a decoded world `SourceMesh` into one
+single-primitive/one-material `GltfMeshData` for the E02 GLB pipeline. It pins
+the documented invariants: flat per-triangle normal synthesis (unit normals
+derived from the geometry, including a vertical triangle), base colour from the
+stored raw face colours (arithmetic mean) or the documented neutral opaque white
+when the record stored none, the named `MULTIPLE_SUBMESHES_UNSUPPORTED` diagnostic
+with zero partial output, uncovered-index and bounds/argument errors, output
+determinism (two builds write byte-identical GLB and two conversions produce an
+equal content hash) and a `Gltf_LoadFile` reload of the built mesh. It needs no
+game assets or GPU context. The importer links Windows Imaging Component:
+
+```bat
+cl.exe /nologo /TP /EHsc /std:c++14 /O2 /Gy tests\WorldMeshBuilderTests.cpp utils\WorldMeshBuilder.cpp utils\GltfWriter.cpp utils\GltfLoader.cpp utils\AssetConverter.cpp Game\C\conversioncache.c /Fo:build\ /Fe:build\WorldMeshBuilderTests.exe /link /OPT:REF windowscodecs.lib ole32.lib
+build\WorldMeshBuilderTests.exe
+```
+
+It writes a local `cache` directory and GLB fixtures, so run it in a fresh
+working directory the way `scripts/run_inspector_tests.ps1` gives each suite its
+own.
+
 ## Model polygon-type probe tests
 
 `ModelPtypeProbeTests.cpp` tests the E03 block 2a polygon-type probe

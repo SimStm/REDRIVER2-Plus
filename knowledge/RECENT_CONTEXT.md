@@ -8,7 +8,7 @@ tags: [okf, status, agents]
 # Recent engineering context
 
 > Updated: 2026-10-09.
-> Read the handoff below first: E03 Block 2 (2a/2.1/2.4/2.5) and E04 A1; next items 3/4 (real model -> GLB; instance draw).
+> Read the handoff below first: E03 Block 2 (2a/2.1/2.4/2.5/item 3) and E04 A1; next item 4 (per-instance draw).
 > Older task narratives are condensed; their change records
 > hold the detail.
 
@@ -107,14 +107,38 @@ fixed ticks independent of presentation FPS and CPU speed.
   window not applied - sample-time). Bounded validation, named errors, zero partial
   output; `TextureDecodeTests` 136 checks (synthetic + optional read-only real-page
   probe via `REDRIVER2_REPO_ROOT`). No GPU/game integration.
+- E03 Block 2 item 3 (2026-10-09): NEW `utils/WorldMeshBuilder.{h,cpp}` (pure C++11
+  `SourceMesh` -> `GltfMeshData`) synthesizes one flat geometric normal per emitted
+  triangle (winding-normalized; degenerate fallback `(0,0,1)`), expands each triangle
+  to 3 dedicated vertices, base colour = mean of the raw stored face colours (neutral
+  opaque white for PL records without RGB), identity node transform, deterministic,
+  full bounds validation with named errors and zero partial output; >1 submesh ->
+  `multiple-submeshes-unsupported` with zero output (never a silent drop). The
+  `-convertmodel <slot>` flag (accepted in `main.c`, value skipped; warn-only with
+  named diagnostics) resolves `AssetCatalog_FindModel(slot)` +
+  `AssetCatalog_GetModelSpan`, decodes with `SkipUnsupported`, builds, and publishes
+  via `AssetConverter_ConvertMesh` (converter `world-mesh`, `native_cache/`;
+  `GltfWriter` writes, `Gltf_LoadFile` re-verifies, atomic publish). Real Chicago
+  evidence (Release_dev, `-opengl -nointro -nofmv -mission 1 -convertmodel 0`): slot
+  0, span 676 bytes, submeshes 1, vertices 120, triangles 40, skipped 0; source-hash
+  `ed3098e5f1551505`, content-hash `e05d775f5e30a78b`; output
+  `native_cache/world-mesh_ed3098e5f1551505_0000000000000000_0000000000000000_1.bin`
+  (GLB, 5256 bytes); two runs gave identical source/content hashes (determinism);
+  slots 1/2 converted with 1 submesh each. `WorldMeshBuilderTests` 122 checks (flat
+  normals incl. a vertical triangle, base colour present/absent, multi-submesh
+  diagnostic with zero output, bounds/argument errors, uncovered index, determinism:
+  byte-identical GLB + equal content hash, `GltfLoader` reload); all 14 inspector
+  suites pass; `Release_dev` and `Release_dev_native` builds exit 0. Limits: no
+  textures/embedded images here (follow-up: per-face `texture_id`/CLUT + `TEXINF`
+  sub-rect recovery + writer extension), flat normals only (stored gouraud point
+  normals not consumed), one material = mean face colour, multi-submesh unsupported.
 
-**Current step: E03 Block 2 items 3/4 next.** E03 Block 2 (2a/2.1/2.5/2.4) is
-complete and gate-approved on code; E04 A1 is complete (below). Next: one real
-building/tile -> `SourceMesh` -> GLB via `GltfWriter`/`AssetConverter` (item 3) and
-the per-instance draw API + converted region with the game camera (item 4). Gate 4B
-approved the SDK-isolated service only, not
-consumer migration or audible correctness; E03 still has no playable original-world
-native slice, and no game consumers are migrated.
+**Current step: E03 Block 2 item 4 next.** E03 Block 2 (2a/2.1/2.4/2.5 and item 3)
+is complete and gate-approved on code; E04 A1 is complete (below). Next: the
+per-instance draw API + sector/instance transforms + converted region with the game
+camera (item 4). Gate 4B approved the SDK-isolated service only, not consumer
+migration or audible correctness; E03 still has no playable original-world native
+slice, and no game consumers are migrated.
 Evidence and boundaries:
 - Fix-5 originally reported AudioContractTests 221/0 and AudioServiceSmoke 49/0;
   the final smoke follow-up is 57/0. Implemented
@@ -193,17 +217,18 @@ Evidence and boundaries:
   limits: [inventory evidence](engine-migration/e02/chicago-inventory.md).
 
 **Remaining before full acceptance:**
-1. E03 Block 2 remainder — one real building/tile -> `SourceMesh` -> GLB (item 3)
-   and the per-instance draw API + converted region (item 4), then the
-   original-world conversion seam (blocked on the E02 city conversion slice).
-   Block 2a loader span capture, `sourceObjectIndex` identity, ptype coverage, the
-   camera/unit/winding fixture and B2.4 CPU texture decode are done.
+1. E03 Block 2 remainder — the per-instance draw API + sector/instance transforms
+   + converted region with the game camera (item 4), then the original-world
+   conversion seam (blocked on the E02 city conversion slice). Block 2a loader span
+   capture, `sourceObjectIndex` identity, ptype coverage, the camera/unit/winding
+   fixture, B2.4 CPU texture decode and item 3 (`WorldMeshBuilder` +
+   `-convertmodel`) are done.
 2. E04 remaining consumer slices — A1 (FESound routing + service lifecycle) is
    complete; migrate the remaining audio consumers.
 3. E02 — other cities/variants and dynamic/streamed categories (E06 coverage);
    debug configurations are not wired (only the Release Diligent libraries exist).
 
-**Next concrete action:** implement E03 Block 2 items 3/4 and the remaining E04
+**Next concrete action:** implement E03 Block 2 item 4 and the remaining E04
 consumer slices as separately scoped work. Gate approval does not authorize
 audible acceptance. E05/E06 remain pending.
 
@@ -229,10 +254,11 @@ Uncommitted after that checkpoint: the E02 inventory; the E04 blocks
 (`Game/C/sounddecode.{h,c}`, `Game/C/sound.c`, `tests/AudioServiceSmoke.cpp`,
 `scripts/run_audio_service_smoke.ps1`) and E04 A1
 (`Game/C/audiofmod_adapter.{h,c}`, `redriver2_psxpc.cpp`); the E03 Block 1/2
-decoder and probe (`utils/SourceModelDecoder.{h,c}`,
-`Game/C/modelptypeprobe.{h,c}`, `Game/C/assetcatalog*`, `Game/C/models.*`,
-`Game/C/spool.c`, `Game/C/main.c`, `native/NativeRenderer.*`,
-`tests/SourceModelDecoderTests.cpp`, `tests/ModelPtypeProbeTests.cpp`,
+decoder, probe and world-mesh builder (`utils/SourceModelDecoder.{h,c}`,
+`utils/WorldMeshBuilder.{h,cpp}`, `Game/C/modelptypeprobe.{h,c}`,
+`Game/C/assetcatalog*`, `Game/C/models.*`, `Game/C/spool.c`, `Game/C/main.c`,
+`native/NativeRenderer.*`, `tests/SourceModelDecoderTests.cpp`,
+`tests/ModelPtypeProbeTests.cpp`, `tests/WorldMeshBuilderTests.cpp`,
 `tests/AssetCatalogTests.cpp`, `tests/NativeRendererSmoke.cpp`,
 `scripts/run_inspector_tests.ps1`, `tests/README.md`); and the suite
 registration/README plus the status/handoff/changelog updates. The ignored FMOD SDK
@@ -321,8 +347,9 @@ E00/E01 implementation details and bounded validation are summarized in
 [`CURRENT_STATUS.md`](CURRENT_STATUS.md) and the dated records linked there.
 E02 inventory findings and limitations are in
 [`chicago-inventory.md`](engine-migration/e02/chicago-inventory.md). E03 Block 1
-and Block 2 (2a/2.1/2.5) are done; E03 still has no playable original-world native
-slice, and B2.4/B2.6 follow. E04 has the PCM decode + registration seam (P0) and
+and Block 2 (2a/2.1/2.4/2.5 and item 3) are done; E03 still has no playable
+original-world native slice, and item 4 (per-instance draw) follows. E04 has the
+PCM decode + registration seam (P0) and
 A1 routing; neither is audible acceptance — do not describe historical
 smoke/contract results as accepted correctness. Continue only the requested
 implementation block; E05/E06 remain pending. The wall-collision replay route

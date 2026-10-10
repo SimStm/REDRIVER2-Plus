@@ -56,6 +56,28 @@ void AssetCatalogGame_RecordModelSpan(int modelIndex, const unsigned char* model
    result. Windows-only (the atomic publisher is Win32). */
 bool AssetCatalogGame_WriteModelPtypeReport(char* status, int statusCapacity);
 
+/* --- E03 block 2 item 3 one-model GLB conversion -------------------------- */
+
+/* True when the developer `-convertmodel <slot>` flag requested a conversion. */
+bool AssetCatalogGame_ConvertModelRequested(void);
+
+/* The model slot given to `-convertmodel`, or -1 when absent/unparsed. */
+int AssetCatalogGame_ConvertModelSlot(void);
+
+/* Converts ONE resident world model slot to a cached native GLB: resolves the
+   slot's catalog record and captured byte span (AssetCatalog_GetModelSpan),
+   decodes the span with the building policy (SkipUnsupported), builds a single
+   project-owned GltfMeshData (WorldMeshBuilder) and publishes it through
+   AssetConverter under the "world-mesh" converter key.
+
+   `status` always receives a short result. On success it reports the slot, span
+   bytes, submesh count, vertex/triangle counts, skipped record count, source
+   hash, published content hash and output path. On any failure it reports a
+   named diagnostic (invalid/not-resident slot, missing span, decode/build/
+   publish error) and never interrupts the game. Windows-only like the other
+   developer reports; other platforms return false with an explanatory status. */
+bool AssetCatalogGame_ConvertModel(char* status, int statusCapacity);
+
 /* Decodes the resident level regions' cell object lists into placements,
    reconciles them against the live asset catalog and publishes a readable
    report to `<working dir>/assetcatalog_level_<GameLevel>_inventory.txt` with

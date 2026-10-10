@@ -681,6 +681,19 @@ void State_GameInit(void* param)
 			printWarning("AssetCatalog: %s\n", ptypeStatus);
 	}
 
+	// E03 block 2 item 3: the -convertmodel <slot> developer flag converts one
+	// resident world model to a cached native GLB once, after SpoolSYNC. It is
+	// warn-only: a failed conversion must never interrupt the game.
+	if (AssetCatalogGame_ConvertModelRequested())
+	{
+		char convertStatus[512];
+
+		if (AssetCatalogGame_ConvertModel(convertStatus, sizeof(convertStatus)))
+			printInfo("AssetCatalog: %s\n", convertStatus);
+		else
+			printWarning("AssetCatalog: %s\n", convertStatus);
+	}
+
 	// The playground replaces the loaded world with a generated, resident
 	// fixture while reusing the donor level's car, texture and sound data.
 	if (NewLevel)
@@ -1897,6 +1910,7 @@ void PrintCommandLineArguments()
 		"  -saveat <tick> : tick at which -savereplay writes the file\n"
 		"  -assetinventory : write a level asset inventory report after loading\n"
 		"  -modelptypes : write a model polygon-type report after loading\n"
+		"  -convertmodel <slot> : convert one resident model slot to a native GLB\n"
 #endif // DEBUG_OPTIONS
 		"  -replay <filename.d2rp> : starts replay from file\n"
 #ifdef CUTSCENE_RECORDER
@@ -2137,6 +2151,14 @@ int redriver2_main(int argc, char** argv)
 			// Consumed by AssetCatalogGame_ConfigureFromCommandLine in the
 			// platform entry point; accepted here only to avoid the command
 			// line helper popup.
+		}
+		else if (!strcmp(argv[i], "-convertmodel"))
+		{
+			// Consumed by AssetCatalogGame_ConfigureFromCommandLine in the
+			// platform entry point; skip the slot value here only to avoid the
+			// command line helper popup.
+			if (argc - i >= 2)
+				i++;
 		}
 #ifdef DEBUG_OPTIONS
 		else if (!strcmp(argv[i], "-exportxasubtitles"))

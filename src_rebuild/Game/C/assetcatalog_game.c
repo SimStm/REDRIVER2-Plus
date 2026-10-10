@@ -14,11 +14,17 @@
 #include "spool.h"
 #include "draw.h"
 
+#include "../../utils/WorldMeshBuilder.h"
+#include "../../utils/AssetConverter.h"
+
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <vector>
 
 #ifdef _WIN32
+#include <direct.h>
 #include <stdarg.h>
 #include "../../utils/InspectorExport.h"
 #endif
@@ -31,6 +37,11 @@ static bool s_inventoryRequested = false;
 // report once after SpoolSYNC. Never interrupts the game on failure.
 static bool s_modelPtypesRequested = false;
 
+// Developer flag: convert one resident model slot to a native GLB once after
+// SpoolSYNC. Never interrupts the game on failure.
+static bool s_convertModelRequested = false;
+static int s_convertModelSlot = -1;
+
 void AssetCatalogGame_ConfigureFromCommandLine(int argc, char** argv)
 {
 	for (int i = 1; i < argc; i++)
@@ -39,6 +50,15 @@ void AssetCatalogGame_ConfigureFromCommandLine(int argc, char** argv)
 			s_inventoryRequested = true;
 		else if (strcmp(argv[i], "-modelptypes") == 0)
 			s_modelPtypesRequested = true;
+		else if (strcmp(argv[i], "-convertmodel") == 0)
+		{
+			s_convertModelRequested = true;
+			if (i + 1 < argc)
+			{
+				s_convertModelSlot = atoi(argv[i + 1]);
+				i++;
+			}
+		}
 	}
 }
 
@@ -50,6 +70,16 @@ bool AssetCatalogGame_InventoryRequested(void)
 bool AssetCatalogGame_ModelPtypesRequested(void)
 {
 	return s_modelPtypesRequested;
+}
+
+bool AssetCatalogGame_ConvertModelRequested(void)
+{
+	return s_convertModelRequested;
+}
+
+int AssetCatalogGame_ConvertModelSlot(void)
+{
+	return s_convertModelSlot;
 }
 
 namespace
@@ -716,6 +746,144 @@ bool AssetCatalogGame_WriteModelPtypeReport(char* status, int statusCapacity)
 	return true;
 }
 
+// Canonical digest of the decoded SourceMesh inputs the world mesh builder
+// consumes, so a changed source model produces a different conversion-cache key.
+// Arrays are hashed in a fixed order, then each submesh descriptor, so colour
+// presence and material grouping are part of the identity. Deterministic.
+static unsigned long long HashSourceMesh(const SourceMesh& mesh)
+{
+	std::vector<unsigned char> bytes;
+	bytes.reserve(mesh.positions.size() * sizeof(float) + mesh.uvs.size() * sizeof(float) +
+		mesh.colors.size() + mesh.indices.size() * sizeof(unsigned int) +
+		mesh.submeshes.size() * 12);
+
+	const unsigned char* positions = (const unsigned char*)mesh.positions.data();
+	bytes.insert(bytes.end(), positions, positions + mesh.positions.size() * sizeof(float));
+	const unsigned char* uvs = (const unsigned char*)mesh.uvs.data();
+	bytes.insert(bytes.end(), uvs, uvs + mesh.uvs.size() * sizeof(float));
+	bytes.insert(bytes.end(), mesh.colors.begin(), mesh.colors.end());
+	const unsigned char* indices = (const unsigned char*)mesh.indices.data();
+	bytes.insert(bytes.end(), indices, indices + mesh.indices.size() * sizeof(unsigned int));
+
+	for (size_t i = 0; i < mesh.submeshes.size(); ++i)
+	{
+		const SourceSubmesh& submesh = mesh.submeshes[i];
+		bytes.push_back((unsigned char)submesh.primitiveClass);
+		bytes.push_back(submesh.textureSet);
+		bytes.push_back(submesh.textureId);
+		bytes.push_back(submesh.hasColors ? 1 : 0);
+		bytes.push_back(submesh.hasNormals ? 1 : 0);
+		for (int byte = 0; byte < 4; ++byte)
+			bytes.push_back((unsigned char)(submesh.firstIndex >> (byte * 8)));
+		for (int byte = 0; byte < 4; ++byte)
+			bytes.push_back((unsigned char)(submesh.indexCount >> (byte * 8)));
+	}
+
+	if (bytes.size() > (size_t)INT_MAX)
+		return 0;
+
+	return ConversionCache_HashBytes(bytes.data(), (int)bytes.size());
+}
+
+bool AssetCatalogGame_ConvertModel(char* status, int statusCapacity)
+{
+	if (status == NULL || statusCapacity <= 0)
+		return false;
+
+	status[0] = '\0';
+
+	if (!s_convertModelRequested)
+	{
+		snprintf(status, statusCapacity, "convert-model not requested");
+		return false;
+	}
+
+	const int slot = s_convertModelSlot;
+	if (slot < 0 || slot >= MAX_MODEL_SLOTS)
+	{
+		snprintf(status, statusCapacity, "convert-model: slot %d is out of range", slot);
+		return false;
+	}
+
+	MODEL* model = modelpointers[slot];
+	if (model == NULL || model == &dummyModel)
+	{
+		snprintf(status, statusCapacity, "convert-model: slot %d has no resident model", slot);
+		return false;
+	}
+
+	const int record = AssetCatalog_FindModel(slot);
+	if (record < 0)
+	{
+		snprintf(status, statusCapacity, "convert-model: slot %d is not resident in the asset catalog", slot);
+		return false;
+	}
+
+	int span = 0;
+	if (!AssetCatalog_GetModelSpan(record, &span) || span <= 0)
+	{
+		snprintf(status, statusCapacity, "convert-model: slot %d has no captured byte span", slot);
+		return false;
+	}
+
+	const unsigned char* begin = (const unsigned char*)model;
+	const unsigned char* end = begin + span;
+
+	SourceModelView view;
+	view.instanceNumber = model->instance_number;
+	view.numVertices = model->num_vertices;
+	view.numPolys = model->num_polys;
+	view.numPointNormals = model->num_point_normals;
+	view.vertices = model->vertices;
+	view.polyBlock = model->poly_block;
+	view.pointNormals = model->point_normals;
+
+	SourceMesh source;
+	char error[256];
+	const SourceModelDecoderResult decoded = DecodeSourceModel(begin, end, view, &source,
+		error, sizeof(error), SourceModelDecoderPolicy::SkipUnsupported);
+
+	if (decoded.error != SOURCE_MODEL_ERROR_NONE)
+	{
+		snprintf(status, statusCapacity, "convert-model: slot %d decode failed: %s (%s)",
+			slot, SourceModelDecoder_ErrorName(decoded.error), error);
+		return false;
+	}
+
+	GltfMeshData mesh;
+	WorldMeshBuilderResult built;
+
+	if (WorldMeshBuilder_Build(source, &mesh, &built, error, sizeof(error)) != WORLD_MESH_ERROR_NONE)
+	{
+		snprintf(status, statusCapacity, "convert-model: slot %d build failed: %s (%s)",
+			slot, WorldMeshBuilder_ErrorName(built.error), error);
+		return false;
+	}
+
+	const unsigned long long sourceHash = HashSourceMesh(source);
+	ConversionCacheKey key;
+	ConversionCache_MakeKey(&key, "world-mesh", sourceHash, 0ULL, 0ULL, CONVERSION_CACHE_SCHEMA_VERSION);
+
+	const char* cacheDirectory = "native_cache";
+	_mkdir(cacheDirectory); // an existing directory is fine; a real failure surfaces in the publish step
+
+	AssetConverterResult published;
+	const int code = AssetConverter_ConvertMesh(cacheDirectory, &key, mesh, &published, error, sizeof(error));
+	if (code != ASSET_CONVERTER_OK)
+	{
+		snprintf(status, statusCapacity, "convert-model: slot %d publish failed: %s (%s)",
+			slot, AssetConverter_ErrorName(code), error);
+		return false;
+	}
+
+	snprintf(status, statusCapacity,
+		"convert-model: slot %d, span %d bytes, submeshes %d, vertices %d, triangles %d, skipped %u, "
+		"source-hash %016llx, content-hash %s -> %s",
+		slot, span, built.submeshCount, built.vertexCount, built.triangleCount, decoded.skippedCount,
+		sourceHash, published.contentHash, published.glbPath);
+	return true;
+}
+
 #else // !_WIN32
 
 bool AssetCatalogGame_ReconcileLevel(char* status, int statusCapacity)
@@ -730,6 +898,14 @@ bool AssetCatalogGame_WriteModelPtypeReport(char* status, int statusCapacity)
 {
 	if (status != NULL && statusCapacity > 0)
 		snprintf(status, statusCapacity, "Model polygon-type report is currently available on Windows only");
+
+	return false;
+}
+
+bool AssetCatalogGame_ConvertModel(char* status, int statusCapacity)
+{
+	if (status != NULL && statusCapacity > 0)
+		snprintf(status, statusCapacity, "Model conversion is currently available on Windows only");
 
 	return false;
 }
@@ -754,6 +930,24 @@ bool AssetCatalogGame_InventoryRequested(void)
 
 bool AssetCatalogGame_ModelPtypesRequested(void)
 {
+	return false;
+}
+
+bool AssetCatalogGame_ConvertModelRequested(void)
+{
+	return false;
+}
+
+int AssetCatalogGame_ConvertModelSlot(void)
+{
+	return -1;
+}
+
+bool AssetCatalogGame_ConvertModel(char* status, int statusCapacity)
+{
+	if (status != NULL && statusCapacity > 0)
+		status[0] = '\0';
+
 	return false;
 }
 

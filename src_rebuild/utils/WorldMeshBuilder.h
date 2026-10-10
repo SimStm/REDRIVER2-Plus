@@ -1,0 +1,93 @@
+#ifndef WORLD_MESH_BUILDER_H
+#define WORLD_MESH_BUILDER_H
+
+#include "GltfLoader.h"
+#include "SourceModelDecoder.h"
+
+/*
+ * E03 block 2 item 3: builds one project-owned `GltfMeshData` from a decoded
+ * world `SourceMesh`, for the existing E02 single-primitive/one-material GLB
+ * pipeline (GltfWriter -> AssetConverter -> GltfLoader).
+ *
+ * The module is pure data: it has no GPU, no PsyCross, no game headers and no
+ * ODT dependency, and it never re-reads the source MODEL bytes. C++11.
+ *
+ * Adopted invariants (documented so the choices are explicit, not silent):
+ *
+ *  - Single primitive / one material. The E02 writer emits exactly one mesh,
+ *    one primitive and one material. A decoded model whose SourceMesh carries
+ *    more than one submesh cannot be represented without dropping geometry, so
+ *    the build fails with WORLD_MESH_ERROR_MULTIPLE_SUBMESHES and zero output.
+ *    A single-submesh model whose one submesh does not cover every index also
+ *    fails (WORLD_MESH_ERROR_UNCOVERED_INDICES); nothing is dropped silently.
+ *
+ *  - Flat per-triangle normals. World polygon records carry no usable per-vertex
+ *    normals (PL/flat types 10/11/20/21 store none; the building runtime shades
+ *    per primitive, not per vertex). The build therefore synthesizes one flat
+ *    geometric normal per emitted triangle from its three positions, in the
+ *    decoder's world winding order, normalized. This applies to every submesh,
+ *    including gouraud-class ones: stored point normals are NOT consumed in this
+ *    block (a recorded follow-up), and no smooth/averaged normal is ever
+ *    invented. A degenerate triangle (zero area) gets the documented fallback
+ *    (0,0,1) instead of an undefined normal.
+ *
+ *  - Every triangle gets three dedicated output vertices (the source per-corner
+ *    UV and colour are copied to each), so a flat per-triangle normal is
+ *    unambiguous even where the decoder shared a quad's corner between its two
+ *    triangles. Output indices are a trivial sequential triangle list.
+ *
+ *  - Base colour. The one material carries a single `baseColorFactor`. When the
+ *    single submesh stored a raw RGB face colour (hasColors == true), the factor
+ *    is the arithmetic mean of those raw per-corner colours over [0,1], with no
+ *    draw-time intensity/shading applied. When the record stored no RGB (a PL
+ *    record, hasColors == false) the documented neutral opaque white
+ *    (1,1,1,1) is used. No per-vertex colour attribute exists in this pipeline.
+ *
+ *  - UVs are the raw 8-bit texel coordinates the decoder produced, left
+ *    unnormalised. Textures and embedded images are out of scope for this block.
+ *
+ *  - The node transform stays identity: this builds the source geometry record;
+ *    per-instance placement is a later concern.
+ *
+ *  - Deterministic and bounded: identical input produces byte-identical output;
+ *    every array is validated before anything is written and any failure resets
+ *    the destination to an empty mesh (no partial output).
+ */
+
+/* Named build failures. Zero (NONE) is success. */
+enum WorldMeshBuilderError
+{
+	WORLD_MESH_ERROR_NONE = 0,
+	WORLD_MESH_ERROR_ARGUMENT,            /* no destination mesh */
+	WORLD_MESH_ERROR_EMPTY,               /* no vertices, indices or submeshes */
+	WORLD_MESH_ERROR_MULTIPLE_SUBMESHES,  /* the writer supports one primitive only */
+	WORLD_MESH_ERROR_ATTRIBUTE_SIZE,      /* an attribute array disagrees with vertexCount */
+	WORLD_MESH_ERROR_INDEX_RANGE,         /* an index is outside the vertex range or not a triangle */
+	WORLD_MESH_ERROR_UNCOVERED_INDICES,   /* the single submesh does not cover every index */
+};
+
+/* Outcome detail for the log/report. All counts are zero on failure. */
+struct WorldMeshBuilderResult
+{
+	WorldMeshBuilderError error;
+	int submeshCount;
+	int vertexCount;
+	int triangleCount;
+	SourcePrimitiveClass primitiveClass; /* class of the single submesh */
+	unsigned char textureSet;
+	unsigned char textureId;
+	bool hasColors;                      /* the submesh stored a raw RGB face colour */
+};
+
+/* Builds `out` from `source`. Returns WORLD_MESH_ERROR_NONE (0) on success and
+   fills `out`; otherwise returns a named error and resets `out` to an empty
+   mesh. `result` is optional and always zeroed/filled when non-NULL. `error` is
+   optional: a human-readable reason is written when it is non-NULL and
+   `capacity` is positive. */
+int WorldMeshBuilder_Build(const SourceMesh& source, GltfMeshData* out,
+	WorldMeshBuilderResult* result, char* error, int capacity);
+
+/* Human-readable name of a build error code. */
+const char* WorldMeshBuilder_ErrorName(WorldMeshBuilderError error);
+
+#endif // WORLD_MESH_BUILDER_H

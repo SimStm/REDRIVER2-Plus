@@ -79,6 +79,40 @@ where release policy permits it.
   fixtures plus an optional read-only real-page probe). No GPU, PsyCross, game
   integration or ODT code.
 
+- E03 Block 2 item 3 (one real building/tile -> `SourceMesh` -> GLB):
+  `utils/WorldMeshBuilder.{h,cpp}` is a pure C++11 `SourceMesh` -> `GltfMeshData`
+  builder. It synthesizes one flat geometric normal per emitted triangle
+  (winding-normalized; degenerate fallback `(0,0,1)`) and expands each triangle to 3
+  dedicated vertices so flat normals are unambiguous; base colour is the mean of the
+  raw stored face colours (neutral opaque white for PL records with no RGB); the node
+  transform is identity; the result is deterministic; full bounds validation yields
+  named errors and zero partial output, and more than one submesh yields
+  `multiple-submeshes-unsupported` with zero output (never a silent drop). A
+  game-side `-convertmodel <slot>` developer flag (accepted in `main.c`, value
+  skipped in the arg loop; warn-only with named diagnostics) resolves
+  `AssetCatalog_FindModel(slot)` + `AssetCatalog_GetModelSpan`, decodes the span with
+  `SkipUnsupported`, builds, and publishes through the existing pipeline:
+  `AssetConverter_ConvertMesh` (converter key `world-mesh`, `native_cache/`) writes
+  the GLB with `GltfWriter`, re-verifies it with `Gltf_LoadFile`, then publishes
+  atomically. Log line: `AssetCatalog: convert-model: slot <slot>, span <bytes>
+  bytes, submeshes <n>, vertices <v>, triangles <t>, skipped <k>, source-hash <h>,
+  content-hash <h> -> <path>`. Real Chicago evidence (Release_dev, `-opengl -nointro
+  -nofmv -mission 1 -convertmodel 0`): slot 0, span 676 bytes, submeshes 1, vertices
+  120, triangles 40, skipped 0; source-hash `ed3098e5f1551505`, content-hash
+  `e05d775f5e30a78b`; output
+  `native_cache/world-mesh_ed3098e5f1551505_0000000000000000_0000000000000000_1.bin`
+  (GLB payload, 5256 bytes); two runs produced identical source-hash and content-hash
+  (determinism), and slots 1 and 2 also converted with 1 submesh each.
+  `WorldMeshBuilderTests` 122 checks (flat normals including a vertical triangle, base
+  colour present/absent, the multi-submesh named diagnostic with zero output,
+  bounds/argument errors, an uncovered index, determinism: byte-identical GLB + equal
+  content hash, and `GltfLoader` reload). All 14 inspector suites pass; `Release_dev`
+  and `Release_dev_native` builds exit 0. Limits: no textures/embedded images in this
+  block (recorded follow-up: per-face `texture_id`/CLUT + `TEXINF` sub-rect recovery
+  from the project decode plus a writer extension); flat normals only (stored gouraud
+  point normals not consumed); one material = mean face colour; multi-submesh models
+  unsupported in this block.
+
 - ODT-to-GLB tooling spike (bounded, external, temp-only; no repository
   integration): OpenDriver2Tools master @
   `89009f7f4f48f37a886b376292432cdab4a136` (2025-10-28) was built headless (Win32)
