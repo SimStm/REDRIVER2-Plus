@@ -55,7 +55,7 @@ New-Item -ItemType Directory -Path $workingRoot -Force | Out-Null
 $executable = Join-Path $workingRoot 'AudioServiceSmoke.exe'
 
 $arguments = @('/nologo', '/std:c++17', '/EHsc', '/O2', '/Gy', '/MD', '/TP', '/I', ('"' + $fmodInclude + '"'))
-$arguments += @('tests\AudioServiceSmoke.cpp', 'utils\AudioService.cpp', 'Game\C\audiocontract.c', 'Game\C\sounddecode.c')
+$arguments += @('tests\AudioServiceSmoke.cpp', 'utils\AudioService.cpp', 'Game\C\audiocontract.c', 'Game\C\sounddecode.c', 'Game\C\audiofmod_adapter.c')
 $arguments += @(('/Fo:"' + $workingRoot + '\\"'), ('/Fe:"' + $executable + '"'))
 $arguments += @('/link', '/OPT:REF')
 $arguments += @('"' + $fmodLibrary + '"')
@@ -67,7 +67,7 @@ $decodeRoot = Join-Path $workingRoot 'decode'
 New-Item -ItemType Directory -Path $decodeRoot -Force | Out-Null
 $decodeExecutable = Join-Path $decodeRoot 'SoundDecodeSmoke.exe'
 $decodeArguments = @('/nologo', '/std:c++17', '/EHsc', '/O2', '/Gy', '/MD', '/TP', '/DRED2_DECODE_ONLY')
-$decodeArguments += @('tests\AudioServiceSmoke.cpp', 'Game\C\sounddecode.c')
+$decodeArguments += @('tests\AudioServiceSmoke.cpp', 'Game\C\sounddecode.c', 'Game\C\audiofmod_adapter.c', 'Game\C\audiocontract.c')
 $decodeArguments += @(('/Fo:"' + $decodeRoot + '\\"'), ('/Fe:"' + $decodeExecutable + '"'))
 $decodeArguments += @('/link', '/OPT:REF')
 

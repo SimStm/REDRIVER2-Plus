@@ -2072,7 +2072,7 @@ int redriver2_main(int argc, char** argv)
 	SpuSetMute(0);
 
 	// initializes sound system
-	LoadSoundBankDynamic(NULL, 0, 0);
+	LoadSoundBankDynamic(NULL, 0, 0, -1);
 
 	InitialiseScoreTables();
 

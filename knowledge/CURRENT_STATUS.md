@@ -232,18 +232,39 @@ re-record remain pending, so E00 is not formally accepted.
   into `SOUND_BANK_SFX` and registers `SFX(1,0..3)` via
   `AudioService_RegisterSoundMemory` (streaming=0), unregisters on bank-1 reload,
   registers nothing when base!=0 and is a no-op when the service is inactive, so
-  the seam is inert until A1 initializes the service. Known caveat: the base==0
-  window also matches the level's first bank-1 load; A1 adds strict menu
-  discrimination (e.g. `gInFrontend`) plus seam-level evidence. A read-only local
-  probe of `data/DRIVER2/SOUND/VOICES2.BLK`: menu lump 4 samples x 560 frames
-  @4000 Hz, no loop; the level lump decodes cleanly. Evidence:
-  `scripts/run_audio_service_smoke.ps1` (pure decode phase without FMOD headers,
-  plus the service phase) 20 + 87 checks, 0 failures.
-- Next: A1 (FESound routing with a runtime SPU_ONLY/FMOD_ONLY switch defaulting to
-  SPU, master gain helper `(10000+gMasterVolume)/10000`, pitch `gamePitch/4096`
-  clamped to `16383/4096`, lazy service init, per-frame Update in `VsyncProc`,
-  shutdown at exit, `gInFrontend` menu gating, in-game log evidence) and E03 Block
-  2. E05/E06 remain pending.
+  the seam is inert until A1 initializes the service. The base==0 window that also
+  matched the level's first bank-1 load is closed by A1's lump-identity gate below.
+  A read-only local probe of `data/DRIVER2/SOUND/VOICES2.BLK`: menu lump 4 samples
+  x 560 frames @4000 Hz, no loop; the level lump decodes cleanly.
+- FESound FMOD routing + service lifecycle (E04 A1, 2026-10-09):
+  `Game/C/audiofmod_adapter.{h,c}` is an SDK-free helper module (no FMOD includes):
+  a consumer-mode enum parsed once from `RED2_FMOD_AUDIO` (`"1"` => FMOD_ONLY,
+  default SPU_ONLY), the master-gain helper `clamp((10000+gMasterVolume)/10000,
+  0, 1)`, pitch `gamePitch/4096` clamped to `16383/4096`, and the `SFX(1,sample)`
+  event-id builder through the contract. In FMOD_ONLY mode `Game/C/sound.c` routes
+  `FESound` to `AudioService_Play` as a 2D one-shot (one log line with sample,
+  handle and VoiceCount) and skips the SPU body entirely, so `GetFreeChannel` /
+  `CompleteSoundSetup` never run and `channels[]` is untouched (no double
+  playback); a missing event or an inactive service logs once and stays silent,
+  never falling back to SPU per call. `LoadSoundBankDynamic` now threads the lump
+  identity: only the fresh `SBK_ID_MENU` load registers `SFX(1,0..3)` and every
+  other bank-1 load unregisters them; the append path's latent drop (unregisters,
+  registers nothing) is documented. `redriver2_psxpc.cpp` initializes the service
+  before `redriver2_main` (init failure logs once and stays SPU for the whole run)
+  and shuts it down after; `VsyncProc` calls `AudioService_Update` once per
+  rendered frame. All service calls stay under `#ifdef RED2_AUDIO_FMOD`; non-FMOD
+  builds are unchanged. Evidence: `scripts/run_audio_service_smoke.ps1` reports 31
+  (pure phase, adapter helpers) + 98 (service) checks, 0 failures; `cl /Zs` of
+  `sound.c` and `redriver2_psxpc.cpp` exit 0 with and without `RED2_AUDIO_FMOD`.
+  In-game probe (parent, Release_dev, `-nointro -nofmv`, `RED2_FMOD_AUDIO=1`):
+  the service initialised alongside OpenAL and 41 FESound calls routed as
+  distinct FMOD handles (samples 0/2/3, voices 1-2, 0 warnings); with the switch
+  off the service stays inactive and no route lines appear. Gate-accepted
+  informational items: the linear per-voice master gain (the SPU path uses a
+  ~1.4x pre-saturation curve; accepted E04 decision) and the dormant lower pitch
+  clamp (precondition documented in the adapter header). No audible-fidelity,
+  tick-coverage or master-bus claim.
+- Next: E03 Block 2. E05/E06 remain pending.
 
 ## Project and current services
 

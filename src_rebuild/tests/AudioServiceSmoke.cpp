@@ -5,6 +5,8 @@
 //    without any FMOD header or library.
 //  - default (Windows): the decode checks plus the FMOD Core service round-trip.
 #include "../Game/C/sounddecode.h"
+#include "../Game/C/audiofmod_adapter.h"
+#include "../Game/C/audiocontract.h"
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
@@ -150,6 +152,53 @@ static void RunDecodeChecks(void)
   "loop end before loop start rejected");
 }
 
+// E04 A1 adapter checks. SDK-free: mode parsing, master-volume endpoints and
+// monotonicity, pitch mapping/clamp and the FESound event id packing. Compiled
+// in both the pure decode phase and the service phase.
+static void RunAdapterChecks(void)
+{
+ const float epsilon = 1e-6f;
+
+ Check(AudioFmod_ParseConsumerMode("1") == AUDIO_CONSUMER_FMOD_ONLY,
+  "mode parse: \"1\" selects FMOD_ONLY");
+ Check(AudioFmod_ParseConsumerMode("0") == AUDIO_CONSUMER_SPU_ONLY &&
+  AudioFmod_ParseConsumerMode("") == AUDIO_CONSUMER_SPU_ONLY &&
+  AudioFmod_ParseConsumerMode(NULL) == AUDIO_CONSUMER_SPU_ONLY &&
+  AudioFmod_ParseConsumerMode("true") == AUDIO_CONSUMER_SPU_ONLY,
+  "mode parse: everything else defaults to SPU_ONLY");
+
+ Check(fabsf(AudioFmod_MasterVolume(-10000) - 0.0f) < epsilon &&
+  fabsf(AudioFmod_MasterVolume(-5000) - 0.5f) < epsilon &&
+  fabsf(AudioFmod_MasterVolume(0) - 1.0f) < epsilon,
+  "master volume endpoints 0 and 1 with midpoint 0.5");
+ Check(AudioFmod_MasterVolume(-10000) <= AudioFmod_MasterVolume(-5000) &&
+  AudioFmod_MasterVolume(-5000) <= AudioFmod_MasterVolume(0),
+  "master volume is monotone over -10000/-5000/0");
+ Check(fabsf(AudioFmod_MasterVolume(10000) - 1.0f) < epsilon &&
+  fabsf(AudioFmod_MasterVolume(-20000) - 0.0f) < epsilon,
+  "master volume clamps outside [0, 1]");
+
+ Check(fabsf(AudioFmod_PitchFromGame(2048) - 0.5f) < epsilon,
+  "pitch: FESound fixed pitch 2048 maps to 0.5");
+ const float maxPitch = 16383.0f / 4096.0f;
+ Check(fabsf(AudioFmod_PitchFromGame(16383) - maxPitch) < epsilon &&
+  fabsf(AudioFmod_PitchFromGame(65535) - maxPitch) < epsilon,
+  "pitch clamps above 16383/4096");
+
+ Check(AudioFmod_MakeFESoundEventId(0) == 0x10010000u &&
+  AudioFmod_MakeFESoundEventId(3) == 0x10010003u,
+  "FESound event ids pack as SFX(1, sample)");
+ Check(AudioContract_EventKind(AudioFmod_MakeFESoundEventId(2)) == AUDIO_KIND_SFX &&
+  AudioContract_EventPrimary(AudioFmod_MakeFESoundEventId(2)) == 1 &&
+  AudioContract_EventSecondary(AudioFmod_MakeFESoundEventId(2)) == 2,
+  "FESound event id unpacks to bank 1 and the sample");
+
+ AudioFmod_SetConsumerMode(AUDIO_CONSUMER_FMOD_ONLY);
+ Check(AudioFmod_GetConsumerMode() == AUDIO_CONSUMER_FMOD_ONLY, "mode override is cached and returned");
+ AudioFmod_SetConsumerMode(AUDIO_CONSUMER_SPU_ONLY);
+ Check(AudioFmod_GetConsumerMode() == AUDIO_CONSUMER_SPU_ONLY, "mode override restores SPU_ONLY");
+}
+
 #ifndef RED2_DECODE_ONLY
 #include "../utils/AudioService.h"
 #ifdef _WIN32
@@ -165,6 +214,7 @@ static AudioPlayRequest Request(unsigned int id)
 int main(int argc, char** argv)
 {
  RunDecodeChecks();
+ RunAdapterChecks();
 
 #ifdef RED2_DECODE_ONLY
  printf("%d checks, %d failures\n", checks, failures); return failures ? 1 : 0;

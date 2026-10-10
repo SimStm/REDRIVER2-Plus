@@ -32,6 +32,11 @@
 #include "utils/HdTextureOverrides.h"
 #include "utils/InputService.h"
 
+#ifdef RED2_AUDIO_FMOD
+#include "Game/C/audiofmod_adapter.h"
+#include "utils/AudioService.h"
+#endif
+
 #include <SDL_scancode.h>
 #include <SDL_gamecontroller.h>
 #include <SDL_messagebox.h>
@@ -890,7 +895,29 @@ int main(int argc, char** argv)
 	// E02: optional level inventory report once the world regions are resident.
 	AssetCatalogGame_ConfigureFromCommandLine(argc, argv);
 
+#ifdef RED2_AUDIO_FMOD
+	// E04 A1: initialize the FMOD service before the frontend bank load (inside
+	// redriver2_main) so the menu registration seam sees an active service, and
+	// read the consumer mode once. If initialization fails, log once and stay in
+	// SPU mode for the whole run; there is no per-call fallback.
+	if (AudioFmod_GetConsumerMode() == AUDIO_CONSUMER_FMOD_ONLY)
+	{
+		char audioError[256];
+		if (AudioService_Init(audioError, sizeof(audioError)))
+			PsyX_Log_Info("audio: FMOD service active (RED2_FMOD_AUDIO=1)\n");
+		else
+		{
+			PsyX_Log_Warning("audio: FMOD service init failed (%s); staying on SPU\n", audioError);
+			AudioFmod_SetConsumerMode(AUDIO_CONSUMER_SPU_ONLY);
+		}
+	}
+#endif
+
 	redriver2_main(argc, argv);
+
+#ifdef RED2_AUDIO_FMOD
+	AudioService_Shutdown();
+#endif
 
 	DeterministicBaseline_Shutdown();
 	DeinitStringMng();

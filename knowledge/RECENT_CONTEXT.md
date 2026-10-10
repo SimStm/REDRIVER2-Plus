@@ -119,6 +119,20 @@ Evidence and boundaries:
   base==0 window also matches the level's first bank-1 load; A1 adds strict menu
   discrimination. `scripts/run_audio_service_smoke.ps1` (pure decode phase
   without FMOD headers plus the service phase) reports 20 + 87 checks, 0 failures.
+- FESound FMOD routing + lifecycle (E04 A1, 2026-10-09): new SDK-free
+  `Game/C/audiofmod_adapter.{h,c}` (mode parse from `RED2_FMOD_AUDIO`,
+  master-gain, pitch clamp, `SFX(1,sample)` id builder) plus `sound.c` FESound
+  routing that skips the SPU body in FMOD_ONLY mode, `LoadSoundBankDynamic`
+  lump-identity gating (only `SBK_ID_MENU` registers), service init before
+  `redriver2_main` / Update in `VsyncProc` / shutdown at exit in
+  `redriver2_psxpc.cpp`. Smoke 31 (pure) + 98 (service) checks, 0 failures;
+  `cl /Zs` exit 0 with and without `RED2_AUDIO_FMOD`; regenerated Release_dev /
+  Release_dev_native builds exit 0. In-game probe (parent, `RED2_FMOD_AUDIO=1`,
+  `-nointro -nofmv`): the service initialised alongside OpenAL and 41 FESound
+  calls routed as distinct FMOD handles (0 warnings); switch off stays inactive
+  with no route lines. Gate accepted with two informational items recorded
+  (linear master-gain mapping vs the SPU curve; dormant lower pitch clamp). No
+  audible-fidelity claim.
 - E02 Chicago inventory Gate 4A attempt 2 is approved as a scoped diagnostic.
   Final isolated integration run: 4/4 barrels, 6740 unique placements, 227
   straddlers, 0 overlaps/missing model refs, 114 unknown material classifications,

@@ -76,7 +76,7 @@ extern void LockChannel(int channel); // 0x0007AE34
 extern void UnlockChannel(int c); // 0x0007AE64
 
 extern int LoadSoundBank(char *address, int length, int bank); // 0x0007AE90
-extern int LoadSoundBankDynamic(char *address, int length, int dbank); // 0x00079BCC
+extern int LoadSoundBankDynamic(char *address, int length, int dbank, int lump); // 0x00079BCC
 
 extern void UpdateXMSamples(int num_samps); // 0x0007B1C4
 

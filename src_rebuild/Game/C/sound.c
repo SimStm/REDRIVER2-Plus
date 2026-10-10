@@ -12,6 +12,7 @@
 #endif
 #ifdef RED2_AUDIO_FMOD
 #include "sounddecode.h"
+#include "audiofmod_adapter.h"
 #include "../../utils/AudioService.h"
 #endif
 
@@ -117,6 +118,14 @@ void VsyncProc(void)
 
 		XM_Update();
 	}
+
+#ifdef RED2_AUDIO_FMOD
+	// E04 A1: drive the FMOD service once per rendered frame, alongside the
+	// existing XM/SPU handler. This is presentation cadence, not the simulation
+	// tick. Update is inert when the service is inactive.
+	if (AudioFmod_GetConsumerMode() == AUDIO_CONSUMER_FMOD_ONLY)
+		AudioService_Update();
+#endif
 
 	SoundHandler();
 }
@@ -984,9 +993,11 @@ void UpdateXMSamples(int num_samps)
 
 #ifdef RED2_AUDIO_FMOD
 // E04 frontend one-shot (FESound) slice: register the menu bank's decoded PCM
-// with the audio service. Playback still goes through the existing SPU path;
-// only the registration seam is migrated here. A decoded buffer is released
-// right after registration because streaming=0 lets FMOD copy the sample.
+// with the audio service so the FMOD route (see FESound) can play it. The gate
+// is the lump identity: only the fresh SBK_ID_MENU load registers SFX(1,0..3);
+// every other bank-1 load unregisters them so no registration lingers over
+// level data. A decoded buffer is released right after registration because
+// streaming=0 lets FMOD copy the sample.
 #define MENU_SOUND_SAMPLE_COUNT 4
 
 static unsigned int g_menuSoundIds[MENU_SOUND_SAMPLE_COUNT];
@@ -1016,8 +1027,14 @@ static void RegisterMenuSounds(const char* payload, int payloadSize, int lumpBas
 	// A later load into bank 1 (SFX, sirens) supersedes the menu registrations.
 	UnregisterMenuSounds();
 
-	// The bank can also be appended to (base != 0) without being the menu
-	// lump; there is no unambiguous remap, so register nothing and say so once.
+	// Append path latent trap: when bank 1 is appended to (appendBase != 0)
+	// instead of loaded fresh, there is no unambiguous remap of the appended
+	// samples, so this unregisters the menu ids and registers nothing. That is
+	// fine for the frontend-only FESound slice (menu sounds are only played from
+	// the fresh SBK_ID_MENU load), but any later in-level consumer of
+	// SFX(1,0..3) would find them silently unregistered after an append. A real
+	// consumer must give the appended ids a stable identity instead of dropping
+	// them.
 	if (appendBase != 0)
 	{
 		if (!g_menuAppendWarned)
@@ -1088,7 +1105,10 @@ static void RegisterMenuSounds(const char* payload, int payloadSize, int lumpBas
 #endif
 
 // [D] [T]
-int LoadSoundBankDynamic(char *address, int length, int dbank)
+// `lump` is the sound-bank lump identity for a data load, or -1 for the control
+// commands (NULL address). It gates the E04 menu registration below; it does
+// not change the SPU load itself.
+int LoadSoundBankDynamic(char *address, int length, int dbank, int lump)
 {
 	int i;
 	int slength;
@@ -1162,7 +1182,15 @@ int LoadSoundBankDynamic(char *address, int length, int dbank)
 
 #ifdef RED2_AUDIO_FMOD
 	if (dbank == SOUND_BANK_SFX)
-		RegisterMenuSounds((const char*)address + slength, length - slength, lsbTabs.addr, appendBase, num_samples);
+	{
+		// Only the fresh frontend menu lump registers SFX(1,0..3). Any other
+		// bank-1 load (level SFX, special sirens) drops them so no registration
+		// lingers over level data.
+		if (lump == SBK_ID_MENU)
+			RegisterMenuSounds((const char*)address + slength, length - slength, lsbTabs.addr, appendBase, num_samples);
+		else
+			UnregisterMenuSounds();
+	}
 #endif
 
 	lsbTabs.addr += length - slength;
@@ -1277,6 +1305,56 @@ void AllocateReverb(int mode, int depth)
 // [D] [T]
 int FESound(int sample)
 {
+#ifdef RED2_AUDIO_FMOD
+	// E04 A1: in FMOD_ONLY mode the frontend one-shot is served entirely by the
+	// audio service. The SPU body (GetFreeChannel / CompleteSoundSetup /
+	// channels[]) is skipped so there is no double playback and no channel state
+	// is touched. A missing registration or an inactive service stays silent;
+	// the call never falls back to the SPU body per call - the only fallback is
+	// whole-mode at startup when the service fails to initialize.
+	if (AudioFmod_GetConsumerMode() == AUDIO_CONSUMER_FMOD_ONLY)
+	{
+		static int fmodRouteUnavailableLogged = 0;
+
+		if (AudioService_IsActive())
+		{
+			AudioPlayRequest request;
+			AudioVoiceHandle handle;
+			char error[AUDIO_CONTRACT_ERROR_CAPACITY];
+
+			AudioContract_InitPlayRequest(&request);
+			request.eventId = AudioFmod_MakeFESoundEventId(sample);
+			request.kind = AUDIO_KIND_SFX;
+			request.volume = AudioFmod_MasterVolume(gMasterVolume);
+			request.pitch = AudioFmod_PitchFromGame(2048);
+			request.flags = 0; // 2D, one-shot, unpaused
+
+			if (AudioService_Play(&request, &handle, error, sizeof(error)))
+			{
+				printInfo("E04: FESound sample %d -> FMOD handle %u:%u (voices %d)\n",
+					sample, (unsigned)handle.index, (unsigned)handle.generation, AudioService_VoiceCount());
+				return 0;
+			}
+
+			if (!fmodRouteUnavailableLogged)
+			{
+				printWarning("E04: FESound FMOD route unavailable (%s); staying silent\n", error);
+				fmodRouteUnavailableLogged = 1;
+			}
+
+			return -1;
+		}
+
+		if (!fmodRouteUnavailableLogged)
+		{
+			printWarning("E04: FESound FMOD route selected but the audio service is inactive; staying silent\n");
+			fmodRouteUnavailableLogged = 1;
+		}
+
+		return -1;
+	}
+#endif
+
 	int channel;
 	channel = GetFreeChannel();
 

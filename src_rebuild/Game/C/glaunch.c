@@ -343,7 +343,7 @@ void ReInitFrontend(int returnToMain)
 	SpuSetReverbVoice(0, SPU_ALLCH);
 	UnPauseSound();
 
-	LoadSoundBankDynamic((char*)0x0, 0, 0);
+	LoadSoundBankDynamic((char*)0x0, 0, 0, -1);
 	LoadBankFromLump(1, 0);
 	
 	// load frontend

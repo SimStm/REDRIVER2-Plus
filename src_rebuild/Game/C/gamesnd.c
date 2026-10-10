@@ -163,7 +163,7 @@ void LoadBankFromLump(int bank, int lump)
 	LoadfileSeg(name, (char*)_sbank_buffer, blockLimit[lump], size);
 	if (size > 0 && blockLimit[lump] && blockLimit[lump + 1]) // [A]
 	{
-		LoadSoundBankDynamic((char*)_sbank_buffer, size, bank);
+		LoadSoundBankDynamic((char*)_sbank_buffer, size, bank, lump);
 	}
 	else
 		printWarning("WARNING: sound bank lump %d is not valid!\n", lump);
@@ -337,7 +337,7 @@ void LoadLevelSFX(int missionNum)
 	cop_model = 3;
 
 	// init sound bank memory
-	LoadSoundBankDynamic(NULL, 0, 0);
+	LoadSoundBankDynamic(NULL, 0, 0, -1);
 
 	// load car banks
 	for (i = 0; i < 3; i++)
@@ -500,8 +500,8 @@ void LoadLevelSFX(int missionNum)
 		LoadBankFromLump(SOUND_BANK_SFX, SBK_ID_SPECIAL_SIREN2);
 
 	// [A] padding?
-	LoadSoundBankDynamic(NULL, 1, SOUND_BANK_DUMMY);
-	LoadSoundBankDynamic(NULL, 3, SOUND_BANK_CARS);
+	LoadSoundBankDynamic(NULL, 1, SOUND_BANK_DUMMY, -1);
+	LoadSoundBankDynamic(NULL, 3, SOUND_BANK_CARS, -1);
 
 	// special vehicle 1 bank
 	if (missionNum == 40 || missionNum >= 400 && missionNum <= 404)

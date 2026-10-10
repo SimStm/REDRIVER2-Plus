@@ -44,6 +44,29 @@ where release policy permits it.
   `scripts/run_audio_service_smoke.ps1` (pure decode phase without FMOD headers
   plus the service phase): 20 + 87 checks, 0 failures.
 
+- E04 FESound FMOD routing and service lifecycle (A1):
+  `Game/C/audiofmod_adapter.{h,c}` is an SDK-free helper module (consumer mode
+  parsed once from `RED2_FMOD_AUDIO`, master-gain `clamp((10000+gMasterVolume)/
+  10000, 0, 1)`, pitch `gamePitch/4096` clamped to `16383/4096`, and the
+  `SFX(1,sample)` event-id builder). In FMOD_ONLY mode `FESound` routes to
+  `AudioService_Play` as a 2D one-shot and skips the SPU body entirely, so
+  `channels[]` is untouched and there is no double playback; a missing event or
+  inactive service logs once and stays silent rather than falling back to SPU per
+  call. `LoadSoundBankDynamic` threads the lump identity so only the fresh
+  `SBK_ID_MENU` load registers `SFX(1,0..3)` and every other bank-1 load
+  unregisters them. The service is initialized before `redriver2_main` (init
+  failure stays on SPU for the whole run), updated once per rendered frame in
+  `VsyncProc` and shut down at exit; all calls remain under `#ifdef
+  RED2_AUDIO_FMOD` and non-FMOD builds are unchanged. Verified by the smoke
+  (31 + 98 checks, 0 failures), `cl /Zs` with and without `RED2_AUDIO_FMOD`, and
+  regenerated Release_dev/Release_dev_native builds (exit 0); the in-game probe
+  (`RED2_FMOD_AUDIO=1`) initialised the service alongside OpenAL and routed 41
+  FESound calls as distinct FMOD handles with 0 warnings, while the switch off
+  keeps the service inactive with no route lines. The gate accepted the slice
+  with two informational items recorded: the linear master-gain mapping (the SPU
+  path uses a ~1.4x pre-saturation curve; accepted E04 decision) and the dormant
+  lower pitch clamp (precondition documented in the adapter header).
+
 - Production effect-timing tests for both regional clocks, strict replay dump
   inventory comparisons and diagnostic detection of recorded draw-time mutations.
 
