@@ -59,6 +59,10 @@ if (-not $vcvars)
 $workingRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("redriver2-inspector-tests-" + [System.Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $workingRoot | Out-Null
 
+# TextureDecodeTests uses this to find one local TIM for its read-only real-page
+# probe; the probe skips cleanly when the file is absent.
+$env:REDRIVER2_REPO_ROOT = $repositoryRoot
+
 function Invoke-Suite
 {
 	param(
@@ -145,6 +149,8 @@ try
 	Invoke-Suite -Name 'SourceModelDecoderTests' -Sources @('tests\SourceModelDecoderTests.cpp', 'utils\SourceModelDecoder.cpp') `
 		-ExtraIncludes @() -LinkLibraries @()
 	Invoke-Suite -Name 'ModelPtypeProbeTests' -Sources @('tests\ModelPtypeProbeTests.cpp', 'Game\C\modelptypeprobe.c') `
+		-ExtraIncludes @() -LinkLibraries @()
+	Invoke-Suite -Name 'TextureDecodeTests' -Sources @('tests\TextureDecodeTests.cpp', 'utils\TextureDecode.cpp') `
 		-ExtraIncludes @() -LinkLibraries @()
 	Invoke-Suite -Name 'AssetPipelineTests' -Sources @('tests\AssetPipelineTests.cpp', 'utils\AssetConverter.cpp', 'utils\GltfLoader.cpp', 'utils\GltfWriter.cpp', 'Game\C\conversioncache.c', 'Game\C\assetpackage.c') `
 		-ExtraIncludes @() -LinkLibraries @('windowscodecs.lib', 'ole32.lib')

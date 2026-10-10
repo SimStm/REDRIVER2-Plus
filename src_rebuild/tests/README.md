@@ -156,6 +156,25 @@ re-register revision bump, invalidation, stale handle) and that a placement's
 `sourceObjectIndex` is provenance that does not participate in the duplicate
 identity key.
 
+## CPU texture decoder tests
+
+`TextureDecodeTests.cpp` tests the E03 block 2.4 CPU texture decoder
+(`utils/TextureDecode.*`), a pure, asset-free module with no game/PSX headers,
+no GPU and no FMOD. Synthetic byte-exact fixtures pin the 4-bit nibble order
+(low nibble leftmost), the 8-bit byte order (low byte leftmost), the BGR555
+expansion `E5TO8(c) = ((c*527)+23)>>6`, the alpha rules (`0000h` transparent,
+`8000h` black STP -> 128, opaque otherwise), an explicit tight/padded/VRAM row
+stride, the palette table (one RGBA per CLUT entry, multiple variants), bounded
+validation with named errors and zero partial output, and determinism. The
+texture window is a sample-time concern and is not applied. An optional
+read-only probe decodes one local 8bpp TIM when `REDRIVER2_REPO_ROOT` is set and
+otherwise reports SKIP; no asset is committed. It creates no files:
+
+```bat
+cl.exe /nologo /TP /EHsc /std:c++14 /O2 /Gy tests\TextureDecodeTests.cpp utils\TextureDecode.cpp /Fo:build\ /Fe:build\TextureDecodeTests.exe /link /OPT:REF
+build\TextureDecodeTests.exe
+```
+
 ## Asset pipeline tests
 
 `AssetPipelineTests.cpp` tests the E02 conversion → package pipeline: source

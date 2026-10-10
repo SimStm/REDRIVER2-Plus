@@ -178,12 +178,19 @@ accepted.
   (`CHICAGO_HEAD.glb`) via a stdlib converter; adaptation surface and ODT divergences (no
   index dedup, normal-index bug, gouraud colours undecoded, `TEXINF` subrect not applied,
   transparency key) recorded in the discussion. Informs B2.4.
+- CPU texture decode (block 2.4): `utils/TextureDecode.{h,c}` is a pure decoder for indexed
+  4/8-bit pages + CLUT bytes and 16-bit direct pages into RGBA8 (explicit row stride; tight
+  loader pages and the 1024-halfword VRAM stride covered; BGR555 `E5TO8`, `0000h`
+  transparent, STP->128 with unknown blend context; texture window not applied). Bounded
+  validation, named errors, zero partial output; `TextureDecodeTests` 136 checks. No GPU or
+  game integration.
 - Not yet done: the native scene accepts converted fixtures, not the game's
   world/materials/lighting and player, so E03 has no playable original-world native slice.
   Debug configs are not wired (only Release Diligent libraries exist). Headless native mode
   does not run the F11 ImGui overlay; a possible PAL double-aspect in the camera seam needs a
-  PAL probe. Next: B2.4 CPU texture decode contract (research digest + ODT spike) and B2.6
-  per-instance draw API + first real object.
+  PAL probe. Next (refined plan): one real building/tile -> `SourceMesh` -> GLB via
+  `GltfWriter`/`AssetConverter` (item 3), then the per-instance draw API and converted
+  region with the game camera (item 4).
 
 ## Engine migration E04 (in progress)
 
@@ -243,7 +250,7 @@ accepted.
   warnings; switch off inactive). Gate-accepted informational items: linear per-voice master
   gain (SPU ~1.4x pre-saturation curve) and the dormant lower pitch clamp. No
   audible-fidelity/tick-coverage/master-bus claim.
-- Next: E03 Block 2.4/B2.6 and E04 remaining consumer slices; E05/E06 remain pending.
+- Next: E03 Block 2 items 3/4 (real model -> GLB; instance draw) and E04 remaining consumer slices; E05/E06 remain pending.
 
 ## Project and current services
 

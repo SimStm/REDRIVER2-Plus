@@ -8,7 +8,7 @@ tags: [okf, status, agents]
 # Recent engineering context
 
 > Updated: 2026-10-09.
-> Read the handoff below first: E03 Block 2 (2a/2.1/2.5) and E04 A1; next B2.4/B2.6.
+> Read the handoff below first: E03 Block 2 (2a/2.1/2.4/2.5) and E04 A1; next items 3/4 (real model -> GLB; instance draw).
 > Older task narratives are condensed; their change records
 > hold the detail.
 
@@ -100,11 +100,19 @@ fixed ticks independent of presentation FPS and CPU speed.
   byte structs into tooling; reimplement decode/inventory/LOD/writers in the
   project module; ODT divergences: no index dedup, normal-index bug, gouraud
   colours undecoded, `TEXINF` subrect not applied, transparency key). Informs B2.4.
+- E03 Block 2.4 (CPU texture decode, 2026-10-09): `utils/TextureDecode.{h,c}` is a
+  pure decoder for indexed 4/8-bit pages + CLUT bytes and 16-bit direct pages into
+  RGBA8 (explicit row stride; tight loader pages and the 1024-halfword VRAM stride;
+  BGR555 `E5TO8`, `0000h` transparent, STP->128 with unknown blend context; texture
+  window not applied - sample-time). Bounded validation, named errors, zero partial
+  output; `TextureDecodeTests` 136 checks (synthetic + optional read-only real-page
+  probe via `REDRIVER2_REPO_ROOT`). No GPU/game integration.
 
-**Current step: E03 Block 2.4 / B2.6 next.** E03 Block 2 (2a/2.1/2.5) is complete
-and gate-approved on code; E04 A1 is complete (below). Next: B2.4 CPU texture
-decode contract (from the research digest + ODT spike) and B2.6 per-instance draw
-API + first real object. Gate 4B approved the SDK-isolated service only, not
+**Current step: E03 Block 2 items 3/4 next.** E03 Block 2 (2a/2.1/2.5/2.4) is
+complete and gate-approved on code; E04 A1 is complete (below). Next: one real
+building/tile -> `SourceMesh` -> GLB via `GltfWriter`/`AssetConverter` (item 3) and
+the per-instance draw API + converted region with the game camera (item 4). Gate 4B
+approved the SDK-isolated service only, not
 consumer migration or audible correctness; E03 still has no playable original-world
 native slice, and no game consumers are migrated.
 Evidence and boundaries:
@@ -185,19 +193,19 @@ Evidence and boundaries:
   limits: [inventory evidence](engine-migration/e02/chicago-inventory.md).
 
 **Remaining before full acceptance:**
-1. E03 Block 2 remainder — CPU TIM/page/CLUT decode (B2.4), per-instance draw API
-   and first real object (B2.6), then the original-world conversion seam (blocked
-   on the E02 city conversion slice). Block 2a loader span capture,
-   `sourceObjectIndex` identity, ptype coverage and the camera/unit/winding fixture
-   are done.
+1. E03 Block 2 remainder — one real building/tile -> `SourceMesh` -> GLB (item 3)
+   and the per-instance draw API + converted region (item 4), then the
+   original-world conversion seam (blocked on the E02 city conversion slice).
+   Block 2a loader span capture, `sourceObjectIndex` identity, ptype coverage, the
+   camera/unit/winding fixture and B2.4 CPU texture decode are done.
 2. E04 remaining consumer slices — A1 (FESound routing + service lifecycle) is
    complete; migrate the remaining audio consumers.
 3. E02 — other cities/variants and dynamic/streamed categories (E06 coverage);
    debug configurations are not wired (only the Release Diligent libraries exist).
 
-**Next concrete action:** implement E03 B2.4/B2.6 and the remaining E04 consumer
-slices as separately scoped work. Gate approval does not authorize audible
-acceptance. E05/E06 remain pending.
+**Next concrete action:** implement E03 Block 2 items 3/4 and the remaining E04
+consumer slices as separately scoped work. Gate approval does not authorize
+audible acceptance. E05/E06 remain pending.
 
 **Commands:** build `Release_dev|x64` or `Release_dev_native|x64` with
 `premake5.exe vs2022` + MSBuild (env `SDL2_DIR`/`OPENAL_DIR`/`JPEG_DIR`,

@@ -68,6 +68,17 @@ where release policy permits it.
   and verified; attempt 2 returned a COMMIT-ready verdict on the code. `Release_dev`
   and `Release_dev_native` builds exit 0 with the batch.
 
+- E03 Block 2.4 (CPU texture decode): `utils/TextureDecode.{h,c}` is a pure,
+  C-compatible decoder for indexed 4/8-bit pages plus CLUT bytes and 16-bit direct
+  pages into RGBA8. Explicit row stride (the desktop loader paths hand over tight
+  pages; the 1024-halfword VRAM stride is also covered); low nibble/byte is the
+  leftmost texel; BGR555 `E5TO8(c)=((c*527)+23)>>6`, low bits red, bit 15 STP;
+  `0000h` transparent; STP with unknown blend context -> alpha 128; the texture
+  window is intentionally not applied (sample-time). Bounded validation with named
+  errors and zero partial output; `TextureDecodeTests` 136 checks (synthetic
+  fixtures plus an optional read-only real-page probe). No GPU, PsyCross, game
+  integration or ODT code.
+
 - ODT-to-GLB tooling spike (bounded, external, temp-only; no repository
   integration): OpenDriver2Tools master @
   `89009f7f4f48f37a886b376292432cdab4a136` (2025-10-28) was built headless (Win32)
