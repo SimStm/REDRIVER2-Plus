@@ -10,6 +10,10 @@ where release policy permits it.
 
 ### Changed
 
+- Graphics startup reads `[render] presentationFps` from `config.ini`; omitted
+  developer override keys retain the baseline, including the presentation cap.
+- Diligent material filtering follows the live bilinear setting for resident
+  and newly converted resources, including native offscreen captures.
 - Move the developer graphics panel toggle to F9 and light-receptivity shortcut to F8.
 - Diligent startup now keeps only PsyCross's SDL window/CPU VRAM and compatibility
   services, without initializing its Vulkan or OpenGL renderer.
@@ -42,6 +46,8 @@ where release policy permits it.
 
 ### Added
 
+- Native F9 developer panel using the existing Diligent device and swapchain,
+  with CPU frame phases, measured presentation FPS, cap/VSync and tick counters.
 - Opt-in native CPU frame diagnostics (`RED2_NATIVE_PERF=1`) with render phases,
   draw/cull counts and fixed-tick/drop deltas.
 
@@ -1094,6 +1100,9 @@ where release policy permits it.
 
 ### Fixed
 
+- Diligent requests three swapchain images so unsynchronized MAILBOX presentation
+  can acquire a free image without waiting for display scanout in the measured
+  Windows setup; diagnostics report the actual image count.
 - Native window presentation now uses the same UNORM colour policy as offscreen rendering,
   avoiding extra sRGB encoding of original texels and prelit vertex colours.
 

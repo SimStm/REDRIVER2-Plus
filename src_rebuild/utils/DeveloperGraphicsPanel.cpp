@@ -8,10 +8,16 @@
 #include "DeveloperModernMesh.h"
 #include "HdTextureOverrides.h"
 
+#ifdef _WIN32
+#include "NativeRenderer.h"
+#include "NativeDeveloperOverlay.h"
+#endif
+
 #if defined(_WIN32) || defined(__linux__)
 
 #include <SDL.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 #include "imgui.h"
 #include "imgui_impl_opengl3.h"
@@ -1878,6 +1884,21 @@ void DrawDeveloperPanel()
 	{
 		ImGui::PushTextWrapPos(0.0f);
 		ImGui::TextUnformatted("F9 closes this panel. Video region requires an application restart; other settings are live.");
+#ifdef _WIN32
+		if (NativeRenderer_IsActive())
+		{
+			NativeFrameStats stats = {};
+			NativeRenderer_GetFrameStats(&stats);
+			ImGui::Text("Diligent: %.1f FPS | cap %d | VSync %s", ImGui::GetIO().Framerate,
+				ProjectClock_GetPresentationFps(), g_cfg_swapInterval ? "on" : "off");
+			ImGui::Text("CPU: draw %.2f ms | UI %.2f ms | flush %.2f ms | present %.2f ms",
+				stats.drawMilliseconds, stats.overlayMilliseconds, stats.flushMilliseconds, stats.presentMilliseconds);
+			ImGui::Text("Draws %u | culled %u | ticks %llu | dropped %llu",
+				stats.drawCalls, stats.culledInstances,
+				(unsigned long long)ProjectClock_GetTickCount(), (unsigned long long)ProjectClock_GetDroppedTicks());
+			ImGui::Text("Swapchain images: %u", stats.swapChainBuffers);
+		}
+#endif
 		if (CheckboxWithHelp("Capture game input while panel is open", &g_captureGameInput,
 			"Enabled: keyboard, controller, and mouse events are held by the panel so changing a setting cannot also control the game. Disabled: the panel remains visible while the game continues to receive its normal inputs. UI interactions may then also affect the game."))
 			UpdateOverlayInputState();
@@ -1890,6 +1911,10 @@ void DrawDeveloperPanel()
 				bool pgxpTextureMapping = g_cfg_pgxpTextureCorrection != 0;
 				bool pgxpZBuffer = g_cfg_pgxpZBuffer != 0;
 				if (ImGui::Checkbox("Bilinear filtering", &bilinear)) g_cfg_bilinearFiltering = bilinear;
+				const bool nativeGraphics = PsyX_GetHeadless() == PSYX_HEADLESS_WINDOW_ONLY;
+				if (nativeGraphics)
+					ImGui::TextWrapped("Legacy PGXP, lighting and enhanced-renderer controls below are unavailable in Diligent. Native lighting is pending.");
+				ImGui::BeginDisabled(nativeGraphics);
 				if (CheckboxWithHelp("PGXP texture mapping", &pgxpTextureMapping,
 					"Perspective-correct textures and sub-pixel vertex positions for the emulated PSX geometry. It also changes the depth the legacy renderer stores, which the modern shadow and lighting reconstruction reads."))
 					g_cfg_pgxpTextureCorrection = pgxpTextureMapping;
@@ -1969,6 +1994,9 @@ void DrawDeveloperPanel()
 				}
 
 				ImGui::SliderInt("Draw distance", &gDrawDistance, 441, 1800);
+				ImGui::EndDisabled();
+				if (nativeGraphics)
+					ImGui::TextWrapped("Native draw-distance integration is pending sector coverage. Field of view uses the game's projection-distance units.");
 				int fieldOfView = gCameraDefaultScrZ;
 				if (ImGui::SliderInt("Field of view", &fieldOfView, 128, 384))
 					gCameraDefaultScrZ = (short)fieldOfView;
@@ -2134,12 +2162,7 @@ void DrawDeveloperPanel()
 		SetVisible(false);
 }
 
-// Builds the panel's ImGui windows. The Vulkan backend owns the ImGui frame
-// and calls this between ImGui::NewFrame and ImGui::Render.
-// Reconstructed region (lost to a bad line-range edit; see the runtime-settings
-// change record). Rewrites DrawDeveloperPanel + BuildOverlayWidgets and
-// RenderOverlay from the HEAD version plus the session's additions, then the
-// anonymous-namespace close.
+// Builds widgets within the ImGui frame owned by the selected renderer.
 void BuildOverlayWidgets()
 {
 	// The display revert countdown must run whether or not the panel is open,
@@ -2153,6 +2176,17 @@ void BuildOverlayWidgets()
 	// Drawn after the panel so the confirmation is never covered by it.
 	DrawDisplayConfirmWindow();
 }
+
+#ifdef _WIN32
+int RenderNativeOverlay(void* context, void* target)
+{
+	ImGui_ImplSDL2_NewFrame();
+	ImGui::NewFrame();
+	BuildOverlayWidgets();
+	ImGui::Render();
+	return NativeDeveloperOverlay_Draw(context, target, ImGui::GetDrawData()) ? 1 : 0;
+}
+#endif
 
 void RenderOverlay()
 {
@@ -2181,7 +2215,32 @@ void DeveloperGraphicsPanel_Initialise()
 	if (PsyX_GetHeadless() == PSYX_HEADLESS_WINDOW_ONLY)
 	{
 		DeveloperGraphicsSettings_LoadAndApply();
-		PsyX_Log_Info("Native graphics settings loaded; native ImGui presentation is pending\n");
+#ifdef _WIN32
+		IMGUI_CHECKVERSION();
+		ImGui::CreateContext();
+		ImGui::StyleColorsDark();
+		if (!ImGui_ImplSDL2_InitForOther(PsyX_GetSDLWindow()))
+		{
+			PsyX_Log_Error("Native developer panel SDL initialization failed\n");
+			ImGui::DestroyContext();
+			return;
+		}
+		if (!NativeDeveloperOverlay_Init(NativeRenderer_GetDevice()))
+		{
+			PsyX_Log_Error("Native developer panel GPU initialization failed; see native_renderer.log\n");
+			NativeDeveloperOverlay_Shutdown();
+			ImGui_ImplSDL2_Shutdown();
+			ImGui::DestroyContext();
+			return;
+		}
+		g_initialised = true;
+		PsyX_SetSDLEventHandler(HandleSDLEvent);
+		NativeRenderer_SetOverlayHandler(RenderNativeOverlay);
+		const char* openPanel = getenv("RED2_NATIVE_PANEL_OPEN");
+		if (openPanel && strcmp(openPanel, "1") == 0)
+			SetVisible(true);
+		PsyX_Log_Info("Native developer panel initialized (F9, Diligent, shared swapchain)\n");
+#endif
 		return;
 	}
 
@@ -2221,6 +2280,18 @@ void DeveloperGraphicsPanel_Shutdown()
 	InputService_SetCapture(0);
 	PsyX_SetSDLEventHandler(NULL);
 	PsyX_SetRenderOverlayHandler(NULL);
+
+#ifdef _WIN32
+	if (PsyX_GetHeadless() == PSYX_HEADLESS_WINDOW_ONLY)
+	{
+		NativeRenderer_SetOverlayHandler(nullptr);
+		NativeDeveloperOverlay_Shutdown();
+		ImGui_ImplSDL2_Shutdown();
+		ImGui::DestroyContext();
+		g_initialised = false;
+		return;
+	}
+#endif
 
 	if (PsyX_GetRenderBackend() != PSYX_BACKEND_VULKAN)
 	{

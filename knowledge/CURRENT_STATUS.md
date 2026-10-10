@@ -99,6 +99,17 @@ accepted.
 
 ## Engine migration E03 (in progress; parity not accepted)
 
+- Native settings/F9 block (2026-10-10): config.ini `[render] presentationFps` is read
+  before selective developer overrides; missing FPS preserves the baseline. Diligent
+  samplers follow live bilinear filtering for resident/new resources. The native F9
+  panel owns an ImGui/SDL context and GPU adapter on the existing target/swapchain;
+  CPU/FPS/cap/tick diagnostics are visible. Legacy graphics controls and draw distance
+  are disabled where not integrated. RenderDoc PNG inspected (2214 draws, zero messages);
+  native build/startup passed, GPU smoke 1207/0, NTSC/PAL settings 24/0 each. Interactive
+  toggling/controls and draw-distance integration remain open. Three swapchain images
+  removed the measured stationary MAILBOX plateau: ~106-115 FPS, Present ~0.16-0.18 ms
+  versus ~60 FPS / ~7-8 ms with two, 30/31 ticks and zero drops. Moving views remain
+  CPU-bound; actual image count is visible, and surface limits may clamp the request.
 - Native performance follow-up (2026-10-10): dynamic constants use Map/Discard, window
   Present honors configured VSync, and conservative homogeneous AABB culling removes
   invisible instance draws. Opt-in `RED2_NATIVE_PERF=1` records CPU phases, draw/cull counts
@@ -112,15 +123,15 @@ accepted.
   No PsyCross Vulkan instance/device/surface/swapchain or GL context is initialized.
   CPU upload/copy/read/clear VRAM and OT parsing remain; compatibility draws/readbacks
   are skipped. Diligent startup failure exits explicitly. Framebuffer-derived effects,
-  native ImGui and legacy GPU texture consumers remain migration work, not hidden fallback.
-  Saved settings load without creating a compatibility ImGui context. The legacy panel
+  legacy GPU texture consumers remain migration work, not hidden fallback.
+  Saved settings load without creating a compatibility GPU context. The developer panel
   toggle is F9; the existing receptivity shortcut moved from F9 to F8.
   [Details/evidence](product/native-renderer-performance.md).
 - Diligent Vulkan (`API256019`, static Release, C++17) is gated by `RED2_NATIVE_RENDERER`;
   `Release_dev_native` uses PsyCross window-only mode (no compatibility GPU) and the post-frame camera hook.
   `native/NativeRenderer.*` owns device/swapchain/resources and bounded instance submission;
   missing resources are diagnosed/skipped, never replaced by the legacy world. Debug-library
-  configurations and native F9 overlay remain unwired.
+  configurations remain unwired; the native F9 overlay is described above.
 - Windows operational path also uses `src_rebuild/bin/Release_dev/REDRIVER2_dev.exe`:
   from root PowerShell, set `$env:RED2_NATIVE_RENDERER = '1'` and invoke
   `& .\scripts\run_debug_start.ps1 -Mission 1 -ExtraArgs @('-drawregion')` (fire-and-forget).

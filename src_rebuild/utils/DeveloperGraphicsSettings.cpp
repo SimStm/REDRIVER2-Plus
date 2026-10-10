@@ -171,7 +171,6 @@ bool DeveloperGraphicsSettings_LoadAndApply()
 	char line[128];
 	char key[64];
 	int value;
-	bool hasPresentationFps = false;
 
 	while (fgets(line, sizeof(line), file))
 	{
@@ -200,7 +199,6 @@ bool DeveloperGraphicsSettings_LoadAndApply()
 		else if (!strcmp(key, "presentationFps"))
 		{
 			settings.presentationFps = value;
-			hasPresentationFps = true;
 		}
 	}
 
@@ -208,8 +206,6 @@ bool DeveloperGraphicsSettings_LoadAndApply()
 	fclose(file);
 	if (readOk)
 	{
-		if (!hasPresentationFps)
-			settings.presentationFps = settings.videoMode == PROJECT_VIDEO_PAL ? 25 : 30;
 		DeveloperGraphicsSettings_Apply(settings);
 	}
 	return readOk;

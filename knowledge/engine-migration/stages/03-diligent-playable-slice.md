@@ -62,6 +62,13 @@ NTSC/PAL tick cadence independently of presentation/audio clocks. Then finish st
 textures, model coverage, shaders/depth/cutouts, followed by the player, vehicles and other
 scene objects. Native effects and UI remain required in their planned stages.
 
+The current user goal prioritizes unified graphics settings/native F9 diagnostics, then
+static-world correction and Chicago sector coverage beyond the initially prepared mission 1
+barrels, followed by the player's vehicle and on-foot pedestrian. Initial playable coverage
+does not accept full E06 actor/city/mode integration. Draw-distance selection must consume
+the original cell-count meaning through native visibility/residency, not reinterpret it as
+a physical far-plane distance. Modern lighting follows correct geometry/material coverage.
+
 After correct geometry/material coverage, map original light information into read-only
 presentation snapshots. `sky.c::sun_position`/`moon_position` are artificial sprite vectors,
 not physical world light positions. `draw.c::day_vectors`/`night_vectors`, `gTimeOfDay`,

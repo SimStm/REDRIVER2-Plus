@@ -27,6 +27,8 @@ struct DeveloperGraphicsSettings
 
 DeveloperGraphicsSettings DeveloperGraphicsSettings_ReadRuntime();
 void DeveloperGraphicsSettings_Apply(const DeveloperGraphicsSettings& settings);
+// Applies only keys present in the developer file over the current runtime
+// baseline (startup defaults/config.ini); omitted keys preserve that baseline.
 bool DeveloperGraphicsSettings_LoadAndApply();
 bool DeveloperGraphicsSettings_SaveRuntime();
 // Autosaves only frame controls; provisional resolution and unrelated session

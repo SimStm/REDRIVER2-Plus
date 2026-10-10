@@ -28,6 +28,33 @@ performance first, tick/audio cadence, remaining world textures/models/shaders, 
 vehicles and other objects. Lighting conversion is deferred until geometry/materials are
 correct. No stage is accepted by this checkpoint.
 
+Current goal continues configuration/diagnostics + native F9, then static world/city
+coverage and player vehicle/on-foot pedestrian. Configuration now reads `[render]
+presentationFps` before developer overrides; absent developer keys preserve baseline.
+Native F9 GPU adapter is built and captured over mission 1 (2214 indexed draws, zero
+replay messages); legacy texture handles are explicitly unsupported, old PGXP/light
+controls and draw distance disabled. Bilinear sampler replacement requires Diligent's
+ALLOW_OVERWRITE flag and a rare GPU idle wait for safe mutable descriptor changes;
+GPU smoke initially caught three defects
+and now passes 1207/0 (blend, new resources, nearest restoration). Timing runner passes
+NTSC/PAL settings 24 each, timing 145364 each and effects 2688/2448. Native VS build passed.
+The SDK chooses MAILBOX before IMMEDIATE with VSync off. Two images reproduced stationary
+~60 FPS / Present ~7-8 ms; requesting three gives ~106-115 FPS / Present ~0.16-0.18 ms,
+same stationary view/2212 world draws, panel open, cap 360, ticks 30/31 and zero drops.
+Moving camera stays CPU-bound ~54-59 FPS. Capture `native-overlay-three-images.rdc/png`
+shows three images and bilinear output, 2214 total draws and zero validation messages.
+The native smoke with three images also passes 1207/0. VS Release_dev compatibility
+build passed. SDK surface limits may clamp count; UI reports actual images. Perf log
+now separates UI CPU time and records images. Ignored local evidence is retained.
+Actual base-config inheritance startup logged cap=144 when config.ini specified 144 and
+the developer FPS key was omitted. Both INI files restored byte-for-byte afterwards.
+Release_dev `-opengl` mission 1 startup passed (OpenGL 3.3.0). Sessions stopped; VS
+restored to Release_dev_native|x64. Generated native debugger no longer auto-opens F9.
+Next: interactive F9/input/display verification where available; native draw distance,
+world materials/model coverage and streaming beyond the initial region. Registry/native
+submission currently invalidates on level generation, not camera region changes: cached
+6740 placements are not whole-city streaming. No playable actor yet.
+
 - Fixed dynamic constant updates (Map/Discard), wired configured VSync and added
   conservative AABB culling against the exact homogeneous MVP. Local mission 1 baseline
   3.7-4.6 FPS improved to 41-60 FPS, with 30/31 tick deltas and 0 dropped ticks in
@@ -35,7 +62,7 @@ correct. No stage is accepted by this checkpoint.
 - User requested no PsyCross Vulkan alongside Diligent. Headless mode 2 creates only
   SDL window + CPU VRAM; skips GL/Vulkan initialization and compatibility GPU draws.
   VRAM copies/reads/clears, OT command parsing and services remain. Native failure exits.
-  Native ImGui remains pending; persisted settings still load. F9 replaces the panel's
+  Native ImGui was pending at that checkpoint and is now wired above. F9 replaces the panel's
   F11, and its previous light-receptivity binding moved to F8.
 - VS `build_e00/REDRIVER2.sln`, Release_dev_native|x64 builds and launches mission 1.
   Log confirms no PsyCross GPU, 160/160 resources, 6740 placements and zero conversion
@@ -55,8 +82,8 @@ correct. No stage is accepted by this checkpoint.
 - Release_dev|x64 compatibility build and -opengl mission 1 launch passed; log confirms
   OpenGL 3.3.0. Native smoke after UNORM change again passed 1200 checks. Both debug
   sessions were stopped. Native diagnostic env is local/generated, not committed.
-- Next: resume tick/interpolation-anchored world texture/material/model diagnosis,
-  then the player/vehicle slice. Native ImGui and the near-60 plateau remain open.
+- Next: finish configuration/pacing verification above, then tick/interpolation-anchored
+  world texture/material/model diagnosis and the player/vehicle slice.
 
 Prior bounded parity evidence (preserved; not full acceptance):
 

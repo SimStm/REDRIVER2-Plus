@@ -1312,6 +1312,32 @@ static void TestTexturedMultiPrimitiveResource()
 		"no textured colour leaks into the right region");
 	Check(blueLeft == 0,
 		"the untextured base colour does not leak into the left region");
+	Check(NativeRenderer_SetBilinearFiltering(1, error, sizeof(error)) == 1,
+		"bilinear filtering updates resident resources");
+	unsigned char linearImage[64 * 64 * 4] = {};
+	Check(NativeRenderer_RenderSceneToRGBA(linearImage, 64, 64, error, sizeof(error)) == 1,
+		"bilinear material renders through the native offscreen pipeline");
+	int mixed = 0;
+	for (int y = 0; y < 64; ++y)
+		for (int x = 0; x < 32; ++x)
+		{
+			const unsigned char* pixel = linearImage + (y * 64 + x) * 4;
+			if (pixel[0] > 20 && pixel[1] > 20 && pixel[2] < 10) ++mixed;
+		}
+	Check(mixed > 10, "linear filtering blends adjacent red and green texels on the GPU");
+	NativeRenderer_ClearResources();
+	Check(NativeRenderer_RegisterResource("textured-multi", "textured-multi.glb", error, sizeof(error)) == 1,
+		"resource can be registered while linear filtering is selected");
+	unsigned char newResourceImage[64 * 64 * 4] = {};
+	Check(NativeRenderer_RenderSceneToRGBA(newResourceImage, 64, 64, error, sizeof(error)) == 1 &&
+		memcmp(linearImage, newResourceImage, sizeof(linearImage)) == 0,
+		"new resources inherit the same linear sampler policy");
+	Check(NativeRenderer_SetBilinearFiltering(0, error, sizeof(error)) == 1,
+		"nearest filtering can be restored at runtime");
+	unsigned char restoredImage[64 * 64 * 4] = {};
+	Check(NativeRenderer_RenderSceneToRGBA(restoredImage, 64, 64, error, sizeof(error)) == 1 &&
+		memcmp(image, restoredImage, sizeof(image)) == 0,
+		"restoring nearest reproduces the original framebuffer bytes");
 
 	NativeRenderer_ClearInstances();
 	NativeRenderer_ClearResources();

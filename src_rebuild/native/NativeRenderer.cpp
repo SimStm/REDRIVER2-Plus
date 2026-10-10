@@ -50,7 +50,9 @@ RefCntAutoPtr<IDeviceContext> g_context;
 RefCntAutoPtr<ISwapChain> g_swapChain;
 int g_active = 0;
 Uint32 g_syncInterval = 1;
+int g_bilinearFiltering = 0;
 NativeFrameStats g_frameStats = {};
+NativeOverlayHandler g_overlayHandler = nullptr;
 unsigned int g_frameDrawCalls = 0;
 unsigned int g_frameCulledInstances = 0;
 
@@ -421,14 +423,14 @@ int CreateRgbaTexture(const char* name, const unsigned char* rgba, int width, in
 	return *out != nullptr;
 }
 
-// PSX-look sampler for converted content: nearest min/mag (no bilinear
-// smoothing) with clamp-to-edge addressing, so a raw texel UV never wraps. Only
+// Configured nearest/bilinear sampler with clamp-to-edge addressing, so a raw
+// texel UV never wraps. Only
 // one mip level is uploaded, so the mip filter is never exercised.
 int CreateContentSampler(ISampler** out)
 {
 	SamplerDesc desc;
-	desc.MinFilter = FILTER_TYPE_POINT;
-	desc.MagFilter = FILTER_TYPE_POINT;
+	desc.MinFilter = g_bilinearFiltering ? FILTER_TYPE_LINEAR : FILTER_TYPE_POINT;
+	desc.MagFilter = g_bilinearFiltering ? FILTER_TYPE_LINEAR : FILTER_TYPE_POINT;
 	desc.MipFilter = FILTER_TYPE_POINT;
 	desc.AddressU = TEXTURE_ADDRESS_CLAMP;
 	desc.AddressV = TEXTURE_ADDRESS_CLAMP;
@@ -1209,6 +1211,10 @@ int NativeRenderer_Init(void* nativeWindowHandle, int width, int height, char* e
 		// Original texels/prelit colours are display-encoded UNORM values.
 		// Match the offscreen path; an sRGB RTV would encode them a second time.
 		swapChainDesc.ColorBufferFormat = TEX_FORMAT_RGBA8_UNORM;
+		// MAILBOX with two images can leave acquisition waiting for scanout:
+		// one image is displayed and one is pending. Keep a third image available
+		// for the next frame. Vulkan surface limits may clamp this request.
+		swapChainDesc.BufferCount = 3;
 		swapChainDesc.Width = (Uint32)width;
 		swapChainDesc.Height = (Uint32)height;
 
@@ -1267,6 +1273,11 @@ int NativeRenderer_RenderClearAndPresent(float red, float green, float blue, flo
 	const float clearColor[4] = { red, green, blue, alpha };
 	g_context->SetRenderTargets(1, &renderTarget, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
 	g_context->ClearRenderTarget(renderTarget, clearColor, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+	if (g_overlayHandler && !g_overlayHandler(g_context.RawPtr(), renderTarget))
+	{
+		SetError(error, errorCapacity, "the native developer overlay could not be drawn");
+		return 0;
+	}
 	g_context->Flush();
 	g_swapChain->Present(g_syncInterval);
 	return 1;
@@ -1319,18 +1330,26 @@ int NativeRenderer_RenderScene(char* error, int errorCapacity)
 	g_frameDrawCalls = 0;
 	g_frameCulledInstances = 0;
 	const SwapChainDesc& swapDesc = g_swapChain->GetDesc();
+	g_frameStats.swapChainBuffers = swapDesc.BufferCount;
 	if (!RenderSceneInto(renderTarget, g_scene.depthView, swapDesc.Width, swapDesc.Height, 0))
 	{
 		SetError(error, errorCapacity, "the native scene could not be drawn");
 		return 0;
 	}
 	const double drawEnd = FrameMilliseconds();
+	if (g_overlayHandler && !g_overlayHandler(g_context.RawPtr(), renderTarget))
+	{
+		SetError(error, errorCapacity, "the native developer overlay could not be drawn");
+		return 0;
+	}
+	const double overlayEnd = FrameMilliseconds();
 	g_context->Flush();
 	const double flushEnd = FrameMilliseconds();
 	g_swapChain->Present(g_syncInterval);
 	const double presentEnd = FrameMilliseconds();
 	g_frameStats.drawMilliseconds = drawEnd - drawStart;
-	g_frameStats.flushMilliseconds = flushEnd - drawEnd;
+	g_frameStats.overlayMilliseconds = overlayEnd - drawEnd;
+	g_frameStats.flushMilliseconds = flushEnd - overlayEnd;
 	g_frameStats.presentMilliseconds = presentEnd - flushEnd;
 	g_frameStats.drawCalls = g_frameDrawCalls;
 	g_frameStats.culledInstances = g_frameCulledInstances;
@@ -1340,6 +1359,54 @@ int NativeRenderer_RenderScene(char* error, int errorCapacity)
 void NativeRenderer_SetVSync(int enabled)
 {
 	g_syncInterval = enabled ? 1 : 0;
+}
+
+int NativeRenderer_SetBilinearFiltering(int enabled, char* error, int errorCapacity)
+{
+	if (error && errorCapacity > 0) error[0] = '\0';
+	enabled = enabled != 0;
+	if (enabled == g_bilinearFiltering) return 1;
+	if (!g_device)
+	{
+		SetError(error, errorCapacity, "material filtering requires an active native device");
+		return 0;
+	}
+	SamplerDesc desc;
+	desc.MinFilter = desc.MagFilter = enabled ? FILTER_TYPE_LINEAR : FILTER_TYPE_POINT;
+	desc.MipFilter = FILTER_TYPE_POINT;
+	desc.AddressU = desc.AddressV = desc.AddressW = TEXTURE_ADDRESS_CLAMP;
+	RefCntAutoPtr<ISampler> sampler;
+	g_device->CreateSampler(desc, &sampler);
+	if (!sampler)
+	{
+		SetError(error, errorCapacity, "native material sampler creation failed");
+		return 0;
+	}
+	// ALLOW_OVERWRITE permits a mutable binding change but does not protect
+	// an in-flight Vulkan descriptor set. This rare settings change waits once;
+	// unchanged frame settings return above and never stall the GPU here.
+	g_context->WaitForIdle();
+	auto update = [&sampler](SceneDrawItem& item)
+	{
+		for (ScenePrimitive& primitive : item.primitives)
+		{
+			primitive.sampler = sampler;
+			if (primitive.srb)
+				primitive.srb->GetVariableByName(SHADER_TYPE_PIXEL, "gSampler")->Set(sampler, SET_SHADER_RESOURCE_FLAG_ALLOW_OVERWRITE);
+			if (primitive.srbOffscreen && primitive.srbOffscreen != primitive.srb)
+				primitive.srbOffscreen->GetVariableByName(SHADER_TYPE_PIXEL, "gSampler")->Set(sampler, SET_SHADER_RESOURCE_FLAG_ALLOW_OVERWRITE);
+		}
+	};
+	update(g_scene.placeholder);
+	update(g_scene.content);
+	for (int i = 0; i < g_resourceCount; ++i) update(g_resources[i].item);
+	g_bilinearFiltering = enabled;
+	return 1;
+}
+
+void NativeRenderer_SetOverlayHandler(NativeOverlayHandler handler)
+{
+	g_overlayHandler = handler;
 }
 
 void NativeRenderer_GetFrameStats(NativeFrameStats* stats)
@@ -1634,6 +1701,7 @@ void* NativeRenderer_GetContext(void)
 
 void NativeRenderer_Shutdown(void)
 {
+	g_overlayHandler = nullptr;
 	NativeRenderer_ClearInstances();
 	NativeRenderer_ClearResources();
 	ReleaseSceneResources();
@@ -1642,6 +1710,7 @@ void NativeRenderer_Shutdown(void)
 	g_device.Release();
 	g_factory = nullptr;
 	g_active = 0;
+	g_bilinearFiltering = 0;
 }
 
 #endif // _WIN32

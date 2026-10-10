@@ -18,7 +18,7 @@
  * each primitive owns its immutable vertex/index buffers, its own base-colour
  * factor and its own shader bindings, and an instance draws all of them. A
  * primitive whose record carries an embedded base-colour image gets its own
- * RGBA8_UNORM texture sampled with a nearest/clamp PSX-look sampler; primitives
+ * RGBA8_UNORM texture sampled with the configured nearest/bilinear clamp sampler; primitives
  * without an image sample a shared 1x1 white texel. A primitive may also carry a
  * per-vertex COLOR_0 attribute (the E03 visual-parity P2 legacy shading bake):
  * the pixel shader multiplies the sampled texel by it, matching the legacy
@@ -157,15 +157,25 @@ int NativeRenderer_IsActive(void);
 typedef struct NativeFrameStats
 {
 	double drawMilliseconds;
+	double overlayMilliseconds;
 	double flushMilliseconds;
 	double presentMilliseconds;
 	unsigned int drawCalls;
 	unsigned int culledInstances;
+	unsigned int swapChainBuffers;
 } NativeFrameStats;
 void NativeRenderer_GetFrameStats(NativeFrameStats* stats);
 
 /* Presentation only; applied by the next window Present (default enabled). */
 void NativeRenderer_SetVSync(int enabled);
+// Updates loaded and subsequently registered material samplers; geometry and
+// conversion cache identity stay unchanged. Returns 0 with an explicit error.
+int NativeRenderer_SetBilinearFiltering(int enabled, char* error, int errorCapacity);
+
+// Invoked after window scene drawing and before Present; target is a Diligent
+// ITextureView. Offscreen/resource tests do not invoke the developer overlay.
+typedef int (*NativeOverlayHandler)(void* context, void* target);
+void NativeRenderer_SetOverlayHandler(NativeOverlayHandler handler);
 
 /* Recreates the swap chain buffers for a new client size. No-op when inactive. */
 void NativeRenderer_Resize(int width, int height);

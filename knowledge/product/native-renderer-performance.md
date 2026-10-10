@@ -15,8 +15,47 @@ selectable. Native initialization failure exits rather than falling back to lega
 GPU drawing, uploads, framebuffer mirroring/readback and swaps do nothing in mode 2;
 compatibility texture creation reports an explicit error and returns the invalid handle 0.
 Consequently framebuffer-derived effects and legacy GPU-only UI/textures need native
-replacements. Native ImGui is pending; persisted graphics settings load independently.
-F9 toggles the legacy developer panel; F8 now owns its former receptivity shortcut.
+replacements. F9 toggles the developer panel through a project-owned ImGui GPU adapter
+on the existing Diligent render target, before Present. SDL input capture remains active;
+no compatibility GPU or additional presenter is initialized. F8 owns its former receptivity shortcut.
+
+## Graphics settings and native developer panel
+
+Startup precedence is compiled defaults, `config.ini`, then keys present in
+`developer_graphics.ini`. Omitted developer keys preserve the baseline, even if the
+file specifies a different next-startup video region. `[render] presentationFps`
+in `config.ini` accepts 15-360 after clamping; compiled defaults remain NTSC 30/PAL 25.
+Simulation frequency is independent. The panel's explicit save continues to write
+the developer file; FPS/VSync autosave does not persist provisional display changes.
+
+Native VSync, window size/fullscreen, camera projection and bilinear filtering consume
+the live settings. Filtering updates both resident samplers and subsequently registered
+resources; conversion keys stay unchanged.
+Mutable sampler rebinding uses ALLOW_OVERWRITE after a GPU idle wait only when the
+setting changes; the SDK requires that synchronization for Vulkan descriptor access.
+Draw distance still requires native sector coverage integration: the original setting
+counts cells and is not a physical far-plane
+distance. The panel disables that control and the unmigrated PGXP/legacy lighting controls.
+Native lighting remains deferred until geometry/material coverage is correct.
+
+The panel displays ImGui's measured FPS separately from the requested cap, plus CPU
+draw/flush/present phases, draw/cull counts and tick/drop counters. These are not GPU timings.
+`RED2_NATIVE_PANEL_OPEN=1` opens it at initialization for GPU capture without desktop input.
+The adapter uses the existing ImGui 1.91.9b; current DiligentTools expects newer texture APIs.
+Legacy inspector image handles are never cast to Diligent pointers: unsupported images
+are omitted with a named diagnostic until a native texture registration path exists.
+
+Windows native build and mission 1 startup passed. RenderDoc capture `native-overlay.rdc`
+(ignored `build_e00/native-performance/`) shows the panel over the world, 2214 indexed draws
+and zero replay validation messages; PNG export was visually inspected. Keyboard toggling,
+interactive controls and resize confirmation still need interactive validation. GPU smoke
+passed 1207 checks, including linear red/green interpolation, inheritance by new resources
+and byte-identical restoration of nearest sampling. NTSC/PAL frame settings each passed
+24 checks; timing each passed 145364, effects 2688/2448. These do not accept E03.
+An actual startup with `[render] presentationFps=144` and no developer FPS key logged
+cap=144, buffers=3, 30-tick windows and zero drops. Both local INI files were then
+restored byte-for-byte from their backups. Release_dev compatibility build and `-opengl`
+mission 1 launch passed; the log reports OpenGL 3.3.0. Debug sessions were stopped.
 
 Native dynamic constants use `MapBuffer(MAP_WRITE, MAP_FLAG_DISCARD)`/Unmap, rather than
 UpdateBuffer on USAGE_DYNAMIC. Failure propagates from primitive submission. Window Present
@@ -41,8 +80,15 @@ substantial draw/present cost and dropped ticks. Map/Discard and VSync forwardin
 stationary. Window-only runs measured 41-60 FPS, with 0 dropped ticks and 30/31 ticks
 per roughly one-second window. Different camera positions and capture overhead limit
 comparison; removing compatibility GPU is not claimed to independently improve FPS.
-The stationary scene still plateaus near 60 despite cap 360; presentation/driver pacing
-needs investigation before promising higher rates.
+The earlier stationary plateau near 60 despite cap 360 was reproduced with two images:
+2212 world draws, draw ~7-8 ms and Present ~7-8 ms. Requesting three swapchain images
+removed that plateau locally: 106-115 FPS, draw ~7.2-7.8 ms and Present ~0.16-0.18 ms,
+30/31 ticks per one-second window and zero drops. Both runs used the stationary mission 1
+view, cap 360, VSync off and the native panel open. Moving-camera samples remain CPU-bound
+near 54-59 FPS with ~15-16 ms draw cost. This is measured Windows/driver evidence;
+Vulkan surface limits may clamp the image count, which the panel reports explicitly.
+The three-image RenderDoc replay again has 2214 draws and zero validation messages;
+its inspected PNG shows the panel, three images and the configured bilinear material output.
 
 VS native and Release_dev compatibility builds passed; native and Release_dev -opengl
 mission 1 started. OpenGL log confirms version 3.3.0, retaining its GPU renderer. Inspector tests: all 16 suites passed, camera 41 checks;

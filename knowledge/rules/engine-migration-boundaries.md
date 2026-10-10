@@ -24,6 +24,9 @@ The old rework branch is reference-only; do not resume its unfinished R03 here.
   Extract only required PsyCross contracts into focused services; no renamed monolith.
 - Remove each dependency after its last consumer passes. Preserve memory/error/
   synchronization/cleanup contracts and explicit loading/error states throughout.
+- Diligent mutable SRB replacement on Vulkan/D3D12 requires GPU synchronization or
+  a fresh SRB. `ALLOW_OVERWRITE` permits rebinding but does not synchronize pending
+  GPU accesses. Rare live settings changes may wait for idle; steady frames must not.
 - Never recover a native scene by drawing the old world. Backend/platform support
   remains an independent declared contract; no premature OpenGL deletion.
 - Record real validation and pending scope. A build or old-renderer screenshot

@@ -1563,7 +1563,7 @@ static void NativeRenderer_ReportPerformance(double submitMilliseconds)
 		return;
 	static Uint64 start = 0;
 	static unsigned int frames = 0, tickStart = 0, dropStart = 0;
-	static double submitSum = 0, drawSum = 0, flushSum = 0, presentSum = 0;
+	static double submitSum = 0, drawSum = 0, overlaySum = 0, flushSum = 0, presentSum = 0;
 	const Uint64 now = SDL_GetPerformanceCounter();
 	if (!start)
 	{
@@ -1576,6 +1576,7 @@ static void NativeRenderer_ReportPerformance(double submitMilliseconds)
 	++frames;
 	submitSum += submitMilliseconds;
 	drawSum += stats.drawMilliseconds;
+	overlaySum += stats.overlayMilliseconds;
 	flushSum += stats.flushMilliseconds;
 	presentSum += stats.presentMilliseconds;
 	const double elapsed = (double)(now - start) / SDL_GetPerformanceFrequency();
@@ -1584,18 +1585,18 @@ static void NativeRenderer_ReportPerformance(double submitMilliseconds)
 	FILE* log = fopen("native_performance.log", "a");
 	if (log)
 	{
-		fprintf(log, "native-perf fps=%.2f submit=%.3fms draw=%.3fms flush=%.3fms present=%.3fms draws=%u instances=%d culled=%u ticks=%u dropped=%u cap=%d vsync=%d tick=%u\n",
-			frames / elapsed, submitSum / frames, drawSum / frames, flushSum / frames,
+		fprintf(log, "native-perf fps=%.2f submit=%.3fms draw=%.3fms ui=%.3fms flush=%.3fms present=%.3fms draws=%u instances=%d culled=%u ticks=%u dropped=%u cap=%d vsync=%d tick=%u buffers=%u\n",
+			frames / elapsed, submitSum / frames, drawSum / frames, overlaySum / frames, flushSum / frames,
 			presentSum / frames, stats.drawCalls, s_regionDrawSubmittedCount, stats.culledInstances,
 			ProjectClock_GetTickCount() - tickStart, ProjectClock_GetDroppedTicks() - dropStart,
-			ProjectClock_GetPresentationFps(), g_cfg_swapInterval, ProjectClock_GetTickCount());
+			ProjectClock_GetPresentationFps(), g_cfg_swapInterval, ProjectClock_GetTickCount(), stats.swapChainBuffers);
 		fclose(log);
 	}
 	start = now;
 	frames = 0;
 	tickStart = ProjectClock_GetTickCount();
 	dropStart = ProjectClock_GetDroppedTicks();
-	submitSum = drawSum = flushSum = presentSum = 0;
+	submitSum = drawSum = overlaySum = flushSum = presentSum = 0;
 }
 
 static void NativeRenderer_Frame()
@@ -1603,6 +1604,12 @@ static void NativeRenderer_Frame()
 	if (!s_nativeRendererActive)
 		return;
 	NativeRenderer_SetVSync(g_cfg_swapInterval != 0);
+	char filteringError[256];
+	if (!NativeRenderer_SetBilinearFiltering(g_cfg_bilinearFiltering, filteringError, sizeof(filteringError)))
+	{
+		PsyX_Log_Error("native filtering: %s\n", filteringError);
+		exit(1);
+	}
 
 	// Forward game-window size changes to the native swap chain. A minimized
 	// window reports a zero size; keep the last valid buffers in that case.
@@ -1955,6 +1962,9 @@ int main(int argc, char** argv)
 
 		ini_sget(config, "render", "fullscreen", "%d", &fullScreen);
 		ini_sget(config, "render", "vsync", "%d", &g_cfg_swapInterval);
+		int presentationFps = ProjectClock_GetPresentationFps();
+		if (ini_sget(config, "render", "presentationFps", "%d", &presentationFps))
+			ProjectClock_SetPresentationFps(presentationFps);
 		ini_sget(config, "render", "pgxpTextureMapping", "%d", &g_cfg_pgxpTextureCorrection);
 		ini_sget(config, "render", "pgxpZbuffer", "%d", &g_cfg_pgxpZBuffer);
 		ini_sget(config, "render", "bilinearFiltering", "%d", &g_cfg_bilinearFiltering);

@@ -65,9 +65,20 @@ int main()
 	Check(ProjectClock_GetPresentationFps() == (active == PROJECT_VIDEO_PAL ? 25 : 30), "fresh regional FPS default");
 	Write("config.ini", "# shipped configuration stays untouched\nvsync=1\n");
 	const std::string shipped = Read("config.ini");
+	ProjectClock_SetPresentationFps(120);
+	g_cfg_swapInterval = 0;
+	gDrawDistance = 900;
+	gCameraDefaultScrZ = 300;
 	Write("developer_graphics.ini", "# user comment\nschemaVersion=8\nwindowWidth=1280\nwindowHeight=720\nmodernRenderer=0\nfutureKey=77\nvideoMode=1\n");
 	Check(DeveloperGraphicsSettings_LoadAndApply(), "loads schema 8 without requiring new keys");
-	Check(ProjectClock_GetPresentationFps() == 25, "missing FPS uses saved PAL preference's default");
+	Check(ProjectClock_GetPresentationFps() == 120, "missing FPS preserves config.ini baseline despite saved PAL preference");
+	Check(g_cfg_swapInterval == 0 && gDrawDistance == 900 && gCameraDefaultScrZ == 300,
+		"omitted graphics keys preserve baseline values");
+	Write("developer_graphics.ini", "presentationFps=90\nvsync=1\ndrawDistance=1200\nfieldOfView=280\nvideoMode=1\n");
+	Check(DeveloperGraphicsSettings_LoadAndApply(), "explicit overrides load");
+	Check(ProjectClock_GetPresentationFps() == 90 && g_cfg_swapInterval == 1 && gDrawDistance == 1200 && gCameraDefaultScrZ == 280,
+		"present developer keys replace baseline values");
+	Write("developer_graphics.ini", "# user comment\nschemaVersion=8\nwindowWidth=1280\nwindowHeight=720\nmodernRenderer=0\nfutureKey=77\nvideoMode=1\n");
 	Check(ProjectClock_GetVideoMode() == active && ProjectClock_GetPreferredVideoMode() == PROJECT_VIDEO_PAL,
 		"load only selects preference until startup activates it");
 	ProjectClock_SetPresentationFps(144);
