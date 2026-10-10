@@ -37,6 +37,7 @@
 #include "utils/DeterministicBaseline.h"
 #include "utils/HdTextureOverrides.h"
 #include "utils/InputService.h"
+#include "utils/ProjectClock.h"
 
 #ifdef RED2_AUDIO_FMOD
 #include "Game/C/audiofmod_adapter.h"
@@ -1552,10 +1553,56 @@ static void NativeRenderer_ComposeLiveView(float view[16], int cameraPosition[3]
 	NativeCameraView_Compose(rotation, cameraPosition, view);
 }
 
+// Opt-in, one aggregate per second. Simulation diagnostics stay in the game
+// bridge; the renderer reports only its own CPU work and submitted draws.
+static void NativeRenderer_ReportPerformance(double submitMilliseconds)
+{
+	static const int enabled = getenv("RED2_NATIVE_PERF") &&
+		strcmp(getenv("RED2_NATIVE_PERF"), "1") == 0;
+	if (!enabled)
+		return;
+	static Uint64 start = 0;
+	static unsigned int frames = 0, tickStart = 0, dropStart = 0;
+	static double submitSum = 0, drawSum = 0, flushSum = 0, presentSum = 0;
+	const Uint64 now = SDL_GetPerformanceCounter();
+	if (!start)
+	{
+		start = now;
+		tickStart = ProjectClock_GetTickCount();
+		dropStart = ProjectClock_GetDroppedTicks();
+	}
+	NativeFrameStats stats;
+	NativeRenderer_GetFrameStats(&stats);
+	++frames;
+	submitSum += submitMilliseconds;
+	drawSum += stats.drawMilliseconds;
+	flushSum += stats.flushMilliseconds;
+	presentSum += stats.presentMilliseconds;
+	const double elapsed = (double)(now - start) / SDL_GetPerformanceFrequency();
+	if (elapsed < 1.0)
+		return;
+	FILE* log = fopen("native_performance.log", "a");
+	if (log)
+	{
+		fprintf(log, "native-perf fps=%.2f submit=%.3fms draw=%.3fms flush=%.3fms present=%.3fms draws=%u instances=%d culled=%u ticks=%u dropped=%u cap=%d vsync=%d tick=%u\n",
+			frames / elapsed, submitSum / frames, drawSum / frames, flushSum / frames,
+			presentSum / frames, stats.drawCalls, s_regionDrawSubmittedCount, stats.culledInstances,
+			ProjectClock_GetTickCount() - tickStart, ProjectClock_GetDroppedTicks() - dropStart,
+			ProjectClock_GetPresentationFps(), g_cfg_swapInterval, ProjectClock_GetTickCount());
+		fclose(log);
+	}
+	start = now;
+	frames = 0;
+	tickStart = ProjectClock_GetTickCount();
+	dropStart = ProjectClock_GetDroppedTicks();
+	submitSum = drawSum = flushSum = presentSum = 0;
+}
+
 static void NativeRenderer_Frame()
 {
 	if (!s_nativeRendererActive)
 		return;
+	NativeRenderer_SetVSync(g_cfg_swapInterval != 0);
 
 	// Forward game-window size changes to the native swap chain. A minimized
 	// window reports a zero size; keep the last valid buffers in that case.
@@ -1591,7 +1638,10 @@ static void NativeRenderer_Frame()
 	NativeDrawScreenOffset(&screenOffsetX, &screenOffsetY);
 	NativeRenderer_SetScreenOffset(screenOffsetX, screenOffsetY);
 
+	const Uint64 submitStart = SDL_GetPerformanceCounter();
 	const int devDrawInstances = NativeRenderer_DevDrawSubmit(view);
+	const double submitMilliseconds = (double)(SDL_GetPerformanceCounter() - submitStart) *
+		1000.0 / SDL_GetPerformanceFrequency();
 
 	char error[256];
 	if (!NativeRenderer_RenderScene(error, sizeof(error)))
@@ -1613,6 +1663,7 @@ static void NativeRenderer_Frame()
 	if (s_nativeRendererFrames == 0)
 		PsyX_Log_Info("native renderer drawing the game window with the game camera\n");
 	++s_nativeRendererFrames;
+	NativeRenderer_ReportPerformance(submitMilliseconds);
 
 	NativeRenderer_DevDrawReport(devDrawInstances, view, cameraPosition);
 }
@@ -1976,13 +2027,11 @@ int main(int argc, char** argv)
 #endif
 
 #ifdef _WIN32
-	// E03: with the native-renderer probe enabled PsyCross must not own the
-	// window's presentation, so it creates the window without a swapchain
-	// (Vulkan rejects a second swapchain on the same window with
-	// VK_ERROR_NATIVE_WINDOW_IN_USE_KHR).
+	// Diligent owns the only GPU renderer; PsyCross retains its SDL window,
+	// CPU VRAM and compatibility services until their consumers migrate.
 	const char* nativeRenderer = getenv("RED2_NATIVE_RENDERER");
 	if (nativeRenderer && nativeRenderer[0] && nativeRenderer[0] != '0')
-		PsyX_SetHeadless(1);
+		PsyX_SetHeadless(PSYX_HEADLESS_WINDOW_ONLY);
 #endif
 
 	PsyX_Initialise("REDRIVER2", fullScreen ? screenWidth : windowWidth, fullScreen ? screenHeight : windowHeight, fullScreen);
@@ -1990,6 +2039,12 @@ int main(int argc, char** argv)
 #ifdef _WIN32
 	// E03: optional native-renderer ownership of the game's own window.
 	NativeRenderer_AttachGameWindow();
+	if (PsyX_GetHeadless() == PSYX_HEADLESS_WINDOW_ONLY && !NativeRenderer_IsActive())
+	{
+		PsyX_Log_Error("Native renderer failed; external presentation cannot continue\n");
+		PsyX_Shutdown();
+		return 1;
+	}
 #endif
 
 	char version_info[32];

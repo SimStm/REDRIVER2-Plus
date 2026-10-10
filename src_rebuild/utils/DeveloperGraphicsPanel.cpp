@@ -1826,7 +1826,7 @@ int HandleSDLEvent(const SDL_Event* event)
 	ImGui_ImplSDL2_ProcessEvent(event);
 
 	if (event->type == SDL_KEYDOWN && event->key.repeat == 0 &&
-		(event->key.keysym.scancode == SDL_SCANCODE_F11 || event->key.keysym.sym == SDLK_F11))
+		(event->key.keysym.scancode == SDL_SCANCODE_F9 || event->key.keysym.sym == SDLK_F9))
 	{
 		SetVisible(!g_visible);
 		return 1;
@@ -1877,7 +1877,7 @@ void DrawDeveloperPanel()
 	if (ImGui::Begin("Developer Graphics Panel", &g_visible))
 	{
 		ImGui::PushTextWrapPos(0.0f);
-		ImGui::TextUnformatted("F11 closes this panel. Video region requires an application restart; other settings are live.");
+		ImGui::TextUnformatted("F9 closes this panel. Video region requires an application restart; other settings are live.");
 		if (CheckboxWithHelp("Capture game input while panel is open", &g_captureGameInput,
 			"Enabled: keyboard, controller, and mouse events are held by the panel so changing a setting cannot also control the game. Disabled: the panel remains visible while the game continues to receive its normal inputs. UI interactions may then also affect the game."))
 			UpdateOverlayInputState();
@@ -1915,7 +1915,7 @@ void DrawDeveloperPanel()
 
 				bool legacyLighting = DeveloperModernMesh_GetLegacyLighting() != 0;
 				if (CheckboxWithHelp("Legacy geometry receives modern lighting", &legacyLighting,
-					"Adds the modern sun to the already-rendered legacy scene (buildings, vehicles, pedestrians, trees) using a normal reconstructed from the depth buffer. The legacy shading itself is preserved; the strength slider scales the added light. F9 toggles it. Requires the enhanced renderer."))
+					"Adds the modern sun to the already-rendered legacy scene (buildings, vehicles, pedestrians, trees) using a normal reconstructed from the depth buffer. The legacy shading itself is preserved; the strength slider scales the added light. F8 toggles it. Requires the enhanced renderer."))
 					DeveloperModernMesh_SetLegacyLighting(legacyLighting);
 
 				// Every developer_modern_mesh.ini light and look value in one
@@ -2177,6 +2177,13 @@ void DeveloperGraphicsPanel_Initialise()
 {
 	if (g_initialised || !PsyX_GetSDLWindow())
 		return;
+
+	if (PsyX_GetHeadless() == PSYX_HEADLESS_WINDOW_ONLY)
+	{
+		DeveloperGraphicsSettings_LoadAndApply();
+		PsyX_Log_Info("Native graphics settings loaded; native ImGui presentation is pending\n");
+		return;
+	}
 
 	if (PsyX_GetRenderBackend() == PSYX_BACKEND_VULKAN)
 	{

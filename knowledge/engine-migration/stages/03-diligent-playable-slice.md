@@ -54,3 +54,21 @@ with RenderDoc1.41; inspect pixels for defects, not universal legacy equivalence
 Measure the accepted scope and state hardware/platform limits. More modern
 lighting, whole-city residency and full dynamics may arrive as coherent follow-up
 blocks without blocking the first correctly labeled playable slice.
+
+## Adopted execution priority (2026-10-10)
+
+First remove severe frame cost and redundant compatibility GPU ownership; validate fixed
+NTSC/PAL tick cadence independently of presentation/audio clocks. Then finish static world
+textures, model coverage, shaders/depth/cutouts, followed by the player, vehicles and other
+scene objects. Native effects and UI remain required in their planned stages.
+
+After correct geometry/material coverage, map original light information into read-only
+presentation snapshots. `sky.c::sun_position`/`moon_position` are artificial sprite vectors,
+not physical world light positions. `draw.c::day_vectors`/`night_vectors`, `gTimeOfDay`,
+ambient/weather and object-local lamp offsets (`objanim.c` calls to
+`debris.c::AddSmallStreetLight`) provide separate inputs. Transform lamp offsets with the
+object pose, preserve tick-owned switch/damage/flicker events, and convert the renderer's
+chosen units/axes consistently. Choose native intensity/radius/shadow/material policy
+explicitly; prelit vertex colours cannot uniquely recover physical PBR or light energy.
+Avoid double-lighting that baked contribution. Validate day/night/weather and lamp fixtures
+before extending the scene. This records future work and introduces no native lighting yet.

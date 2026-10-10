@@ -152,6 +152,21 @@ int NativeRenderer_Init(void* nativeWindowHandle, int width, int height,
 /* Non-zero when the device and swap chain are live. */
 int NativeRenderer_IsActive(void);
 
+/* Last successful window frame's CPU timings. GPU work is asynchronous: these
+   numbers are not GPU timings. Draw count excludes diagnostic readback frames. */
+typedef struct NativeFrameStats
+{
+	double drawMilliseconds;
+	double flushMilliseconds;
+	double presentMilliseconds;
+	unsigned int drawCalls;
+	unsigned int culledInstances;
+} NativeFrameStats;
+void NativeRenderer_GetFrameStats(NativeFrameStats* stats);
+
+/* Presentation only; applied by the next window Present (default enabled). */
+void NativeRenderer_SetVSync(int enabled);
+
 /* Recreates the swap chain buffers for a new client size. No-op when inactive. */
 void NativeRenderer_Resize(int width, int height);
 

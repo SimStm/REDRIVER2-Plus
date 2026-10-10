@@ -17,6 +17,8 @@
 #include "../utils/GltfLoader.h"
 #include "../utils/NativeCameraView.h"
 
+#include <chrono>
+#include <float.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -47,6 +49,17 @@ RefCntAutoPtr<IRenderDevice> g_device;
 RefCntAutoPtr<IDeviceContext> g_context;
 RefCntAutoPtr<ISwapChain> g_swapChain;
 int g_active = 0;
+Uint32 g_syncInterval = 1;
+NativeFrameStats g_frameStats = {};
+unsigned int g_frameDrawCalls = 0;
+unsigned int g_frameCulledInstances = 0;
+
+double FrameMilliseconds()
+{
+	return std::chrono::duration<double, std::milli>(
+		std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
 
 void SetError(char* error, int capacity, const char* message)
 {
@@ -169,11 +182,18 @@ struct SceneDrawItem
 	int vertexCount;
 	int triangleCount;
 	int ready;
+	float minimum[3];
+	float maximum[3];
 
 	SceneDrawItem() : vertexCount(0), triangleCount(0), ready(0)
 	{
 		for (int i = 0; i < 16; ++i)
 			transform[i] = (i % 5 == 0) ? 1.0f : 0.0f;
+		for (int axis = 0; axis < 3; ++axis)
+		{
+			minimum[axis] = FLT_MAX;
+			maximum[axis] = -FLT_MAX;
+		}
 	}
 };
 
@@ -765,6 +785,12 @@ int CreateContentItem(const GltfMultiMeshData& mesh, SceneDrawItem& out,
 			vertex.x = source.positions[i * 3 + 0];
 			vertex.y = source.positions[i * 3 + 1];
 			vertex.z = source.positions[i * 3 + 2];
+			for (int axis = 0; axis < 3; ++axis)
+			{
+				const float position = source.positions[i * 3 + axis];
+				if (position < item.minimum[axis]) item.minimum[axis] = position;
+				if (position > item.maximum[axis]) item.maximum[axis] = position;
+			}
 			// Normals are deliberately not fetched yet: this E03 slice is unlit
 			// and the vertex format stays position + UV; lighting/PBR is a later
 			// block.
@@ -988,10 +1014,11 @@ int EnsureOffscreenTargets(Uint32 width, Uint32 height)
 
 // Uploads the per-draw constants and issues one draw for a primitive. The shared
 // constant buffer is written per call, so the caller must commit and draw
-// before the next UpdateBuffer (the per-primitive loops rely on this).
-void DrawPrimitive(const ScenePrimitive& primitive, IPipelineState* pipeline,
+// before the next Map/Discard (the per-primitive loops rely on this).
+int DrawPrimitive(const ScenePrimitive& primitive, IPipelineState* pipeline,
 	IShaderResourceBinding* srb, const float mvp[16])
 {
+	++g_frameDrawCalls;
 	SceneConstants constants;
 	for (int i = 0; i < 16; ++i)
 		constants.mvp[i] = mvp[i];
@@ -999,8 +1026,14 @@ void DrawPrimitive(const ScenePrimitive& primitive, IPipelineState* pipeline,
 		constants.baseColor[i] = primitive.baseColor[i];
 	for (int i = 0; i < 4; ++i)
 		constants.colorScale[i] = primitive.colorScale;
-	g_context->UpdateBuffer(g_scene.constants, 0, sizeof(SceneConstants), &constants,
-		RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+	// DISCARD allocates a fresh dynamic range. Previous draws keep their own
+	// constants without transfer commands or ending the Vulkan render pass.
+	void* mapped = nullptr;
+	g_context->MapBuffer(g_scene.constants, MAP_WRITE, MAP_FLAG_DISCARD, mapped);
+	if (!mapped)
+		return 0;
+	memcpy(mapped, &constants, sizeof(constants));
+	g_context->UnmapBuffer(g_scene.constants, MAP_WRITE);
 
 	g_context->SetPipelineState(pipeline);
 	g_context->CommitShaderResources(srb, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
@@ -1024,6 +1057,7 @@ void DrawPrimitive(const ScenePrimitive& primitive, IPipelineState* pipeline,
 		draw.Flags = DRAW_FLAG_NONE;
 		g_context->Draw(draw);
 	}
+	return 1;
 }
 
 // Draws every ready primitive of an item with the given MVP and pipeline,
@@ -1042,7 +1076,8 @@ int DrawItemPrimitives(const SceneDrawItem& item, IPipelineState* pipeline,
 			: primitive.srb.RawPtr();
 		if (!primitive.vertices || !srb)
 			continue;
-		DrawPrimitive(primitive, pipeline, srb, mvp);
+		if (!DrawPrimitive(primitive, pipeline, srb, mvp))
+			return -1;
 		++drawn;
 	}
 	return drawn;
@@ -1101,13 +1136,21 @@ int RenderSceneInto(ITextureView* renderTarget, ITextureView* depthView,
 			MultiplyColumnMajor(g_view, g_instances[i].transform, viewModel);
 			float mvp[16];
 			MultiplyColumnMajor(projection, viewModel, mvp);
+			if (!NativeCameraView_BoundsVisible(mvp, item->minimum, item->maximum))
+			{
+				++g_frameCulledInstances;
+				continue;
+			}
 
 			// `drawn` counts instances, not primitives: an instance that issues
 			// at least one primitive counts once, however many it has.
-			if (DrawItemPrimitives(*item, pipeline, offscreenTarget, mvp) > 0)
+			const int primitiveCount = DrawItemPrimitives(*item, pipeline, offscreenTarget, mvp);
+			if (primitiveCount < 0)
+				return 0;
+			if (primitiveCount > 0)
 				++g_instanceDrawn;
 		}
-		if (g_instanceDrawn == 0 && g_instanceDiagnostic[0] == '\0')
+		if (g_instanceDrawn == 0 && g_instanceSkipped > 0 && g_instanceDiagnostic[0] == '\0')
 			SetInstanceDiagnosticKey("no instance could be drawn; first key: ",
 				g_instances[0].resourceKey);
 		return 1;
@@ -1163,6 +1206,9 @@ int NativeRenderer_Init(void* nativeWindowHandle, int width, int height, char* e
 		}
 
 		SwapChainDesc swapChainDesc;
+		// Original texels/prelit colours are display-encoded UNORM values.
+		// Match the offscreen path; an sRGB RTV would encode them a second time.
+		swapChainDesc.ColorBufferFormat = TEX_FORMAT_RGBA8_UNORM;
 		swapChainDesc.Width = (Uint32)width;
 		swapChainDesc.Height = (Uint32)height;
 
@@ -1222,7 +1268,7 @@ int NativeRenderer_RenderClearAndPresent(float red, float green, float blue, flo
 	g_context->SetRenderTargets(1, &renderTarget, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
 	g_context->ClearRenderTarget(renderTarget, clearColor, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
 	g_context->Flush();
-	g_swapChain->Present();
+	g_swapChain->Present(g_syncInterval);
 	return 1;
 }
 
@@ -1269,15 +1315,37 @@ int NativeRenderer_RenderScene(char* error, int errorCapacity)
 		return 0;
 	}
 
+	const double drawStart = FrameMilliseconds();
+	g_frameDrawCalls = 0;
+	g_frameCulledInstances = 0;
 	const SwapChainDesc& swapDesc = g_swapChain->GetDesc();
 	if (!RenderSceneInto(renderTarget, g_scene.depthView, swapDesc.Width, swapDesc.Height, 0))
 	{
 		SetError(error, errorCapacity, "the native scene could not be drawn");
 		return 0;
 	}
+	const double drawEnd = FrameMilliseconds();
 	g_context->Flush();
-	g_swapChain->Present();
+	const double flushEnd = FrameMilliseconds();
+	g_swapChain->Present(g_syncInterval);
+	const double presentEnd = FrameMilliseconds();
+	g_frameStats.drawMilliseconds = drawEnd - drawStart;
+	g_frameStats.flushMilliseconds = flushEnd - drawEnd;
+	g_frameStats.presentMilliseconds = presentEnd - flushEnd;
+	g_frameStats.drawCalls = g_frameDrawCalls;
+	g_frameStats.culledInstances = g_frameCulledInstances;
 	return 1;
+}
+
+void NativeRenderer_SetVSync(int enabled)
+{
+	g_syncInterval = enabled ? 1 : 0;
+}
+
+void NativeRenderer_GetFrameStats(NativeFrameStats* stats)
+{
+	if (stats)
+		*stats = g_frameStats;
 }
 
 int NativeRenderer_LoadContent(const char* glbPath, char* error, int errorCapacity)

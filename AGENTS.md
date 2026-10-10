@@ -231,7 +231,7 @@ screenshots to learn the state instead of waiting on the process handle.
 ## Developer graphics panel
 
 - The desktop developer graphics panel lives in
-  `src_rebuild/utils/DeveloperGraphicsPanel.*`; F11 toggles it.
+  `src_rebuild/utils/DeveloperGraphicsPanel.*`; F9 toggles it.
 - Runtime settings live in `DeveloperGraphicsSettings.*` and are deliberately
   persisted to `developer_graphics.ini` (with `.tmp` and `.bak` handling), not
   the main `config.ini`.

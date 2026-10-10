@@ -182,7 +182,7 @@ void WriteEnabledState()
 
 	fprintf(file, "# REDRIVER2-Plus experimental modern mesh (renderer roadmap R2/R3/R5).\n");
 	fprintf(file, "# Toggle in game with F10; light keys: [ ] azimuth, ; ' tilt, - = exposure, \\ AO.\n");
-	fprintf(file, "# F9 toggles legacy light receptivity; legacyLightReceptivity scales it.\n");
+	fprintf(file, "# F8 toggles legacy light receptivity; legacyLightReceptivity scales it.\n");
 	fprintf(file, "[modern_mesh]\n");
 	fprintf(file, "enabled=%d\n", s_enabled ? 1 : 0);
 	fprintf(file, "asset=%s\n", s_assetPath);
@@ -851,6 +851,9 @@ void DeveloperModernMesh_SetShadowDebugMode(int mode)
 
 void DeveloperModernMesh_Update(void)
 {
+	if (PsyX_GetHeadless() == PSYX_HEADLESS_WINDOW_ONLY)
+		return;
+
 	// Edge-detected F10 toggle; avoids synthetic click injection entirely.
 	const Uint8* keys = SDL_GetKeyboardState(NULL);
 	if (keys && keys[SDL_SCANCODE_F10])
@@ -867,11 +870,11 @@ void DeveloperModernMesh_Update(void)
 		s_keyHeld = 0;
 	}
 
-	// F9 toggles legacy light receptivity. A function key is used deliberately:
+	// F8 toggles legacy light receptivity. A function key is used deliberately:
 	// character keys are not reliably injectable for A/B captures.
 	{
 		static int legacyKeyHeld = 0;
-		if (keys && keys[SDL_SCANCODE_F9])
+		if (keys && keys[SDL_SCANCODE_F8])
 		{
 			if (!legacyKeyHeld)
 			{

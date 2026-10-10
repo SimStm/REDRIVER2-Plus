@@ -13,10 +13,9 @@ tags: [okf, status]
 
 ## Branch and adopted plan
 
-`feat/new-engine` HEAD is `856b4398`; checkpoints through the E03 texture/finalize-rendering
-blocks and E04 A1 are committed/pushed. PsyCross headless presentation, post-frame hook and
-pad-backend disable are committed/pushed as `99950a7`. The subsequent bounded world-parity,
-quad-topology and tick-capture changes are being preserved in a separate checkpoint on 2026-10-10.
+`feat/new-engine` checkpoint `7fdce013` is committed/pushed, including the bounded world-parity,
+quad-topology and tick-capture work. PsyCross's previous headless GPU bridge is `99950a7`.
+The 2026-10-10 native performance/window-only follow-up is documented below.
 No migration-stage acceptance follows from publication. The tracked Serena project configuration
 selects the C++ language server; generated state and proprietary assets/SDKs are not included.
 
@@ -100,11 +99,28 @@ accepted.
 
 ## Engine migration E03 (in progress; parity not accepted)
 
+- Native performance follow-up (2026-10-10): dynamic constants use Map/Discard, window
+  Present honors configured VSync, and conservative homogeneous AABB culling removes
+  invisible instance draws. Opt-in `RED2_NATIVE_PERF=1` records CPU phases, draw/cull counts
+  and tick/drop deltas. Mission 1 samples improved from 3.7-4.6 FPS to 41-60 FPS after
+  these changes; no dropped ticks in the measured post-fix intervals. This is bounded
+  local evidence, not a GPU benchmark or full scene acceptance. RenderDoc1.41 captured
+  one colour/depth pass (5300 indexed draws, 28828 triangles, empty validation log).
+  Its sRGB window target exposed extra encoding of display-encoded original colours;
+  native window output now explicitly requests RGBA8_UNORM, matching offscreen output.
+- Native startup selects existing PsyCross headless mode 2: SDL window and CPU VRAM only.
+  No PsyCross Vulkan instance/device/surface/swapchain or GL context is initialized.
+  CPU upload/copy/read/clear VRAM and OT parsing remain; compatibility draws/readbacks
+  are skipped. Diligent startup failure exits explicitly. Framebuffer-derived effects,
+  native ImGui and legacy GPU texture consumers remain migration work, not hidden fallback.
+  Saved settings load without creating a compatibility ImGui context. The legacy panel
+  toggle is F9; the existing receptivity shortcut moved from F9 to F8.
+  [Details/evidence](product/native-renderer-performance.md).
 - Diligent Vulkan (`API256019`, static Release, C++17) is gated by `RED2_NATIVE_RENDERER`;
-  `Release_dev_native` uses PsyCross headless presentation and the post-frame camera hook.
+  `Release_dev_native` uses PsyCross window-only mode (no compatibility GPU) and the post-frame camera hook.
   `native/NativeRenderer.*` owns device/swapchain/resources and bounded instance submission;
   missing resources are diagnosed/skipped, never replaced by the legacy world. Debug-library
-  configurations and native F11 overlay remain unwired.
+  configurations and native F9 overlay remain unwired.
 - Windows operational path also uses `src_rebuild/bin/Release_dev/REDRIVER2_dev.exe`:
   from root PowerShell, set `$env:RED2_NATIVE_RENDERER = '1'` and invoke
   `& .\scripts\run_debug_start.ps1 -Mission 1 -ExtraArgs @('-drawregion')` (fire-and-forget).
@@ -277,7 +293,7 @@ govern support.
   return, `-playground`, Take a Ride) is recorded in [playground product](product/playable-testing-playground.md)
   P1-P5. Debug start settings preserve mission/city/vehicle/position/heading/player/chase and generate
   reproducible command lines (`scripts/run_debug_start.ps1`).
-- F11 Developer Graphics Panel uses vendored ImGui1.91.9b (Windows/Linux) and `developer_graphics.ini`,
+- F9 Developer Graphics Panel uses vendored ImGui1.91.9b (Windows/Linux) and `developer_graphics.ini`,
   independently from `config.ini`. Schema9 display controls include a 15..360 presentation FPS slider (defaults 30
   NTSC/25 PAL), NTSC/PAL selection and VSync beside resolution; FPS/VSync apply live, region applies after
   restart, and the same binary selects the 30/25 Hz clock, screen/aspect/audio and replay metadata at startup.

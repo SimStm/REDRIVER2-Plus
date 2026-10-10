@@ -128,7 +128,7 @@ persist its own settings separately in `developer_graphics.ini`.
 
 ## Developer panel
 
-Press `F11` while the game is running to toggle the Dear ImGui developer panel. It has four tabs:
+Press `F9` while the game is running to toggle the Dear ImGui developer panel. It has four tabs:
 
 - **Graphics** — live renderer and visual controls.
 - **Game Debug** — explained, live telemetry for primitive-table usage, streaming/spooling, civilian traffic, police, mission limits, vehicle state, and road-state data, plus the reproducible-start snapshot tools.

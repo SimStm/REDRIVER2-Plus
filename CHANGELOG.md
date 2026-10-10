@@ -10,6 +10,10 @@ where release policy permits it.
 
 ### Changed
 
+- Move the developer graphics panel toggle to F9 and light-receptivity shortcut to F8.
+- Diligent startup now keeps only PsyCross's SDL window/CPU VRAM and compatibility
+  services, without initializing its Vulkan or OpenGL renderer.
+
 - E03 block 2 item 4 camera convention: the native scene projection is +Z-forward
   with a [0,1] NDC depth range (`out[10]=F/(F-N)`, `out[11]=+1`,
   `out[14]=-N*F/(F-N)`, Diligent's convention) and +Y-down like the game; the F-A
@@ -37,6 +41,9 @@ where release policy permits it.
   `BM_ADD`/`BM_SUBTRACT`, base-colour maps only, no LOD/streaming, no lighting).
 
 ### Added
+
+- Opt-in native CPU frame diagnostics (`RED2_NATIVE_PERF=1`) with render phases,
+  draw/cull counts and fixed-tick/drop deltas.
 
 - Tick-anchored developer screenshots: `run_debug_start.ps1 -Capture -DelayTicks`
   uses `captureAfterTicks` and a debug clock freeze to avoid wall-clock comparisons
@@ -1086,6 +1093,12 @@ where release policy permits it.
   pick until the button is pressed again.
 
 ### Fixed
+
+- Native window presentation now uses the same UNORM colour policy as offscreen rendering,
+  avoiding extra sRGB encoding of original texels and prelit vertex colours.
+
+- Native renderer dynamic constant-buffer updates, configured VSync propagation and
+  off-camera draw submission, addressing the observed 4-5 FPS mission 1 rendering.
 
 - Native world quad conversion now uses the legacy diagonal with consistently
   wound triangles (`012,132` for stored corners `v0,v1,v3,v2`), eliminating the

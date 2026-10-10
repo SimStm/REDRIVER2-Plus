@@ -31,7 +31,7 @@ int  DeveloperModernMesh_GetAmbientOcclusion(void);
 /* Legacy-geometry light receptivity (roadmap legacy-lighting-receptivity): the
    modern sun additionally lights the already-rendered legacy scene. Off by
    default so the shipped legacy shading is unchanged; the scale controls how
-   strongly the legacy colour is scaled. F9 toggles it at runtime. */
+   strongly the legacy colour is scaled. F8 toggles it at runtime. */
 void  DeveloperModernMesh_SetLegacyLighting(int enabled);
 int   DeveloperModernMesh_GetLegacyLighting(void);
 void  DeveloperModernMesh_SetLegacyLightReceptivity(float scale);

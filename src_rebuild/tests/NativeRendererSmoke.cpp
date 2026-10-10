@@ -1694,6 +1694,22 @@ static void TestInstanceResidencyAndDiagnostics()
 		"re-registered instance rendered");
 	Check(CountRed(reloaded, 64, 64) > 50, "the re-registered instance is present again");
 
+	// Adding a distant resolved object must preserve every framebuffer byte,
+	// while removing its draw from the instance count (not an unresolved error).
+	NativeInstance visibleAndOutside[2] = { instance, instance };
+	const float outsidePosition[3] = { 10000000.0f, 0.0f, 0.0f };
+	MakeInstance(visibleAndOutside[1], "quad-red", outsidePosition, 0, 1, 0, 32, 5, 2);
+	Check(NativeRenderer_SetInstances(visibleAndOutside, 2, error, sizeof(error)) == 1,
+		"visible and distant resolved instances submitted");
+	unsigned char culledFrame[64 * 64 * 4] = {};
+	Check(NativeRenderer_RenderSceneToRGBA(culledFrame, 64, 64, error, sizeof(error)) == 1,
+		"frustum-culled frame rendered");
+	Check(memcmp(culledFrame, reloaded, sizeof(culledFrame)) == 0,
+		"culling the outside object preserves the entire visible frame");
+	NativeRenderer_GetInstanceStats(&submitted, &drawn, &skipped, &resident);
+	Check(submitted == 2 && drawn == 1 && skipped == 0,
+		"frustum culling excludes a draw without reporting a missing resource");
+
 	// Acceptance (d): an unregistered key is skipped with a named diagnostic and
 	// the placeholder is NOT drawn.
 	NativeInstance missing;

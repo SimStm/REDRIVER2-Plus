@@ -7,7 +7,7 @@ tags: [product, tooling, settings, input, display]
 
 # Runtime settings GUI
 
-The developer panel (F11, Dear ImGui, Windows and Linux only) is the runtime
+The developer panel (F9, Dear ImGui, Windows and Linux only) is the runtime
 settings surface for the fork. It edits live game settings, the display mode and
 the input bindings, and it persists developer state in separate files so
 `config.ini` stays the shipped, user-owned configuration.

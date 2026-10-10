@@ -29,6 +29,12 @@ extern "C" {
    column-major 16-float view matrix. Either input pointer must be non-NULL. */
 void NativeCameraView_Compose(const int rotation[9], const int cameraPosition[3], float out[16]);
 
+/* Conservative homogeneous AABB test for x/y in [-w,w], z in [0,w].
+   Boundary-touching and near-plane-crossing boxes remain visible. The MVP
+   includes the exact draw transform, projection and screen offset. */
+int NativeCameraView_BoundsVisible(const float mvp[16], const float minimum[3],
+	const float maximum[3]);
+
 #ifdef __cplusplus
 }
 #endif

@@ -26,7 +26,7 @@ and roadmap record
   sun intensity, modern ambient, modern exposure, shadow volume size and a
   shadow debug view. `[`/`]`, `;`/`'`, `-`/`=` and `\` remain the in-game
   equivalents; the panel reads the live direction vector so both agree.
-- **F9** toggles it in game, like F10 toggles the enhanced renderer.
+- **F8** toggles it in game, like F10 toggles the enhanced renderer.
 - Persisted in `developer_modern_mesh.ini` as `legacyLighting` (default `0`) and
   `legacyLightReceptivity` (default `0.350`, clamped to `0.0`-`2.0`).
 - Requires the enhanced renderer. Independent of the shadow and AO toggles: it

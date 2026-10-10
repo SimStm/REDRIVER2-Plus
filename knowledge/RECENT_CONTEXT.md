@@ -8,7 +8,7 @@ tags: [okf, status, agents]
 # Recent engineering context
 
 > Updated: 2026-10-10.
-> Read the handoff first: uncommitted E03 quad fix has test/artifact evidence; full parity remains open.
+> Read the handoff first: native GPU duplication removed; performance improved; full parity remains open.
 > Older task narratives are condensed; their change records
 > hold the detail.
 
@@ -22,9 +22,43 @@ PopcornFX optional, only on explicit request). User scope: at least through E06.
 Preserve Driver 2 simulation/math/mission/cutscene/replay/regional semantics;
 fixed ticks independent of presentation FPS and CPU speed.
 
-**Current step: bounded E03 parity validation, not stage acceptance.**
-The region/texture pipeline and parity fixes exist in uncommitted source. Preserve other
-lanes' edits. The parent owns final validation; verified results below do not accept a stage.
+**Current step: E03 native performance and window ownership, followed by world parity.**
+The prior pending work was committed/pushed as `7fdce013`. User priority on 2026-10-10:
+performance first, tick/audio cadence, remaining world textures/models/shaders, then player,
+vehicles and other objects. Lighting conversion is deferred until geometry/materials are
+correct. No stage is accepted by this checkpoint.
+
+- Fixed dynamic constant updates (Map/Discard), wired configured VSync and added
+  conservative AABB culling against the exact homogeneous MVP. Local mission 1 baseline
+  3.7-4.6 FPS improved to 41-60 FPS, with 30/31 tick deltas and 0 dropped ticks in
+  post-fix one-second windows. GPU/driver/scene and camera position limit comparison.
+- User requested no PsyCross Vulkan alongside Diligent. Headless mode 2 creates only
+  SDL window + CPU VRAM; skips GL/Vulkan initialization and compatibility GPU draws.
+  VRAM copies/reads/clears, OT command parsing and services remain. Native failure exits.
+  Native ImGui remains pending; persisted settings still load. F9 replaces the panel's
+  F11, and its previous light-receptivity binding moved to F8.
+- VS `build_e00/REDRIVER2.sln`, Release_dev_native|x64 builds and launches mission 1.
+  Log confirms no PsyCross GPU, 160/160 resources, 6740 placements and zero conversion
+  failures. Existing missing CD-image warnings remain. Ignored performance logs live
+  under `build_e00/native-performance/`; `RED2_NATIVE_PERF=1` is opt-in.
+- Inspector runner passed all 16 suites, including 41 camera/culling checks; native
+  renderer smoke passed 1200 checks. Presentation timing runner passed NTSC/PAL suites.
+- RenderDoc1.41 logs register one Vulkan surface. MCP attach/trigger needed a persistent
+  local Python TargetControl connection pumping ReceiveMessage to finish capture/copy.
+  Native capture: one colour/depth pass, 5300 indexed draws, 28828 triangles, empty log.
+  MCP rt export assumes Descriptor.resourceId; local 1.41 uses Descriptor.resource.
+  Local replay exported PNG; target was R8G8B8A8_SRGB, exposing extra gamma encoding of
+  UNORM/prelit values. Window target now explicitly requests RGBA8_UNORM; offscreen already
+  used it. Second GPU capture verified R8G8B8A8_UNORM at 1280x720, 5705 draws; PNG
+  exported. These different-tick images are not a parity comparison. The earlier Window 1 label did not prove two SDL windows; overlay unverified. Computer-control access to
+  REDRIVER2_native was rejected by automatic approval review; use supported GPU/log paths.
+- Release_dev|x64 compatibility build and -opengl mission 1 launch passed; log confirms
+  OpenGL 3.3.0. Native smoke after UNORM change again passed 1200 checks. Both debug
+  sessions were stopped. Native diagnostic env is local/generated, not committed.
+- Next: resume tick/interpolation-anchored world texture/material/model diagnosis,
+  then the player/vehicle slice. Native ImGui and the near-60 plateau remain open.
+
+Prior bounded parity evidence (preserved; not full acceptance):
 
 - World pipeline: `CULL_NONE`, opaque alpha / `0000h` discard, LEQUAL; legacy world colours
   travel through RGBA8 COLOR_0 and shader scale 2. Region caps are 1024 resources / 8192

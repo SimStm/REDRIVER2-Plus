@@ -23,7 +23,7 @@ audit trail is in
   regions, PSX `STP` exported as half alpha, mipmaps for fully opaque
   overrides, and anisotropic filtering up to `4x` when the driver supports
   `GL_EXT_texture_filter_anisotropic`.
-- **3D inspector** and **developer panel** (`F11`) with diagnostics, texture
+- **3D inspector** and **developer panel** (`F9`) with diagnostics, texture
   export as PNG, car-body export as OBJ, and selection-detail export as TXT.
   Selection is diagnostic (draw-stream approximation), and OBJ export is
   geometry-only with no re-import.

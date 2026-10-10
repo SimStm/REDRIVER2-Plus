@@ -330,8 +330,52 @@ static void TestGteScreenOffsetParity()
 		"the horizontal screen offset is aspect-independent (legacy ofsMat)");
 }
 
+static void TestClipBounds()
+{
+	float identity[16] = {};
+	identity[0] = identity[5] = identity[10] = identity[15] = 1.0f;
+	const float insideMin[3] = {-0.5f, -0.5f, 0.2f};
+	const float insideMax[3] = {0.5f, 0.5f, 0.8f};
+	CHECK(NativeCameraView_BoundsVisible(identity, insideMin, insideMax), "interior bounds remain visible");
+	for (int plane = 0; plane < 6; ++plane)
+	{
+		float minimum[3] = {-0.5f, -0.5f, 0.2f};
+		float maximum[3] = {0.5f, 0.5f, 0.8f};
+		const int axis = plane / 2;
+		if (plane % 2)
+		{ minimum[axis] = 2.0f; maximum[axis] = 3.0f; }
+		else
+		{ minimum[axis] = -3.0f; maximum[axis] = -2.0f; }
+		CHECK(!NativeCameraView_BoundsVisible(identity, minimum, maximum), "strictly outside each clip plane is rejected");
+		if (plane % 2)
+			minimum[axis] = 1.0f;
+		else
+			maximum[axis] = axis == 2 ? 0.0f : -1.0f;
+		CHECK(NativeCameraView_BoundsVisible(identity, minimum, maximum), "touching each clip plane is retained");
+	}
+	const float largeMin[3] = {-2.0f, -2.0f, -2.0f};
+	const float largeMax[3] = {2.0f, 2.0f, 2.0f};
+	CHECK(NativeCameraView_BoundsVisible(identity, largeMin, largeMax), "box enclosing the frustum is retained even with no corner inside");
+	float projection[16];
+	NativeCameraView_BuildProjection(320.0f, 320.0f, 240.0f, 160.0f, 120.0f,
+		4.0f/3.0f, 100.0f, 125000.0f, projection);
+	const float behindMin[3] = {-1.0f, -1.0f, -1000.0f};
+	const float behindMax[3] = {1.0f, 1.0f, -500.0f};
+	CHECK(!NativeCameraView_BoundsVisible(projection, behindMin, behindMax), "negative w behind-camera bounds are rejected");
+	const float crossingMin[3] = {-10.0f, -10.0f, -100.0f};
+	const float crossingMax[3] = {10.0f, 10.0f, 200.0f};
+	CHECK(NativeCameraView_BoundsVisible(projection, crossingMin, crossingMax), "bounds crossing camera and near plane are retained");
+	identity[12] = 10.0f;
+	CHECK(!NativeCameraView_BoundsVisible(identity, insideMin, insideMax), "MVP translation moves a local box outside");
+	identity[12] = 0.0f;
+	identity[0] = 0.0f; identity[4] = -1.0f;
+	identity[1] = 1.0f; identity[5] = 0.0f;
+	CHECK(NativeCameraView_BoundsVisible(identity, insideMin, insideMax), "rotated instance retains interior bounds");
+}
+
 int main()
 {
+	TestClipBounds();
 	TestIdentityAtOrigin();
 	TestTranslation();
 	TestYawRotation();

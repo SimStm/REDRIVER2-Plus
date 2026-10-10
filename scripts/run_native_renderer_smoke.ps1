@@ -69,7 +69,7 @@ $executable = Join-Path $workingRoot 'NativeRendererSmoke.exe'
 
 $arguments = @('/nologo', '/std:c++17', '/EHsc', '/O2', '/Gy', '/MD', '/DPLATFORM_WIN32=1', '/I', 'native')
 foreach ($include in $includeDirs) { $arguments += @('/I', $include) }
-$arguments += @('tests\NativeRendererSmoke.cpp', 'native\NativeRenderer.cpp', 'utils\GltfLoader.cpp', 'utils\GltfWriter.cpp', 'utils\NativeInstanceTransform.cpp')
+$arguments += @('tests\NativeRendererSmoke.cpp', 'native\NativeRenderer.cpp', 'utils\GltfLoader.cpp', 'utils\GltfWriter.cpp', 'utils\NativeInstanceTransform.cpp', 'utils\NativeCameraView.cpp')
 $arguments += @("/Fe:$executable")
 $arguments += @('/link', '/OPT:REF')
 $arguments += $libs
