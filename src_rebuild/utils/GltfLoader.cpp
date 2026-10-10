@@ -366,6 +366,20 @@ unsigned int Adler32Of(const unsigned char* data, size_t length)
 	return (b << 16) | a;
 }
 
+// Standard PNG CRC-32 (reflected, polynomial 0xEDB88320) over a chunk's type and
+// data, matching the value each PNG chunk stores after its payload.
+unsigned int Crc32Of(const unsigned char* data, size_t length)
+{
+	unsigned int crc = 0xFFFFFFFFu;
+	for (size_t i = 0; i < length; i++)
+	{
+		crc ^= data[i];
+		for (int bit = 0; bit < 8; bit++)
+			crc = (crc >> 1) ^ (0xEDB88320u & (unsigned int)(-(int)(crc & 1)));
+	}
+	return crc ^ 0xFFFFFFFFu;
+}
+
 // Inflates a zlib stream that uses only stored deflate blocks. Writes a named
 // reason and returns false for any other block type or a malformed stream.
 bool InflateStoredBlocks(const unsigned char* data, size_t size, std::vector<unsigned char>& out,
@@ -422,14 +436,16 @@ bool InflateStoredBlocks(const unsigned char* data, size_t size, std::vector<uns
 		pos += length;
 	}
 
-	if (pos + 4 <= size)
+	if (pos + 4 > size)
 	{
-		const unsigned int stored = ReadU32BE(data + pos);
-		if (stored != Adler32Of(out.data(), out.size()))
-		{
-			snprintf(error, errorCapacity, "the PNG zlib checksum does not match");
-			return false;
-		}
+		snprintf(error, errorCapacity, "the PNG zlib stream is missing its Adler-32 trailer");
+		return false;
+	}
+	const unsigned int stored = ReadU32BE(data + pos);
+	if (stored != Adler32Of(out.data(), out.size()))
+	{
+		snprintf(error, errorCapacity, "the PNG zlib checksum does not match");
+		return false;
 	}
 	return true;
 }
@@ -467,6 +483,12 @@ bool DecodePngRgba(const unsigned char* data, size_t size, std::vector<unsigned 
 			return false;
 		}
 		const unsigned char* chunkData = data + pos;
+		const unsigned int expectedCrc = ReadU32BE(data + pos + length);
+		if (Crc32Of(data + pos - 4, (size_t)length + 4) != expectedCrc)
+		{
+			snprintf(error, errorCapacity, "a PNG chunk CRC does not match");
+			return false;
+		}
 
 		if (memcmp(type, "IHDR", 4) == 0)
 		{
@@ -962,6 +984,34 @@ void BuildBufferViews(const JsonValue& root, std::vector<BufferView>& views)
 	}
 }
 
+// True when any object key in this JSON subtree ends in "Texture". Every glTF
+// texture reference property uses that suffix (baseColorTexture, diffuseTexture
+// in KHR_materials_pbrSpecularGlossiness, specularTexture in
+// KHR_materials_specular, ...), so this finds references inside a material's
+// `extensions` without enumerating each extension. Recurses through nested
+// objects and arrays.
+bool ContainsTextureKey(const JsonValue& value)
+{
+	if (value.type == JsonValue::Object)
+	{
+		for (size_t i = 0; i < value.object.size(); i++)
+		{
+			const std::string& key = value.object[i].first;
+			if (key.size() >= 7 && key.compare(key.size() - 7, 7, "Texture") == 0)
+				return true;
+			if (ContainsTextureKey(value.object[i].second))
+				return true;
+		}
+	}
+	else if (value.type == JsonValue::Array)
+	{
+		for (size_t i = 0; i < value.array.size(); i++)
+			if (ContainsTextureKey(value.array[i]))
+				return true;
+	}
+	return false;
+}
+
 // True when a material references a texture the multi record cannot represent
 // (anything other than the optional base-colour image it now holds).
 bool MaterialReferencesUnsupportedTexture(const JsonValue& material)
@@ -969,7 +1019,14 @@ bool MaterialReferencesUnsupportedTexture(const JsonValue& material)
 	const JsonValue* pbr = material.Find("pbrMetallicRoughness");
 	if (pbr && pbr->Find("metallicRoughnessTexture"))
 		return true;
-	return material.Find("normalTexture") || material.Find("emissiveTexture") || material.Find("occlusionTexture");
+	if (material.Find("normalTexture") || material.Find("emissiveTexture") || material.Find("occlusionTexture"))
+		return true;
+
+	// A texture reference expressed through an extension (e.g. the spec-gloss
+	// diffuse/specularGlossiness maps) must be rejected too, so an external GLB
+	// cannot silently drop it.
+	const JsonValue* extensions = material.Find("extensions");
+	return extensions && ContainsTextureKey(*extensions);
 }
 
 // Decodes the base-colour image referenced by a glTF textureInfo into RGBA8.

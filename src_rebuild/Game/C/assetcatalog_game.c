@@ -1091,7 +1091,7 @@ static bool ConvertModelSlot(int slot, char* status, int statusCapacity)
 	const unsigned char* begin = (const unsigned char*)model;
 	const unsigned char* end = begin + span;
 
-	SourceModelView view;
+	SourceModelView view = {};
 	view.instanceNumber = model->instance_number;
 	view.numVertices = model->num_vertices;
 	view.numPolys = model->num_polys;
@@ -1099,6 +1099,55 @@ static bool ConvertModelSlot(int slot, char* status, int statusCapacity)
 	view.vertices = model->vertices;
 	view.polyBlock = model->poly_block;
 	view.pointNormals = model->point_normals;
+
+	// An instanced slot shares the base model's vertex and point-normal arrays;
+	// its polygon indices are absolute into those arrays (models.c
+	// `_MDL_GETTER_vertices`). The base may not be one of the region's distinct
+	// slots, so resolve its span straight from the catalog and require the base
+	// resident (never the dummy placeholder). A missing base is a named
+	// diagnostic; the rest of the region still converts.
+	if (model->instance_number != -1)
+	{
+		const int baseSlot = model->instance_number;
+		if (baseSlot < 0 || baseSlot >= MAX_MODEL_SLOTS)
+		{
+			snprintf(status, statusCapacity,
+				"convert-model: slot %d instance base %d is out of range", slot, baseSlot);
+			return false;
+		}
+
+		MODEL* baseModel = modelpointers[baseSlot];
+		if (baseModel == NULL || baseModel == &dummyModel)
+		{
+			snprintf(status, statusCapacity,
+				"convert-model: slot %d instance base %d is not resident", slot, baseSlot);
+			return false;
+		}
+
+		const int baseRecord = AssetCatalog_FindModel(baseSlot);
+		if (baseRecord < 0)
+		{
+			snprintf(status, statusCapacity,
+				"convert-model: slot %d instance base %d is not resident in the asset catalog",
+				slot, baseSlot);
+			return false;
+		}
+
+		int baseSpan = 0;
+		if (!AssetCatalog_GetModelSpan(baseRecord, &baseSpan) || baseSpan <= 0)
+		{
+			snprintf(status, statusCapacity,
+				"convert-model: slot %d instance base %d has no captured byte span", slot, baseSlot);
+			return false;
+		}
+
+		view.baseBegin = (const unsigned char*)baseModel;
+		view.baseEnd = view.baseBegin + baseSpan;
+		view.baseVertices = baseModel->vertices;
+		view.basePointNormals = baseModel->point_normals;
+		view.baseNumVertices = baseModel->num_vertices;
+		view.baseNumPointNormals = baseModel->num_point_normals;
+	}
 
 	SourceMesh source;
 	char error[256];
@@ -1141,7 +1190,7 @@ static bool ConvertModelSlot(int slot, char* status, int statusCapacity)
 				slot, bake.bakedCount, bake.submeshCount, bake.dedupedCount, (int)bake.pixels.size());
 		else
 			printWarning("AssetCatalog: texture-bake: slot %d, %d/%d submeshes textured (%d deduped), "
-				"%d untextured, %d truncated; first %s (%s)\n",
+				"%d untextured (%d by image cap); first %s (%s)\n",
 				slot, bake.bakedCount, bake.submeshCount, bake.dedupedCount,
 				bake.untexturedCount, bake.truncatedCount,
 				TextureBake_ReasonName(bake.firstReason), bake.firstDetail);
@@ -1556,10 +1605,10 @@ bool AssetCatalogGame_PrepareRegionDraw(char* status, int statusCapacity)
 	}
 
 	snprintf(status, statusCapacity,
-		"region draw: %d placements%s, %d distinct slots, %d converted, %d failed%s; %s",
+		"region draw: %d placements%s, %d distinct slots%s, %d converted, %d failed; %s",
 		copied, s_regionPlacementsTruncated ? " (placement-truncated)" : "",
-		distinctCount, s_regionConvertedSlotCount, s_regionFailedSlotCount,
-		s_regionResourcesTruncated ? " (resource-truncated)" : "",
+		distinctCount, s_regionResourcesTruncated ? " (resource-truncated)" : "",
+		s_regionConvertedSlotCount, s_regionFailedSlotCount,
 		walk.capacityExceeded ? "walker object bound reached" : "walker complete");
 	return true;
 }

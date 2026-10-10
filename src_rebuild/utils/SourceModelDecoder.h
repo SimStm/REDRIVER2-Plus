@@ -50,6 +50,12 @@
  *    below the declared vertex count; every gouraud normal index is below the
  *    declared point-normal count. No partial success, no clamping, no silent
  *    skips.
+ *  - Instanced models (instance_number != -1) are supported: the instance span
+ *    supplies the polygon block/num_polys, while the vertex and point-normal
+ *    arrays (and their counts) come from a second, caller-supplied base span;
+ *    polygon indices are absolute into the base arrays. The instance's own
+ *    vertex/point-normal fields are ignored. A missing or invalid base span is
+ *    the named SOURCE_MODEL_ERROR_INSTANCE_BASE.
  *
  * There are no game types, no PsyCross and no GPU dependency in this header.
  * C++11-compatible; failures are named codes, never exceptions.
@@ -61,7 +67,7 @@ enum SourceModelDecoderError
 	SOURCE_MODEL_ERROR_NONE = 0,
 	SOURCE_MODEL_ERROR_ARGUMENT,           // no destination mesh
 	SOURCE_MODEL_ERROR_RANGE,              // empty or invalid [begin,end)
-	SOURCE_MODEL_ERROR_INSTANCE,           // instanced model, not decodable from a span
+	SOURCE_MODEL_ERROR_INSTANCE_BASE,      // instanced model whose base span is missing/invalid
 	SOURCE_MODEL_ERROR_VERTICES_RANGE,     // vertex array outside the span
 	SOURCE_MODEL_ERROR_POINT_NORMALS_RANGE,// point-normal array outside the span
 	SOURCE_MODEL_ERROR_POLY_BLOCK_RANGE,   // polygon block start outside the span
@@ -126,17 +132,37 @@ struct SourceModelDecoderResult
 
 /* POD echo of the MODEL fields the decoder needs. Every offset is a byte
    offset from `begin` (the MODEL base), matching GET_MODEL_DATA on a relocated
-   model. `instanceNumber` must be -1: instanced models reference another model
-   that is not in this span. */
+   model.
+
+   Instanced models (MODEL::instance_number != -1) do not own their vertex or
+   point-normal arrays: they share the base model's arrays and their polygon
+   vertex and normal indices are ABSOLUTE into those arrays (models.c
+   `_MDL_GETTER_vertices/normals/point_normals`; draw.c `&srcVerts[polys->v0]`).
+   For an instanced model the caller must also fill the base fields below; the
+   instance's own `vertices`/`numVertices`/`pointNormals`/`numPointNormals` are
+   ignored, and the instance span supplies only the polygon block and num_polys.
+   `baseBegin`/`baseEnd` bound the base model's byte span; `baseVertices` and
+   `basePointNormals` are the base model's own byte offsets from `baseBegin`, and
+   `baseNumVertices`/`baseNumPointNormals` are its declared counts. A missing or
+   invalid base span fails with SOURCE_MODEL_ERROR_INSTANCE_BASE. The base fields
+   are unused (and may be left zero) when `instanceNumber == -1`. */
 struct SourceModelView
 {
-	int instanceNumber;          // MODEL::instance_number
+	int instanceNumber;          // MODEL::instance_number (-1 when not instanced)
 	unsigned int numVertices;    // MODEL::num_vertices
 	unsigned int numPolys;       // MODEL::num_polys
 	unsigned int numPointNormals;// MODEL::num_point_normals
 	int vertices;                // byte offset of the SVECTOR vertex array
 	int polyBlock;               // byte offset of the polygon block
 	int pointNormals;            // byte offset of the SVECTOR point-normal array
+
+	// Base model (instanced models only); zero/NULL for a non-instanced model.
+	const unsigned char* baseBegin;   // base MODEL base
+	const unsigned char* baseEnd;     // base model span end
+	int baseVertices;                 // base MODEL::vertices (offset from baseBegin)
+	int basePointNormals;             // base MODEL::point_normals (offset from baseBegin)
+	unsigned int baseNumVertices;     // base MODEL::num_vertices
+	unsigned int baseNumPointNormals; // base MODEL::num_point_normals
 };
 
 /* Coarse class of a decoded primitive. The class plus the source texture

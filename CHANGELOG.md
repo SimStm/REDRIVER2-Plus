@@ -22,6 +22,20 @@ where release policy permits it.
   `NativeRenderer_SetClipPlanes(near, far)` replaces the hardcoded metre-scale
   0.02/300 for raw-unit scenes (the bridge supplies ~100 / ~125000).
 
+- E03 finalize-rendering F1 (alpha/cutout sampling): the native scene pipelines now sample
+  the baked texture alpha with a single straight-alpha blend state (RGB
+  `SRC_ALPHA`/`INV_SRC_ALPHA`, alpha `ONE`/`INV_SRC_ALPHA`, `ADD`): alpha 255 renders opaque,
+  128 blends 50%, 0 is a hole. The shared 1x1 white texel (alpha 255) makes the blend a no-op
+  for untextured and placeholder paths, so those are unchanged. Depth writes stay enabled for
+  this bounded slice (no ordered transparency pass yet); documented. Explicit deviation: a texel
+  with STP=1 inside a primitive the game draws opaquely appears at 50% natively (one blend state
+  for every primitive, no per-primitive mode). The native renderer smoke
+  gains an alpha fixture (a 4x1 image: opaque red, alpha-128 green, alpha-0 hole, opaque blue)
+  pinning the blend arithmetic; smoke is now 222 checks / 0 failures. This does not prove
+  colour parity with the legacy renderer (no ordered transparency pass, depth writes on, blend
+  on the sRGB swap chain may differ from the UNORM readback, no per-primitive PSX blend modes
+  `BM_ADD`/`BM_SUBTRACT`, base-colour maps only, no LOD/streaming, no lighting).
+
 ### Added
 
 - E03 source MODEL decoder foundation (Block 1, extended in Block 2):
@@ -32,8 +46,9 @@ where release policy permits it.
   20/21 (`POLYFT3`/`FT4`, 20 B) and 22/23 (`POLYGT3`/`GT4`, 24 B); 10/20/22 are
   triangles and 11/21/23 quads. It strides by `PolySizes[ptype & 0x1f]`, emits the
   world quad order `(v0,v1,v3,v2)` with UVs `(uv0,uv1,uv3,uv2)`, validates the
-  total span/indices/normals with named errors and zero output, rejects instanced
-  models, and stores raw stored face colours per submesh with aligned zero
+  total span/indices/normals with named errors and zero output (instanced models were
+  rejected in this block; later superseded by the F4 base-span decode below), and stores raw
+  stored face colours per submesh with aligned zero
   placeholders and per-submesh `hasColors`/`hasNormals`. The runtime
   `ConvertPolygonTypes` converts every even declared ptype except 8 (10->11,
   20->21, 22->23), so the building loop draws `{11,21,23}` and the declared types
@@ -278,10 +293,9 @@ where release policy permits it.
   camera (2913 instances drawn, 46 resident resources); it is untextured (base colours
   only), the placement/resource caps truncate the level's full content (the E02 inventory
   counted 6740 unique placements), and 18 referenced slots are instanced models the
-  single-span decoder rejects (recorded follow-up: base-instance vertex resolution). No
+  single-span decoder rejects (later resolved by the F4 block below). No
   LOD/streaming, no texture/lighting parity; a dev run is not visual acceptance. Recorded
-  follow-ups: instanced-model decode (base-instance vertex resolution) so those slots
-  convert; the placement/resource caps remain bounded dev limits; promote `PublishMultiMesh`
+  follow-ups: the placement/resource caps remain bounded dev limits; promote `PublishMultiMesh`
   into `AssetConverter` (from the previous block).
 
 - E03 texture phase (T1-T3): the native world pipeline now carries and samples textures end
@@ -341,6 +355,40 @@ where release policy permits it.
   full-page upload, only base-colour maps consumed, and only the stored-block PNG subset - a
   general compressed PNG is rejected by the loader); the same bounded caps/instanced-slot
   gaps as the region block remain; a dev run is not visual acceptance.
+
+- E03 finalize-rendering F3 (loader robustness): `utils/GltfLoader.cpp` now reports a missing
+  zlib Adler-32 trailer as a named error, recomputes and verifies PNG chunk CRCs (named error on
+  mismatch), and `MaterialReferencesUnsupportedTexture` rejects texture references expressed
+  inside material `extensions` (recursive key scan, e.g. KHR spec-gloss) instead of silently
+  dropping them. The texture-bake warning now labels the image-cap overlap honestly
+  (`N submeshes untextured (M by image cap)`). `GltfRoundTripTests` is now 160 checks.
+
+- E03 finalize-rendering F4 (instanced-model decode): `utils/SourceModelDecoder.*` now decodes
+  instanced models. `MODEL.instance_number` is a base-model slot owning the shared vertex/normal
+  arrays; indices are absolute into the base array (no duplication). The decoder accepts a
+  caller-supplied base span plus base counts: vertices/normals are emitted from the base span
+  (validated against the base's `numVertices`/`numPointNormals`, and the base vertex block is
+  bounds-checked inside the base span), the instance's own span still supplies the poly block and
+  `num_polys`, and the instance's own vertex/normal fields are ignored. A missing or invalid base
+  is the named `SOURCE_MODEL_ERROR_INSTANCE_BASE` ("instance-base") with zero partial output.
+  `ConvertModelSlot` (`Game/C/assetcatalog_game.c`) resolves the base slot through
+  `modelpointers[instance_number]` (resident, not `dummyModel`) and the catalog span (the base
+  may not be among the converted slots), with named diagnostics; other slots continue.
+  `SourceModelDecoderTests` is extended to 1211 checks (+25: an instanced fixture asserting the
+  absolute-index positions/normals, and the two old rejection fixtures now assert the
+  missing-base code). All inspector suites are green (`SourceModelDecoderTests` 1211,
+  `GltfRoundTripTests` 160, others unchanged) and `Release_dev`/`Release_dev_native` builds exit
+  0. Real region run (`-drawregion`): prepare now logs `4096 placements (placement-truncated),
+  64 distinct slots, 64 converted, 0 failed (resource-truncated)` (was 46 converted / 18 failed)
+  and `registered 64/64 resources`; the report is `submitted 4096, drawn 3147,
+  skippedUnresolved 949, residentResources 64, level-generation 1` with `diag: unresolved
+  instance slot 206 src 2638`; the offscreen 640x360 frame has 177140 non-clear pixels (~77%) and
+  11325 distinct colours (before: 64174 pixels / 8 colours untextured; 400 after textures). The
+  instanced decode converts all 64 capped slots (0 failures); the remaining 949 unresolved
+  placements belong to slots beyond the 64-resource cap (bounded dev limits), not decode
+  failures. The bounded region snapshot now renders textured and alpha-blended with the game
+  camera; it does not prove colour parity with the legacy renderer, the caps remain, and a dev
+  run is not visual acceptance.
 
 - ODT-to-GLB tooling spike (bounded, external, temp-only; no repository
   integration): OpenDriver2Tools master @

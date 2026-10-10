@@ -24,6 +24,18 @@
  * samples correctly. RenderSceneToRGBA runs the same draw into an offscreen
  * readback target for tests and evidence capture.
  *
+ * Alpha/cutout: the baked texture carries the PSX alpha convention from
+ * knowledge/rules/texture-alpha-semantics.md (0x0000 -> 0, STP=1 with unknown
+ * blend context -> 128, otherwise 255). The unlit slice samples that alpha and
+ * blends with one straight-alpha state (SRC_ALPHA / INV_SRC_ALPHA for RGB,
+ * ONE / INV_SRC_ALPHA for alpha): alpha 255 is opaque, alpha 128 is a 50%
+ * blend into the background, and alpha 0 leaves the destination untouched. A
+ * single pipeline covers textured and untextured primitives because the shared
+ * white texel (alpha 255) makes the blend a no-op, so the placeholder and
+ * untextured paths are unchanged. Depth writes stay enabled for this bounded
+ * slice, so a semi-transparent primitive also writes depth; ordered
+ * transparency is a later block.
+ *
  * Coordinate/unit policy (pinned by tests/SourceModelDecoderTests.cpp): the
  * camera `view` matrix, decoded vertices and the projection near/far must share
  * one unit. The game and the decoder use raw game units (4096 per metre), and

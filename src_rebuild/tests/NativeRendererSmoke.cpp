@@ -26,6 +26,11 @@
 // stored-block subset with a named diagnostic, leaving the loaded content and
 // the scene draw unaffected.
 //
+// Part 7: a textured primitive with a 4x1 image (opaque red, alpha-128 green, an
+// alpha-0 hole and opaque blue) renders through the real offscreen pipeline and
+// the readback matches the straight-alpha blend arithmetic over the clear
+// colour, pinning the PSX alpha semantics of the unlit slice.
+//
 // It requires a Vulkan-capable GPU/driver and the Diligent libraries built by
 // scripts/fetch_diligent.ps1; it needs no game assets. Build and run
 // instructions are in tests/README.md.
@@ -1299,6 +1304,112 @@ static void TestTexturedMultiPrimitiveResource()
 	NativeRenderer_ClearResources();
 }
 
+// Writes a full-screen horizontal rectangle whose 4x1 base-colour image encodes
+// the PSX alpha convention (knowledge/rules/texture-alpha-semantics.md), left to
+// right: opaque red (255,0,0,255), semi-transparent green (0,255,0,128), a fully
+// transparent blue hole (0,0,255,0) and opaque blue (0,0,255,255). Raw texel UVs
+// 0..256 map to normalized 0..1, so each texel owns a 16-pixel screen quarter.
+static bool WriteAlphaFixture(const char* path, char* error, int errorCapacity)
+{
+	GltfMultiMeshData multi;
+	GltfPrimitiveData primitive;
+	// The world half-extent that exactly fills the 64x64 view: with the camera at
+	// y = 20000 (depth 20000) and a 60-degree fov, NDC.x = 1 at
+	// x = depth * tan(30) = 11547. All vertices share world y = 0, so the camera
+	// depth is constant and the quarter boundaries fall at screen x = 16/32/48.
+	const float half = 11547.0f;
+	primitive.positions = {
+		-half, 0, -half,  half, 0, -half,  half, 0, half,  -half, 0, half,
+	};
+	primitive.uvs = { 0, 0,  256, 0,  256, 256,  0, 256 };
+	primitive.indices = { 0, 1, 2,  0, 2, 3 };
+	primitive.vertexCount = 4;
+	primitive.triangleCount = 2;
+	primitive.imageRgba = {
+		255, 0, 0, 255,	// opaque red
+		0, 255, 0, 128,	// semi-transparent green (STP=1)
+		0, 0, 255, 0,	// fully transparent blue (0000h hole)
+		0, 0, 255, 255,	// opaque blue
+	};
+	primitive.imageWidth = 4;
+	primitive.imageHeight = 1;
+	multi.primitives.push_back(primitive);
+	return Gltf_WriteFileMulti(path, multi, error, errorCapacity) == 0;
+}
+
+// E03 alpha/cutout phase: a textured primitive must sample the texture alpha and
+// apply the PSX semantics through the real offscreen pipeline. The scene clears
+// to (0.05, 0.07, 0.12) = (13, 18, 31) and the pipeline blends with
+// SRC_ALPHA / INV_SRC_ALPHA, so:
+//   * opaque red (a = 1)   -> 255,0,0   (the texel reproduces itself exactly)
+//   * alpha-128 green      -> src*src.a + dst*(1 - src.a)
+//                          = (0, 0.50196, 0) + 0.49804*(0.05098, 0.07059, 0.12157)
+//                          = (0.0254, 0.5371, 0.0605) -> (6, 137, 15)
+//   * alpha-0 blue (hole)  -> the destination is untouched: the clear (13,18,31)
+//   * opaque blue (a = 1)  -> 0,0,255
+// The blended green channel (~137) proves a 50% blend: neither the opaque texel
+// (255) nor the bare clear colour (18).
+static void TestAlphaBlendSemantics()
+{
+	char error[256];
+	NativeRenderer_ClearContent();
+	NativeRenderer_ClearInstances();
+	NativeRenderer_ClearResources();
+
+	Check(WriteAlphaFixture("alpha-blend.glb", error, sizeof(error)),
+		"alpha fixture written");
+	Check(NativeRenderer_LoadContent("alpha-blend.glb", error, sizeof(error)) == 1,
+		"alpha fixture loaded");
+
+	float view[16];
+	BuildTopDownView(20000.0f, view);
+	NativeRenderer_SetCamera(view, 1.0472f);
+	NativeRenderer_SetClipPlanes(100.0f, 125000.0f);
+
+	unsigned char image[64 * 64 * 4] = {};
+	Check(NativeRenderer_RenderSceneToRGBA(image, 64, 64, error, sizeof(error)) == 1,
+		"alpha fixture rendered offscreen");
+
+	// Sample the centre row of each 16-pixel quarter (x = 8 / 24 / 40 / 56),
+	// safely inside the texel regions.
+	const unsigned char* opaqueRed = &image[((32 * 64) + 8) * 4];
+	const unsigned char* semiGreen = &image[((32 * 64) + 24) * 4];
+	const unsigned char* hole = &image[((32 * 64) + 40) * 4];
+	const unsigned char* opaqueBlue = &image[((32 * 64) + 56) * 4];
+
+	const bool redOpaque = IsRed(opaqueRed) && opaqueRed[3] == 255;
+	if (!redOpaque)
+		printf("    (alpha-255 texel %u,%u,%u,%u, expected opaque red 255,0,0,255)\n",
+			opaqueRed[0], opaqueRed[1], opaqueRed[2], opaqueRed[3]);
+	Check(redOpaque, "alpha 255 samples opaque (the blend is a no-op)");
+
+	// src = (0,1,0), src.a = 128/255; dst = clear (13,18,31). The straight-alpha
+	// blend gives roughly (6,137,15).
+	const bool greenBlended = semiGreen[0] <= 16 &&
+		semiGreen[1] >= 120 && semiGreen[1] <= 155 &&
+		semiGreen[2] >= 8 && semiGreen[2] <= 24 && semiGreen[3] == 255;
+	if (!greenBlended)
+		printf("    (alpha-128 texel %u,%u,%u,%u, expected ~6,137,15,255 over the clear)\n",
+			semiGreen[0], semiGreen[1], semiGreen[2], semiGreen[3]);
+	Check(greenBlended, "alpha 128 blends 50% into the background");
+	Check(semiGreen[1] > 60 && semiGreen[1] < 200,
+		"the alpha-128 result is neither the opaque texel nor the bare clear colour");
+
+	const bool holeTransparent = IsClear(hole);
+	if (!holeTransparent)
+		printf("    (alpha-0 texel %u,%u,%u,%u, expected the clear colour ~13,18,31,255)\n",
+			hole[0], hole[1], hole[2], hole[3]);
+	Check(holeTransparent, "alpha 0 leaves the destination untouched (a hole)");
+
+	const bool blueOpaque = IsBlue(opaqueBlue) && opaqueBlue[3] == 255;
+	if (!blueOpaque)
+		printf("    (opaque blue texel %u,%u,%u,%u, expected 0,0,255,255)\n",
+			opaqueBlue[0], opaqueBlue[1], opaqueBlue[2], opaqueBlue[3]);
+	Check(blueOpaque, "the neighbouring opaque texel is still fully opaque");
+
+	NativeRenderer_ClearContent();
+}
+
 // ---------------------------------------------------------------------------
 // E03 texture phase 3: converted content with an embedded base-colour image.
 // The multi record now holds the writer's stored-block PNG, so a stored-block
@@ -1755,6 +1866,7 @@ int main()
 	TestInstanceScreenRegions();
 	TestMultiPrimitiveResource();
 	TestTexturedMultiPrimitiveResource();
+	TestAlphaBlendSemantics();
 	TestTexturedContentRejected();
 	TestInstanceResidencyAndDiagnostics();
 	TestCameraConventionAndPlaceholder();

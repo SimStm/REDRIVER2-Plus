@@ -385,6 +385,126 @@ static int WriteGlbFromJsonBin(const char* path, const char* json, const std::ve
 	return wrote ? 1 : 0;
 }
 
+// --- test-local stored-block PNG builder ------------------------------------
+// Builds exactly the writer's PNG subset (8-bit RGBA, per-scanline filter None,
+// one stored deflate block) so a test can corrupt one aspect at a time.
+
+static unsigned int TestCrc32(const unsigned char* data, size_t length)
+{
+	unsigned int crc = 0xFFFFFFFFu;
+	for (size_t i = 0; i < length; i++)
+	{
+		crc ^= data[i];
+		for (int bit = 0; bit < 8; bit++)
+			crc = (crc >> 1) ^ (0xEDB88320u & (unsigned int)(-(int)(crc & 1)));
+	}
+	return crc ^ 0xFFFFFFFFu;
+}
+
+static unsigned int TestAdler32(const unsigned char* data, size_t length)
+{
+	unsigned int a = 1, b = 0;
+	for (size_t i = 0; i < length; i++)
+	{
+		a = (a + data[i]) % 65521u;
+		b = (b + a) % 65521u;
+	}
+	return (b << 16) | a;
+}
+
+static void AppendU32BE(std::vector<unsigned char>& out, unsigned int value)
+{
+	out.push_back((unsigned char)((value >> 24) & 0xff));
+	out.push_back((unsigned char)((value >> 16) & 0xff));
+	out.push_back((unsigned char)((value >> 8) & 0xff));
+	out.push_back((unsigned char)(value & 0xff));
+}
+
+static void AppendPngChunk(std::vector<unsigned char>& png, const char type[4],
+	const unsigned char* data, size_t length)
+{
+	AppendU32BE(png, (unsigned int)length);
+	const size_t crcStart = png.size();
+	png.insert(png.end(), type, type + 4);
+	if (length)
+		png.insert(png.end(), data, data + length);
+	AppendU32BE(png, TestCrc32(png.data() + crcStart, png.size() - crcStart));
+}
+
+// `includeAdler` lets a test omit the zlib Adler-32 trailer while keeping every
+// chunk CRC valid, isolating the missing-trailer check.
+static std::vector<unsigned char> MakeStoredPng(int width, int height,
+	const std::vector<unsigned char>& rgba, bool includeAdler)
+{
+	std::vector<unsigned char> raw;
+	for (int y = 0; y < height; y++)
+	{
+		raw.push_back(0); // filter type None
+		raw.insert(raw.end(), rgba.begin() + (size_t)y * width * 4,
+			rgba.begin() + (size_t)(y + 1) * width * 4);
+	}
+
+	std::vector<unsigned char> zlib;
+	zlib.push_back(0x78); // CM=8 (deflate), CINFO=7
+	zlib.push_back(0x01); // FCHECK, no dictionary
+	const unsigned int len = (unsigned int)raw.size();
+	zlib.push_back(1); // BFINAL=1, BTYPE=00 (stored)
+	zlib.push_back((unsigned char)(len & 0xff));
+	zlib.push_back((unsigned char)((len >> 8) & 0xff));
+	const unsigned int nlen = len ^ 0xffffu;
+	zlib.push_back((unsigned char)(nlen & 0xff));
+	zlib.push_back((unsigned char)((nlen >> 8) & 0xff));
+	zlib.insert(zlib.end(), raw.begin(), raw.end());
+	if (includeAdler)
+	{
+		const unsigned int adler = TestAdler32(raw.data(), raw.size());
+		zlib.push_back((unsigned char)((adler >> 24) & 0xff));
+		zlib.push_back((unsigned char)((adler >> 16) & 0xff));
+		zlib.push_back((unsigned char)((adler >> 8) & 0xff));
+		zlib.push_back((unsigned char)(adler & 0xff));
+	}
+
+	std::vector<unsigned char> png;
+	static const unsigned char signature[8] = { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A };
+	png.insert(png.end(), signature, signature + 8);
+	unsigned char ihdr[13] = { 0 };
+	ihdr[0] = (unsigned char)((width >> 24) & 0xff);
+	ihdr[1] = (unsigned char)((width >> 16) & 0xff);
+	ihdr[2] = (unsigned char)((width >> 8) & 0xff);
+	ihdr[3] = (unsigned char)(width & 0xff);
+	ihdr[4] = (unsigned char)((height >> 24) & 0xff);
+	ihdr[5] = (unsigned char)((height >> 16) & 0xff);
+	ihdr[6] = (unsigned char)((height >> 8) & 0xff);
+	ihdr[7] = (unsigned char)(height & 0xff);
+	ihdr[8] = 8;  // bit depth
+	ihdr[9] = 6;  // colour type RGBA
+	AppendPngChunk(png, "IHDR", ihdr, sizeof(ihdr));
+	AppendPngChunk(png, "IDAT", zlib.data(), zlib.size());
+	AppendPngChunk(png, "IEND", NULL, 0);
+	return png;
+}
+
+// Writes a one-primitive GLB whose material's base-colour image is `png`.
+static int WriteGlbWithImage(const char* path, const std::vector<unsigned char>& png)
+{
+	const unsigned int positionBytes = 36; // 3 * VEC3 float32
+	std::vector<unsigned char> bin(positionBytes, 0);
+	bin.insert(bin.end(), png.begin(), png.end());
+	const unsigned int imageLength = (unsigned int)png.size();
+
+	std::string json =
+		"{\"asset\":{\"version\":\"2.0\"},"
+		"\"meshes\":[{\"primitives\":[{\"attributes\":{\"POSITION\":0},\"material\":0}]}],"
+		"\"materials\":[{\"pbrMetallicRoughness\":{\"baseColorTexture\":{\"index\":0}}}],"
+		"\"textures\":[{\"source\":0}],"
+		"\"images\":[{\"bufferView\":1,\"mimeType\":\"image/png\"}],"
+		"\"accessors\":[{\"bufferView\":0,\"componentType\":5126,\"count\":3,\"type\":\"VEC3\"}],"
+		"\"bufferViews\":[{\"buffer\":0,\"byteOffset\":0,\"byteLength\":36},"
+		"{\"buffer\":0,\"byteOffset\":36,\"byteLength\":" + std::to_string(imageLength) + "}],"
+		"\"buffers\":[{\"byteLength\":" + std::to_string(positionBytes + imageLength) + "}]}";
+	return WriteGlbFromJsonBin(path, json.c_str(), bin);
+}
+
 static void TestMultiPrimitiveLoaderRejections()
 {
 	char error[256];
@@ -569,6 +689,66 @@ static void TestUnsupportedPngRejection()
 	CHECK(loaded.primitives.empty()); // zero partial output
 }
 
+// A stored-block PNG whose IDAT zlib stream is missing its Adler-32 trailer must
+// be a named rejection, not a tolerated truncation.
+static void TestStoredPngTruncatedTrailer()
+{
+	const std::vector<unsigned char> rgba(4, 200); // one opaque pixel
+	const std::vector<unsigned char> png = MakeStoredPng(1, 1, rgba, false);
+	CHECK(WriteGlbWithImage("png-no-trailer.glb", png));
+
+	char error[256];
+	GltfMultiMeshData loaded;
+	loaded.primitives.push_back(GltfPrimitiveData());
+	CHECK(Gltf_LoadFileMulti("png-no-trailer.glb", &loaded, error, sizeof(error)) == -1);
+	CHECK(error[0] != '\0');
+	CHECK(strstr(error, "Adler") != NULL);
+	CHECK(loaded.primitives.empty()); // zero partial output
+}
+
+// A PNG whose chunk CRC does not match its type+data must be rejected rather than
+// trusted.
+static void TestPngCorruptedChunkCrc()
+{
+	const std::vector<unsigned char> rgba(4, 10); // one opaque pixel
+	std::vector<unsigned char> png = MakeStoredPng(1, 1, rgba, true);
+	CHECK(png.size() > 16);
+	png[16] ^= 0xff; // corrupt the IHDR payload without updating its CRC
+	CHECK(WriteGlbWithImage("png-bad-crc.glb", png));
+
+	char error[256];
+	GltfMultiMeshData loaded;
+	loaded.primitives.push_back(GltfPrimitiveData());
+	CHECK(Gltf_LoadFileMulti("png-bad-crc.glb", &loaded, error, sizeof(error)) == -1);
+	CHECK(error[0] != '\0');
+	CHECK(strstr(error, "CRC") != NULL);
+	CHECK(loaded.primitives.empty()); // zero partial output
+}
+
+// A material whose `extensions` carries a texture reference (KHR spec-gloss
+// diffuseTexture) must be rejected, not silently dropped.
+static void TestMaterialExtensionTextureRejection()
+{
+	const std::vector<unsigned char> positionOnly(36, 0); // POSITION: 3 * VEC3 float
+	CHECK(WriteGlbFromJsonBin("load-extension-texture.glb",
+		"{\"asset\":{\"version\":\"2.0\"},"
+		"\"meshes\":[{\"primitives\":[{\"attributes\":{\"POSITION\":0},\"material\":0}]}],"
+		"\"materials\":[{\"extensions\":{\"KHR_materials_pbrSpecularGlossiness\":"
+		"{\"diffuseTexture\":{\"index\":0}}}}],"
+		"\"accessors\":[{\"bufferView\":0,\"componentType\":5126,\"count\":3,\"type\":\"VEC3\"}],"
+		"\"bufferViews\":[{\"buffer\":0,\"byteOffset\":0,\"byteLength\":36}],"
+		"\"buffers\":[{\"byteLength\":36}]}",
+		positionOnly));
+
+	char error[256];
+	GltfMultiMeshData loaded;
+	loaded.primitives.push_back(GltfPrimitiveData());
+	CHECK(Gltf_LoadFileMulti("load-extension-texture.glb", &loaded, error, sizeof(error)) == -1);
+	CHECK(error[0] != '\0');
+	CHECK(strstr(error, "texture") != NULL);
+	CHECK(loaded.primitives.empty()); // zero partial output
+}
+
 int main()
 {
 	TestRoundTrip();
@@ -582,6 +762,9 @@ int main()
 	TestImageRoundTrip();
 	TestMultiMixedImage();
 	TestUnsupportedPngRejection();
+	TestStoredPngTruncatedTrailer();
+	TestPngCorruptedChunkCrc();
+	TestMaterialExtensionTextureRejection();
 
 	printf("%d checks, %d failures\n", g_checks, g_failures);
 	return g_failures == 0 ? 0 : 1;

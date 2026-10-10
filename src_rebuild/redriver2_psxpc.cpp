@@ -1091,8 +1091,57 @@ static void NativeRenderer_DevRegionDrawReport(int submitted, const float view[1
 	if (unresolvedIndex >= 0)
 	{
 		const NativeInstance& instance = s_regionDrawInstances[unresolvedIndex];
-		snprintf(diagText, sizeof(diagText), "; diag: unresolved instance slot %d src %d key %s",
-			instance.modelSlot, instance.sourceObjectIndex, instance.resourceKey);
+
+		// Name the unresolved instance's origin. The resource registry already
+		// told the bridge this slot has no published key; to tell a failed
+		// conversion from a truncated (never attempted) slot, note that the
+		// preparation attempts only the first bounded set of distinct
+		// referenced slots. A slot inside that set was attempted and failed,
+		// while one outside it was truncated. When no truncation was reported
+		// every referenced slot was attempted, so the slot simply failed. The
+		// attempted set is reconstructed from the bridge's own prepared
+		// placement list, in the same walk order the preparation used.
+		const char* origin = "failed slot";
+
+		if (AssetCatalogGame_RegionDrawResourcesTruncated())
+		{
+			int attemptedSlots[ASSET_CATALOG_GAME_MAX_MODEL_RESOURCES];
+			int attemptedCount = 0;
+
+			for (int i = 0; i < placementCount && attemptedCount < ASSET_CATALOG_GAME_MAX_MODEL_RESOURCES; ++i)
+			{
+				AssetCatalogGameDrawPlacement placement;
+
+				if (!AssetCatalogGame_GetRegionDrawPlacement(i, &placement))
+					continue;
+
+				bool seen = false;
+				for (int s = 0; s < attemptedCount; ++s)
+					if (attemptedSlots[s] == placement.modelSlot)
+					{
+						seen = true;
+						break;
+					}
+
+				if (!seen)
+					attemptedSlots[attemptedCount++] = placement.modelSlot;
+			}
+
+			bool attempted = false;
+			for (int s = 0; s < attemptedCount; ++s)
+				if (attemptedSlots[s] == instance.modelSlot)
+				{
+					attempted = true;
+					break;
+				}
+
+			if (!attempted)
+				origin = "truncated slot";
+		}
+
+		snprintf(diagText, sizeof(diagText),
+			"; diag: unresolved instance slot %d src %d (%s) key %s",
+			instance.modelSlot, instance.sourceObjectIndex, origin, instance.resourceKey);
 	}
 	else if (hasDiagnostic)
 	{

@@ -423,6 +423,30 @@ int CreateScenePipeline(TEXTURE_FORMAT colorFormat, const char* name, IPipelineS
 	psoCI.GraphicsPipeline.RasterizerDesc.CullMode = CULL_MODE_BACK;
 	psoCI.GraphicsPipeline.RasterizerDesc.FrontCounterClockwise = False;
 	psoCI.GraphicsPipeline.DepthStencilDesc.DepthEnable = True;
+
+	// PSX alpha semantics in the unlit slice (knowledge/rules/texture-alpha-
+	// semantics.md): the baked texture carries 0/128/255 for transparent /
+	// semi-transparent / opaque. One straight-alpha blend state serves all three
+	// for an unlit draw: RGB = src.rgb * src.a + dst.rgb * (1 - src.a), so an
+	// opaque texel (a = 1) reproduces itself exactly, an STP=1 texel (a = 0.5)
+	// halves into the background, and a 0000h texel (a = 0) leaves the
+	// destination untouched. Alpha keeps the destination opaque through
+	// ONE/INV_SRC_ALPHA so the readback stays a = 255. A single pipeline is used
+	// for textured and untextured primitives: an untextured primitive samples
+	// the shared white texel (a = 255), so its blend is a no-op and its base
+	// colour is unchanged. Depth writes stay on for this bounded slice; a
+	// semi-transparent primitive therefore also writes depth, which is
+	// acceptable here (no sorted transparent pass yet) and is revisited when
+	// the renderer gains ordered transparency.
+	RenderTargetBlendDesc& blend = psoCI.GraphicsPipeline.BlendDesc.RenderTargets[0];
+	blend.BlendEnable = True;
+	blend.SrcBlend = BLEND_FACTOR_SRC_ALPHA;
+	blend.DestBlend = BLEND_FACTOR_INV_SRC_ALPHA;
+	blend.BlendOp = BLEND_OPERATION_ADD;
+	blend.SrcBlendAlpha = BLEND_FACTOR_ONE;
+	blend.DestBlendAlpha = BLEND_FACTOR_INV_SRC_ALPHA;
+	blend.BlendOpAlpha = BLEND_OPERATION_ADD;
+
 	psoCI.GraphicsPipeline.InputLayout.LayoutElements = elements;
 	psoCI.GraphicsPipeline.InputLayout.NumElements = 2;
 	psoCI.pVS = g_scene.vertexShader;

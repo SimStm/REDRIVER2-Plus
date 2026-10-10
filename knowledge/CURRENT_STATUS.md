@@ -102,17 +102,15 @@ accepted.
   `dependencies/DiligentEngine`; C++17, `volk.lib`, `glslang.lib`, `/std:c++17`). `native/NativeRenderer.*` owns
   the device/swap chain (Diligent-free C ABI) and draws converted GLB geometry/texture; the game links it on
   Windows behind `RED2_NATIVE_RENDERER`, with PsyCross headless (`PsyX_SetHeadless`) and a post-frame camera feed
-  (`PsyX_SetPostFrameHandler`); `Release_dev_native` builds `RED2_NATIVE_RENDERER=1 -nointro -nofmv`. Smoke 15/38;
-  the gated probe first hit `VK_ERROR_NATIVE_WINDOW_IN_USE_KHR`; the in-game probe drew content and exited 0.
+  (`PsyX_SetPostFrameHandler`); `Release_dev_native` builds `RED2_NATIVE_RENDERER=1 -nointro -nofmv`.
 - Source decode + policy (blocks 1, 2.1, 2a, 2.5; detail in CHANGELOG): `utils/SourceModelDecoder.*` is a pure,
   asset-free decoder of the MODEL poly block from an explicit `[begin,end)` span (allowlist `{10,11,20,21,22,23}`;
   stride `PolySizes[ptype & 0x1f]`; world quad order `(v0,v1,v3,v2)` with UVs `(uv0,uv1,uv3,uv2)`; named-error
-  validation, zero output; instanced models rejected); `Strict` (default) vs `SkipUnsupported` apply to
-  building-class models only. Loader `model_byte_sizes[]` exposes `ModelRecord.spanBytes`;
-  `AssetCatalogPlacement.sourceObjectIndex` is the walker's 14-bit index. Pure `Game/C/modelptypeprobe.{h,c}` +
-  `-modelptypes`; Chicago histogram 516 slots/5538 records (after the allowlist 2 outside, ptype 9 only). Pure
-  fixtures pin `RotMatrixY(yang*64)`, the view/NDC winding and the raw-unit policy. Tests: `SourceModelDecoderTests`
-  1186, `ModelPtypeProbeTests` 68, `AssetCatalogTests` 278.
+  validation, zero output); `Strict` (default) vs `SkipUnsupported` apply to building-class models only. Loader
+  `model_byte_sizes[]` exposes `ModelRecord.spanBytes`; `AssetCatalogPlacement.sourceObjectIndex` is the walker's
+  14-bit index. Pure `Game/C/modelptypeprobe.{h,c}` + `-modelptypes`; Chicago histogram 516 slots/5538 records
+  (after the allowlist 2 outside, ptype 9 only). Pure fixtures pin `RotMatrixY(yang*64)`, the view/NDC winding and
+  the raw-unit policy. Tests: `ModelPtypeProbeTests` 68, `AssetCatalogTests` 278.
 - CPU texture decode (block 2.4): `utils/TextureDecode.{h,c}` is a pure decoder of indexed 4/8-bit pages + CLUT
   bytes and 16-bit direct pages into RGBA8 (row stride; BGR555 `E5TO8`, `0000h` transparent, STP->128, no texture
   window); `TextureDecodeTests` 136. ODT spike (temp-only): OpenDriver2Tools master @
@@ -126,9 +124,8 @@ accepted.
   removed); the single writer is byte-identical by construction and by a dedicated test, the single loader keeps its
   tolerant image-retaining contract, and the multi loader is strict and rejects texture references.
   `Game/C/assetcatalog_game.c` `ConvertModelSlot` builds with `BuildMulti` and publishes via a local transactional
-  `PublishMultiMesh` (follow-up: promote into `AssetConverter`). Evidence: `GltfRoundTripTests` 116,
-  `WorldMeshBuilderTests` 211, smoke 154/0; slot 1150 published 3 primitives/3 materials, 22/22 drawn. Limits
-  (superseded by the texture phase below): no textures; flat normals only; one material = mean face colour.
+  `PublishMultiMesh` (follow-up: promote into `AssetConverter`). Limits (superseded by the texture phase below): no
+  textures; flat normals only; one material = mean face colour.
 - Per-instance draw + game camera (block 2 item 4): `native/NativeRenderer.*` adds bounded resources/instances
   (`NATIVE_MAX_RESOURCES`/`NATIVE_MAX_INSTANCES`, raised to 64/4096 for the region path) with a residency API,
   `SetInstances`/`ClearInstances` (copied; unresolved keys skipped with a counter), `SetClipPlanes`,
@@ -137,8 +134,7 @@ accepted.
   `utils/NativeInstanceTransform.*` (392) and `utils/NativeCameraView.*` (9); `redriver2_psxpc.cpp` feeds the real
   camera via `NativeCameraView_Compose` (clip planes 100/125000) with a gated one-shot report/dump.
   `Game/C/assetcatalog_game.{h,c}` adds the slot registry + placements collector and `-drawmodel <slot> [count]`.
-  Evidence: smoke 130/0; run `-drawmodel 169 32` (18/18 drawn, 4 non-clear pixels at y[286..307] = 360-y). Limits:
-  one slot + bounded K; FOV 1.0472 vs 0.9265 deferred; GLB node transform ignored.
+  Limits: one slot + bounded K; FOV 1.0472 vs 0.9265 deferred; GLB node transform ignored.
 - Full-region native draw (block 2 item 5, 2026-10-10; full detail/evidence in CHANGELOG): capacities raised for the
   region path (`NATIVE_MAX_RESOURCES` 64, `NATIVE_MAX_INSTANCES` 4096,
   `ASSET_CATALOG_GAME_MAX_MODEL_RESOURCES` 64, new `ASSET_CATALOG_GAME_MAX_REGION_PLACEMENTS` 4096).
@@ -148,63 +144,55 @@ accepted.
   exposing bounded accessors; cleared at `BeginLevel`; non-Windows/PSX stubs. `redriver2_psxpc.cpp` registers every
   converted resource (logs R/T), builds the full instance list in a static `NativeInstance[4096]` buffer (~1 MB
   BSS; never on the stack), calls `SetInstances` once and reuses the camera-validity gate and one-shot report +
-  `native_region_draw.rgba` 640x360 dump; `main.c` accepts `-drawregion`. Evidence: real mission-1 run prepared
-  `4096 placements (placement-truncated), 64 distinct slots, 46 converted, 18 failed (resource-truncated)`, 18
-  failures named `decode failed: instance (instanced models cannot be decoded from a single span)`, `registered
-  46/46 resources`, report `submitted 4096, drawn 2913, skippedUnresolved 1183, residentResources 46`. Caps
-  truncate the level's full content (E02 counted 6740 unique placements) and 18 referenced slots are instanced
-  models the single-span decoder rejects; no LOD/streaming; a dev run is not visual acceptance. Now textured below.
-- Texture phase T1 (pure pipeline images, 2026-10-10): `GltfPrimitiveData` gains `imageRgba` (RGBA8 row-major,
-  `imageWidth*imageHeight*4`; empty = untextured), `imageWidth`, `imageHeight`. The multi GltfWriter embeds a
-  deterministic PNG per material (minimal dependency-free encoder: 8-bit RGBA, filter None, zlib with stored
-  deflate blocks, CRC32/Adler-32; image bufferViews 4-byte padded); images/textures/samplers are numbered in
-  primitive order; dimensions/data are validated with named errors and zero partial output. No-image output stays
-  byte-identical (the single path is unchanged). The multi GltfLoader decodes the embedded stored-block PNG into
-  `imageRgba` (named error for unsupported variants: dynamic/fixed Huffman, other colour types/bit depths,
-  interlace, non-None filters, non-embedded, non-image/png); the single loader keeps its historical tolerant WIC
-  path. `WorldSubmeshImage { const unsigned char* rgba; int width; int height; size_t byteCount; }` with defaulted
-  trailing params on `WorldMeshBuilder_BuildMulti`; whole-array validation up front; deterministic.
-- Texture phase T2 (game-side bake, 2026-10-10): NEW `Game/C/texturebake.{h,c}` (guarded by `#ifndef PSX`) reads
-  VRAM once per conversion via `GR_ReadVRAM` (1024x512 halfwords), extracts the page + CLUT for each
-  `(textureSet, textureId)` (`format=(tpage>>7)&3; pageX=(tpage&0x0f)<<6; pageY=(tpage&0x10)?256:0;
-  clutX=(clut&0x3f)<<4; clutY=clut>>6; rowStrideHalfwords=1024`; 16/256 CLUT entries; 256x256 full page), decodes
-  via TextureDecode, dedupes identical (page,CLUT) pairs and caps unique images at 64 per model (16 MiB). The
-  TEXINF sub-rect is deliberately not cropped (full-page upload) and the raw 8-bit texel UVs keep their meaning
-  (the renderer scales by 1/256). `ConvertModelSlot` bakes before building and passes the images to `BuildMulti`;
-  additive `texture-bake:` info/warning diagnostics (existing conversion wording unchanged); per-submesh failures
-  are named reasons (texture-not-declared, page-not-resident, unsupported-format, region-out-of-vram, decode-error,
-  image-cap) and that submesh stays untextured while the conversion continues. Residency uses the loader's
-  bookkeeping (tpageloaded/tpageslots; sentinel = never assigned); a known limit: if a page's VRAM slot were reused
-  without the bookkeeping updating, stale pixels could decode - documented, not guessed. The bake is a single
-  VRAM snapshot at prepare: a page not resident then (e.g. streamed later) stays untextured for the run and is not re-baked. The conversion cache
-  optionsHash is keyed on the baked pixels (HashBakedImages; 0 when nothing baked, so the legacy untextured
-  key/output stays byte-identical).
-- Texture phase T3 (renderer sampling, 2026-10-10): `native/NativeRenderer` creates a per-primitive RGBA8_UNORM
-  texture from `imageRgba` with a NEAREST/NEAREST/CLAMP_TO_EDGE sampler (PSX look, no mips), bound in the
-  primitive's SRB; untextured primitives keep the shared 1x1 white texel; UVs are scaled by 1/256 once at upload
-  (`kContentTexelUvScale`; shaders/pipeline unchanged); no-fallback/stats semantics unchanged. Smoke: a stored-block
-  textured GLB now loads and renders (the old rejection boundary moved); an unsupported PNG variant is still
-  rejected with a named diagnostic; a textured multi-primitive test (2x1 red/green image + untextured blue) asserts
-  the expected regions; the UV-scale discrimination check (scale=1 fails the test) is recorded. Evidence: all
-  inspector suites green (`GltfRoundTripTests` 144, `WorldMeshBuilderTests` 239, others unchanged); native renderer
-  smoke 214 checks/0 failures; `Release_dev` and `Release_dev_native` exit 0 (`texturebake.c` in the generated
-  project). Real textured region run (Release_dev, `RED2_NATIVE_RENDERER=1 -nointro -nofmv -mission 1 -drawregion`):
-  texture-bake lines e.g. `slot 627, 9/9 submeshes textured (7 deduped, 2 images)` and `slot 149, 1/1 submeshes
-  textured (0 deduped, 1 images)`; the region report is unchanged geometrically (46/46 resources, 4096 submitted,
-  2913 drawn, 1183 unresolved); the offscreen 640x360 frame has 64174 non-clear pixels and 400 distinct colours
-  (was 8 untextured), top colours being textured greys/browns. Honest limits: the bounded region now renders
-  textured (base-colour sampling, unlit) with the game camera; it does NOT prove texture colour parity with the
-  legacy renderer (no alpha blending, no TEXINF sub-rect cropping, full-page upload, only base-colour maps
-  consumed, stored-block PNG subset only - a general compressed PNG is rejected by the loader); the same bounded
-  caps/instanced-slot gaps as the region block remain; a dev run is not visual acceptance.
-- Not yet done: the native scene draws the converted, now-textured region (block 2 item 5 + texture phase) but not
-  the game's lighting, player, LOD or streaming, so E03 still has no visually accepted or playable original-world
-  native slice. Debug configs are not wired (only Release Diligent libraries exist). Headless native mode does not
-  run the F11 ImGui overlay; a possible PAL double-aspect in the camera seam needs a PAL probe. Must not claim: no
-  "region renders correctly" (the region dev run is not visual acceptance); no texture colour parity; no
-  all-model/all-slot coverage; no LOD/streaming/cars/animation/performance; single-vs-multi byte identity is by
-  construction plus empirical verification and the dedicated test. Next: E04 remaining consumer slices; E05/E06
-  pending.
+  `native_region_draw.rgba` 640x360 dump; `main.c` accepts `-drawregion`. Caps truncate the level's full content
+  (E02 counted 6740 unique placements); no LOD/streaming; a dev run is not visual acceptance.
+- Texture phase T1-T3 (2026-10-10): pipeline images (`GltfPrimitiveData.imageRgba`/`imageWidth`/`imageHeight`; the
+  multi writer embeds a deterministic stored-block PNG per material - 8-bit RGBA, filter None, zlib stored blocks,
+  CRC32/Adler-32, 4-byte-padded image bufferViews, named-error validation - the multi loader decodes it with named
+  errors for unsupported variants, the single writer/path stays byte-identical; `WorldSubmeshImage` with defaulted
+  params on `BuildMulti`); game-side bake (NEW `Game/C/texturebake.{h,c}` reads VRAM once via `GR_ReadVRAM`, extracts
+  page+CLUT per `(textureSet, textureId)`, decodes/dedupes, caps 64 images/16 MiB, full-page upload;
+  `ConvertModelSlot` bakes before building; additive `texture-bake:` diagnostics, single VRAM snapshot at prepare so
+  pages resident only later stay untextured; cache keyed on baked pixels `HashBakedImages` = 0 when untextured);
+  renderer sampling (per-primitive RGBA8_UNORM NEAREST/CLAMP texture in the SRB, untextured keeps the 1x1 white
+  texel, UVs scaled 1/256 once at upload, shaders/pipeline unchanged).
+- Finalize-rendering block F1+F3+F4 (2026-10-10): F1 alpha/cutout - the scene pipelines sample the baked texture
+  alpha with one straight-alpha blend state (RGB SRC_ALPHA/INV_SRC_ALPHA, alpha ONE/INV_SRC_ALPHA, ADD; 255 opaque,
+  128 = 50%, 0 = hole); the shared white texel (alpha 255) makes it a no-op for untextured paths; depth writes stay
+  on (no ordered transparency pass yet, documented). Explicit deviation: a texel with STP=1 inside a primitive the
+  game draws opaquely appears at 50% natively, since the slice applies one blend state to every primitive (no
+  per-primitive mode). F3 loader robustness - a missing zlib Adler-32 trailer is a
+  named error, PNG chunk CRCs are recomputed/verified (named error on mismatch),
+  `MaterialReferencesUnsupportedTexture` now rejects texture references inside material `extensions` (recursive key
+  scan, e.g. KHR spec-gloss) instead of dropping them, and the texture-bake warning labels the image-cap overlap
+  honestly (`N submeshes untextured (M by image cap)`). F4 instanced-model decode - `MODEL.instance_number` is a
+  base-model slot owning the shared vertex/normal arrays (indices absolute into the base array, no duplication);
+  the decoder accepts a caller-supplied base span + base counts (vertices/normals from the base span, validated
+  against the base's numVertices/numPointNormals and bounds-checked inside the base span; the instance's own span
+  supplies the poly block/num_polys and its own vertex/normal fields are ignored); a missing/invalid base is the
+  named `SOURCE_MODEL_ERROR_INSTANCE_BASE` ("instance-base") with zero partial output. `ConvertModelSlot` resolves
+  the base via `modelpointers[instance_number]` (resident, != dummyModel) and the catalog span (the base may not be
+  among the converted slots), with named diagnostics; other slots continue.
+- Evidence after the block (2026-10-10): all inspector suites green (`SourceModelDecoderTests` 1211,
+  `GltfRoundTripTests` 160, others unchanged; `WorldMeshBuilderTests` 239); native renderer smoke 222 checks/0
+  failures; `Release_dev` and `Release_dev_native` builds exit 0. Real region run (`-drawregion`): prepare `4096
+  placements (placement-truncated), 64 distinct slots, 64 converted, 0 failed (resource-truncated)` (was 46/18);
+  `registered 64/64 resources`; report `submitted 4096, drawn 3147, skippedUnresolved 949, residentResources 64,
+  level-generation 1; diag: unresolved instance slot 206 src 2638`; offscreen 640x360 frame with 177140 non-clear
+  pixels (~77%) and 11325 distinct colours (before: 64174 pixels / 8 colours untextured; 400 after textures).
+  Honest wording: the instanced decode converts all 64 capped slots (0 failures); the remaining 949 unresolved
+  placements belong to slots beyond the 64-resource cap (bounded dev limits), not decode failures. The bounded
+  region snapshot now renders textured and alpha-blended with the game camera; it does NOT prove colour parity with
+  the legacy renderer (no ordered transparency pass, depth writes on, blend on the sRGB swap chain may differ from
+  the UNORM readback, no per-primitive PSX blend modes BM_ADD/SUBTRACT, base-colour maps only, no LOD/streaming, no
+  lighting); the caps remain; a dev run is not visual acceptance.
+- Not yet done: the native scene draws the converted, textured, alpha-blended region but not the game's lighting,
+  player, LOD or streaming, so E03 still has no visually accepted or playable original-world native slice. Debug
+  configs are not wired (only Release Diligent libraries exist). Headless native mode does not run the F11 ImGui
+  overlay; a possible PAL double-aspect in the camera seam needs a PAL probe. Must not claim: no "region renders
+  correctly"; no texture colour parity; no all-model/all-slot coverage; no LOD/streaming/cars/animation/
+  performance; single-vs-multi byte identity is by construction plus empirical verification and the dedicated
+  test. Next: E04 remaining consumer slices; E05/E06 pending.
 
 ## Engine migration E04 (in progress)
 

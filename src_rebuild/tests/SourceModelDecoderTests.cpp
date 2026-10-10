@@ -124,6 +124,12 @@ struct SourceModelBuilder
 		view.vertices = verticesOffset;
 		view.polyBlock = polyBlockOffset;
 		view.pointNormals = pointNormalsOffset;
+		view.baseBegin = NULL;
+		view.baseEnd = NULL;
+		view.baseVertices = 0;
+		view.basePointNormals = 0;
+		view.baseNumVertices = 0;
+		view.baseNumPointNormals = 0;
 		return view;
 	}
 };
@@ -958,7 +964,7 @@ static void TestSpanViolations()
 		CHECK(MeshIsEmpty(mesh));
 	}
 
-	// (8) Instanced models are not decodable from a single span.
+	// (8) An instanced model with no base span is the named instance-base error.
 	{
 		SourceModelBuilder b;
 		b.BeginVertices();
@@ -968,7 +974,7 @@ static void TestSpanViolations()
 		view.instanceNumber = 3;
 		SourceModelDecoderResult result = DecodeSourceModel(b.bytes.data(),
 			b.bytes.data() + b.bytes.size(), view, &mesh, error, sizeof(error));
-		CHECK(result.error == SOURCE_MODEL_ERROR_INSTANCE);
+		CHECK(result.error == SOURCE_MODEL_ERROR_INSTANCE_BASE);
 		CHECK(MeshIsEmpty(mesh));
 	}
 
@@ -998,8 +1004,146 @@ static void TestSpanViolations()
 		view.instanceNumber = 5;
 		SourceModelDecoderResult result = DecodeSourceModel(b.bytes.data(),
 			b.bytes.data() + b.bytes.size(), view, &mesh, NULL, 0);
-		CHECK(result.error == SOURCE_MODEL_ERROR_INSTANCE);
+		CHECK(result.error == SOURCE_MODEL_ERROR_INSTANCE_BASE);
 		CHECK(MeshIsEmpty(mesh));
+	}
+}
+
+// --- F4: instanced models share the base model's vertex/normal arrays --------
+//
+// An instanced MODEL (instance_number != -1) owns only its polygon block; its
+// vertex and point-normal arrays are the base model's, and its polygon indices
+// are ABSOLUTE into those arrays (models.c `_MDL_GETTER_vertices/normals/
+// point_normals`; draw.c `&srcVerts[polys->v0]`). The fixtures build a base span
+// and an instance span separately and assert the emitted geometry comes from the
+// base arrays while the instance span supplies the polygon block/materials.
+static void TestInstancedModel()
+{
+	char error[256] = "";
+	SourceMesh mesh;
+
+	// The base model owns the shared vertex and point-normal arrays.
+	SourceModelBuilder base;
+	base.BeginVertices();
+	base.AddVertex(10, 0, 0);   // v0
+	base.AddVertex(0, 20, 0);   // v1
+	base.AddVertex(0, 0, 30);   // v2
+	base.AddVertex(40, 50, 60); // v3
+	base.BeginPointNormals();
+	base.AddRawNormal(1, 0, 0); // n0
+	base.AddRawNormal(0, 1, 0); // n1
+	base.AddRawNormal(0, 0, 1); // n2
+	base.AddRawNormal(7, 8, 9); // n3
+
+	// The instance carries only its polygon block; its own vertex/point-normal
+	// fields are ignored.
+	SourceModelBuilder instance;
+	instance.BeginPolys();
+	AddGT4(instance, 1, 2, 0, 1, 2, 3, 0, 1, 2, 3,
+		UV(1, 2), UV(3, 4), UV(5, 6), UV(7, 8), RGB(10, 20, 30));
+
+	SourceModelView view = instance.View();
+	view.instanceNumber = 0;
+	// Deliberately bogus instance fields: the decoder must ignore them.
+	view.numVertices = 1;
+	view.numPointNormals = 0;
+	view.vertices = -1;
+	view.pointNormals = -1;
+	view.baseBegin = base.bytes.data();
+	view.baseEnd = base.bytes.data() + base.bytes.size();
+	view.baseVertices = base.verticesOffset;
+	view.basePointNormals = base.pointNormalsOffset;
+	view.baseNumVertices = base.vertexCount;
+	view.baseNumPointNormals = base.pointNormalCount;
+
+	SourceModelDecoderResult result = DecodeSourceModel(instance.bytes.data(),
+		instance.bytes.data() + instance.bytes.size(), view, &mesh, error, sizeof(error));
+	CHECK(result.error == SOURCE_MODEL_ERROR_NONE);
+	CHECK(error[0] == '\0');
+
+	// Positions come from the base vertices, in world quad order (v0,v1,v3,v2).
+	CHECK(mesh.positions.size() == 12);
+	CHECK(mesh.positions[0] == 10.0f && mesh.positions[1] == 0.0f && mesh.positions[2] == 0.0f);
+	CHECK(mesh.positions[3] == 0.0f && mesh.positions[4] == 20.0f && mesh.positions[5] == 0.0f);
+	CHECK(mesh.positions[6] == 40.0f && mesh.positions[7] == 50.0f && mesh.positions[8] == 60.0f);
+	CHECK(mesh.positions[9] == 0.0f && mesh.positions[10] == 0.0f && mesh.positions[11] == 30.0f);
+
+	// Normals come from the base point-normals, in the same (n0,n1,n3,n2) order.
+	CHECK(mesh.normals.size() == 12);
+	CHECK(mesh.normals[0] == 1.0f && mesh.normals[1] == 0.0f && mesh.normals[2] == 0.0f);
+	CHECK(mesh.normals[3] == 0.0f && mesh.normals[4] == 1.0f && mesh.normals[5] == 0.0f);
+	CHECK(mesh.normals[6] == 7.0f && mesh.normals[7] == 8.0f && mesh.normals[8] == 9.0f);
+	CHECK(mesh.normals[9] == 0.0f && mesh.normals[10] == 0.0f && mesh.normals[11] == 1.0f);
+
+	// The instance's own span supplies the poly block/material grouping.
+	CHECK(mesh.submeshes.size() == 1);
+	CHECK(mesh.submeshes[0].primitiveClass == SourcePrimitiveClass::TexturedGouraudQuad);
+	CHECK(mesh.submeshes[0].textureSet == 1 && mesh.submeshes[0].textureId == 2);
+	CHECK(mesh.submeshes[0].hasNormals && mesh.submeshes[0].hasColors);
+
+	// (a) A vertex index is validated against the BASE count, not the instance's
+	//     ignored count: index 4 >= 4 base vertices fails.
+	{
+		SourceModelBuilder bad;
+		bad.BeginPolys();
+		AddFT4(bad, 0, 0, 0, 1, 2, 4, UV(0, 0), UV(0, 0), UV(0, 0), UV(0, 0), RGB(0, 0, 0));
+		SourceModelView badView = bad.View();
+		badView.instanceNumber = 0;
+		badView.baseBegin = base.bytes.data();
+		badView.baseEnd = base.bytes.data() + base.bytes.size();
+		badView.baseVertices = base.verticesOffset;
+		badView.basePointNormals = base.pointNormalsOffset;
+		badView.baseNumVertices = base.vertexCount;
+		badView.baseNumPointNormals = base.pointNormalCount;
+		SourceMesh badMesh;
+		SourceModelDecoderResult badResult = DecodeSourceModel(bad.bytes.data(),
+			bad.bytes.data() + bad.bytes.size(), badView, &badMesh, error, sizeof(error));
+		CHECK(badResult.error == SOURCE_MODEL_ERROR_VERTEX_INDEX);
+		CHECK(MeshIsEmpty(badMesh));
+	}
+
+	// (b) The base vertex array must lie inside the base span.
+	{
+		SourceModelBuilder bad;
+		bad.BeginPolys();
+		AddFT4(bad, 0, 0, 0, 1, 2, 3, UV(0, 0), UV(0, 0), UV(0, 0), UV(0, 0), RGB(0, 0, 0));
+		SourceModelView badView = bad.View();
+		badView.instanceNumber = 0;
+		badView.baseBegin = base.bytes.data();
+		badView.baseEnd = base.bytes.data() + base.bytes.size();
+		badView.baseVertices = (int)base.bytes.size(); // past the base span
+		badView.basePointNormals = base.pointNormalsOffset;
+		badView.baseNumVertices = base.vertexCount;
+		badView.baseNumPointNormals = base.pointNormalCount;
+		SourceMesh badMesh;
+		SourceModelDecoderResult badResult = DecodeSourceModel(bad.bytes.data(),
+			bad.bytes.data() + bad.bytes.size(), badView, &badMesh, error, sizeof(error));
+		CHECK(badResult.error == SOURCE_MODEL_ERROR_VERTICES_RANGE);
+		CHECK(MeshIsEmpty(badMesh));
+	}
+
+	// (c) A missing base span is the named instance-base error.
+	{
+		SourceModelBuilder bad;
+		bad.BeginPolys();
+		AddFT4(bad, 0, 0, 0, 1, 2, 3, UV(0, 0), UV(0, 0), UV(0, 0), UV(0, 0), RGB(0, 0, 0));
+		SourceModelView badView = bad.View();
+		badView.instanceNumber = 0;
+		SourceMesh badMesh;
+		SourceModelDecoderResult badResult = DecodeSourceModel(bad.bytes.data(),
+			bad.bytes.data() + bad.bytes.size(), badView, &badMesh, error, sizeof(error));
+		CHECK(badResult.error == SOURCE_MODEL_ERROR_INSTANCE_BASE);
+		CHECK(error[0] != '\0');
+		CHECK(MeshIsEmpty(badMesh));
+	}
+
+	// (d) Determinism: the same instance view decodes to the same mesh.
+	{
+		SourceMesh again;
+		SourceModelDecoderResult resultAgain = DecodeSourceModel(instance.bytes.data(),
+			instance.bytes.data() + instance.bytes.size(), view, &again, error, sizeof(error));
+		CHECK(resultAgain.error == SOURCE_MODEL_ERROR_NONE);
+		CHECK(MeshEqual(mesh, again));
 	}
 }
 
@@ -1545,6 +1689,7 @@ int main()
 	TestSkipUnsupportedOutOfSpan();
 	TestSkipUnsupportedZeroStride();
 	TestSpanViolations();
+	TestInstancedModel();
 	TestBlock2YangRotationGate();
 	TestBlock2ViewComposition();
 	TestBlock2WindingAndCullPolicy();

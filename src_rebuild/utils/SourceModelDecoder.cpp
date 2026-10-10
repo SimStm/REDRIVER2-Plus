@@ -178,7 +178,7 @@ const char* SourceModelDecoder_ErrorName(SourceModelDecoderError error)
 	case SOURCE_MODEL_ERROR_NONE: return "none";
 	case SOURCE_MODEL_ERROR_ARGUMENT: return "argument";
 	case SOURCE_MODEL_ERROR_RANGE: return "range";
-	case SOURCE_MODEL_ERROR_INSTANCE: return "instance";
+	case SOURCE_MODEL_ERROR_INSTANCE_BASE: return "instance-base";
 	case SOURCE_MODEL_ERROR_VERTICES_RANGE: return "vertices-range";
 	case SOURCE_MODEL_ERROR_POINT_NORMALS_RANGE: return "point-normals-range";
 	case SOURCE_MODEL_ERROR_POLY_BLOCK_RANGE: return "poly-block-range";
@@ -209,17 +209,33 @@ SourceModelDecoderResult DecodeSourceModel(const unsigned char* begin, const uns
 
 	const long long spanSize = (long long)(end - begin);
 
-	if (model.instanceNumber != -1)
-		return Failure(SOURCE_MODEL_ERROR_INSTANCE,
-			"instanced models cannot be decoded from a single span", error, capacity);
+	// An instanced model shares the base model's vertex and point-normal arrays:
+	// its own span supplies only the polygon block, and its polygon indices are
+	// absolute into the base arrays. A missing or invalid base span cannot be
+	// decoded.
+	const bool instanced = (model.instanceNumber != -1);
 
-	// The declared vertex array must be wholly inside the span.
-	if (model.numVertices > 0)
+	if (instanced && (!model.baseBegin || !model.baseEnd || model.baseEnd <= model.baseBegin))
+		return Failure(SOURCE_MODEL_ERROR_INSTANCE_BASE,
+			"the instanced model's base span is missing or invalid", error, capacity);
+
+	// Vertices come from the base span for an instance and from the model span
+	// otherwise; the instance's own vertex fields are ignored. The declared
+	// vertex array must be wholly inside its span.
+	const unsigned char* vertexSpanBegin = instanced ? model.baseBegin : begin;
+	const long long vertexSpanSize = instanced ? (long long)(model.baseEnd - model.baseBegin) : spanSize;
+	const int vertexArrayOffset = instanced ? model.baseVertices : model.vertices;
+	const int normalArrayOffset = instanced ? model.basePointNormals : model.pointNormals;
+	const unsigned int declaredVertices = instanced ? model.baseNumVertices : model.numVertices;
+	const unsigned int declaredPointNormals = instanced ? model.baseNumPointNormals : model.numPointNormals;
+
+	if (declaredVertices > 0)
 	{
-		const long long needed = (long long)model.numVertices * 8;
-		if (model.vertices < 0 || (long long)model.vertices + needed > spanSize)
+		const long long needed = (long long)declaredVertices * 8;
+		if (vertexArrayOffset < 0 || (long long)vertexArrayOffset + needed > vertexSpanSize)
 			return Failure(SOURCE_MODEL_ERROR_VERTICES_RANGE,
-				"the vertex array lies outside the model span", error, capacity);
+				instanced ? "the base vertex array lies outside the base span"
+				          : "the vertex array lies outside the model span", error, capacity);
 	}
 
 	SourceMesh mesh;
@@ -304,12 +320,13 @@ SourceModelDecoderResult DecodeSourceModel(const unsigned char* begin, const uns
 		if (gouraud && !pointNormalsValidated)
 		{
 			pointNormalsValidated = true;
-			if (model.numPointNormals > 0)
+			if (declaredPointNormals > 0)
 			{
-				const long long needed = (long long)model.numPointNormals * 8;
-				if (model.pointNormals < 0 || (long long)model.pointNormals + needed > spanSize)
+				const long long needed = (long long)declaredPointNormals * 8;
+				if (normalArrayOffset < 0 || (long long)normalArrayOffset + needed > vertexSpanSize)
 					return Failure(SOURCE_MODEL_ERROR_POINT_NORMALS_RANGE,
-						"the point-normal array lies outside the model span", error, capacity);
+						instanced ? "the base point-normal array lies outside the base span"
+						          : "the point-normal array lies outside the model span", error, capacity);
 			}
 		}
 
@@ -398,21 +415,21 @@ SourceModelDecoderResult DecodeSourceModel(const unsigned char* begin, const uns
 		// Validate every index before writing anything.
 		for (unsigned int c = 0; c < cornerCount; ++c)
 		{
-			if ((unsigned int)vertexIndex[c] >= model.numVertices)
+			if ((unsigned int)vertexIndex[c] >= declaredVertices)
 			{
 				char message[256];
 				snprintf(message, sizeof(message),
 					"polygon %u vertex index %u is outside the %u declared vertices",
-					i, (unsigned int)vertexIndex[c], model.numVertices);
+					i, (unsigned int)vertexIndex[c], declaredVertices);
 				return Failure(SOURCE_MODEL_ERROR_VERTEX_INDEX, message, error, capacity,
 					(int)i, ptype, offset);
 			}
-			if (gouraud && (unsigned int)normalIndex[c] >= model.numPointNormals)
+			if (gouraud && (unsigned int)normalIndex[c] >= declaredPointNormals)
 			{
 				char message[256];
 				snprintf(message, sizeof(message),
 					"polygon %u normal index %u is outside the %u declared point normals",
-					i, (unsigned int)normalIndex[c], model.numPointNormals);
+					i, (unsigned int)normalIndex[c], declaredPointNormals);
 				return Failure(SOURCE_MODEL_ERROR_NORMAL_INDEX, message, error, capacity,
 					(int)i, ptype, offset);
 			}
@@ -423,20 +440,20 @@ SourceModelDecoderResult DecodeSourceModel(const unsigned char* begin, const uns
 
 		for (unsigned int c = 0; c < cornerCount; ++c)
 		{
-			const long long vertexOffset = (long long)model.vertices + (long long)vertexIndex[c] * 8;
-			mesh.positions.push_back((float)ReadInt16(begin, vertexOffset + 0));
-			mesh.positions.push_back((float)ReadInt16(begin, vertexOffset + 2));
-			mesh.positions.push_back((float)ReadInt16(begin, vertexOffset + 4));
+			const long long vertexOffset = (long long)vertexArrayOffset + (long long)vertexIndex[c] * 8;
+			mesh.positions.push_back((float)ReadInt16(vertexSpanBegin, vertexOffset + 0));
+			mesh.positions.push_back((float)ReadInt16(vertexSpanBegin, vertexOffset + 2));
+			mesh.positions.push_back((float)ReadInt16(vertexSpanBegin, vertexOffset + 4));
 
 			mesh.uvs.push_back((float)uv[c].u);
 			mesh.uvs.push_back((float)uv[c].v);
 
 			if (gouraud)
 			{
-				const long long normalOffset = (long long)model.pointNormals + (long long)normalIndex[c] * 8;
-				mesh.normals.push_back((float)ReadInt16(begin, normalOffset + 0));
-				mesh.normals.push_back((float)ReadInt16(begin, normalOffset + 2));
-				mesh.normals.push_back((float)ReadInt16(begin, normalOffset + 4));
+				const long long normalOffset = (long long)normalArrayOffset + (long long)normalIndex[c] * 8;
+				mesh.normals.push_back((float)ReadInt16(vertexSpanBegin, normalOffset + 0));
+				mesh.normals.push_back((float)ReadInt16(vertexSpanBegin, normalOffset + 2));
+				mesh.normals.push_back((float)ReadInt16(vertexSpanBegin, normalOffset + 4));
 			}
 			else
 			{
