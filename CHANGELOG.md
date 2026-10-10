@@ -10,6 +10,8 @@ where release policy permits it.
 
 ### Changed
 
+- Native sector transitions retain the published scene and camera-dependent LOD
+  while preparing/uploading new content; old resources retire after instance replacement.
 - Native sector conversion builds/hashes/publishes owned snapshots asynchronously;
   GPU resource registration uses a 4 ms batch budget. Automatic region-image
   readback is now opt-in (`RED2_NATIVE_REGION_CAPTURE=1`). Existing cache keys remain compatible.

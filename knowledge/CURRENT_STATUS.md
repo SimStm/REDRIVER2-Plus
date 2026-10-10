@@ -13,11 +13,9 @@ tags: [okf, status]
 
 ## Branch and adopted plan
 
-`feat/new-engine` checkpoint `7fdce013` is committed/pushed, including the bounded world-parity,
-quad-topology and tick-capture work. PsyCross's previous headless GPU bridge is `99950a7`.
-The 2026-10-10 native performance/window-only follow-up is documented below.
-No migration-stage acceptance follows from publication. The tracked Serena project configuration
-selects the C++ language server; generated state and proprietary assets/SDKs are not included.
+`feat/new-engine` checkpoint `85cf0a82` is committed/pushed; native progress is documented below.
+No migration-stage acceptance follows from publication. Serena selects the C++ language
+server; generated state and proprietary assets/SDKs are not included.
 
 The former dirty native Vulkan work is committed/pushed separately at `e68b6ea6b1e30543af77d6244c109f7993ff65cf`
 on [`feat/vulkan-native-rework`](https://github.com/SimStm/REDRIVER2-Plus/tree/feat/vulkan-native-rework)
@@ -110,8 +108,11 @@ accepted.
   final run reached tick 5551 with zero drops across the same two transitions. A bounded
   result, not city/replay acceptance. Conversion tests 14/0 cover ownership, concurrency,
   identity and allocation bounds (17 suites passed); native/OpenGL builds/startups passed.
-  Pending loading clears; draw distance, continuous visual
-  residency and actors remain open. This bridge does not read CD-thread buffers.
+  Presentation owns placements/LOD and retains its native scene through conversion/uploads;
+  old keys retire after instance replacement. Replay transitions retained 99/35 frames,
+  zero empty loading frames; GPU smoke 1220/0, capture 5897 draws/zero messages. Initial
+  loading/bounded staging overflow still clears. Prefetch/draw distance/actors remain open.
+  This bridge does not read CD-thread buffers.
 - Native settings/F9 block (2026-10-10): config.ini `[render] presentationFps` is read
   before selective developer overrides; missing FPS preserves the baseline. Diligent
   samplers follow live bilinear filtering for resident/new resources. The native F9

@@ -62,13 +62,15 @@ Obsolete source-state results are discarded. GPU uploads use 4 ms batches; regio
 is opt-in (`RED2_NATIVE_REGION_CAPTURE=1`). New pure WorldMeshConversion module preserves
 the historical nonstandard hash seed; the compatibility test caught the initial wrong
 seed and now passes. Final replay reached tick 5551, two transitions, zero drops before capture.
-Loading currently clears until the new scene is ready; this is not continuous residency
-or city acceptance. Local-file spooling stays synchronous; CD-thread buffers are not read.
+Published presentation now owns placement/LOD data and retains the previous native scene
+during preparation/uploads, retiring old keys after replacement. Replay transitions held
+99/35 frames, zero empty loading frames; tick 717 zero drops before capture (+15 during it).
+Initial loading/staging overflow still clears; final GPU capture 5897 draws/zero messages.
 WorldMeshConversionTests: 14/0 (owned pixels, concurrent .tmp safety, cache identity,
-16 MiB owned/64 MiB expanded image bounds). Earlier GPU smoke: 1213/0. Evidence:
+16 MiB owned/64 MiB expanded image bounds). GPU smoke: 1220/0. Evidence:
 native-performance/async-world-*. Final RenderDoc: 6347 draws/zero messages, PNG inspected;
 capture added 17 drops. Native/OpenGL builds/startups passed; debugger profile restored exactly.
-Next: finish loading continuity/prefetch and native draw distance, then world corrections
+Next: preserve source cell/list membership for native draw distance and prefetch, then world corrections
 and player vehicle/on-foot presentation. Interactive F9/input/display and actors remain open.
 
 - Fixed dynamic constant updates (Map/Discard), wired configured VSync and added

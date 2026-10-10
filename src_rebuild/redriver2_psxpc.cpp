@@ -554,6 +554,9 @@ static int s_regionDrawWaitingLogged = 0;
 static int s_regionDrawValidFrames = 0;
 static int s_regionDrawSubmittedCount = 0;
 static NativeInstance s_regionDrawInstances[NATIVE_MAX_INSTANCES];
+// Published presentation owns its placement values while the catalog prepares
+// another sector. Never resolve active LOD poses through the mutable catalog.
+static AssetCatalogGameDrawPlacement s_regionDrawPlacements[NATIVE_MAX_INSTANCES];
 
 // E03 visual-parity P9 LOD tier: both resource keys per instance (the detail
 // model and its distinct LOD variant, when the placement has one) plus the last
@@ -586,6 +589,9 @@ static int s_regionDrawHighDetailSelectedCount = 0;
 static unsigned int s_regionDrawGeneration = 0;
 static unsigned int s_regionDrawRevision = 0;
 static int s_regionRegistrationCursor = 0;
+static int s_regionDrawRetirePending = 0;
+static int s_regionDrawRetainedFrames = 0;
+static int s_regionDrawLoadingFrames = 0;
 static int s_regionDrawRefreshFailed = 0;
 static unsigned int s_nativeDrawGeneration = 0;
 
@@ -679,6 +685,9 @@ static void NativeRenderer_ResetRegionDrawState(void)
 	s_regionDrawRegisteredCount = 0;
 	s_regionRegistrationCursor = 0;
 	s_regionDrawReported = 0;
+	s_regionDrawRetirePending = 0;
+	s_regionDrawRetainedFrames = 0;
+	s_regionDrawLoadingFrames = 0;
 	s_regionDrawWaitingLogged = 0;
 	s_regionDrawValidFrames = 0;
 	s_regionDrawSubmittedCount = 0;
@@ -923,10 +932,8 @@ static int NativeRenderer_RegionDrawPrepareDeferred(void)
 // Retire keys absent from the new publication. Resource keys include converted
 // content, so unchanged GPU meshes/textures survive a sector refresh. Diligent
 // owns deferred destruction of resources referenced by submitted GPU commands.
-static void NativeRenderer_RefreshRegionDrawState(void)
+static void NativeRenderer_RetireRegionDrawResources(void)
 {
-	NativeRenderer_ClearInstances();
-	s_regionDrawInstancesSet = 0;
 	int kept = 0;
 	for (int old = 0; old < s_regionDrawRegisteredCount; ++old)
 	{
@@ -951,17 +958,121 @@ static void NativeRenderer_RefreshRegionDrawState(void)
 		}
 	}
 	s_regionDrawRegisteredCount = kept;
+}
+
+static int NativeRenderer_SelectRegionDrawInstances(void)
+{
+	const int count = s_regionDrawSubmittedCount;
+	if (count <= 0)
+		return 0;
+
+	// Per-frame tier selection, exactly like the legacy world draw:
+	//   * a TILE-classified placement with camera-space Z <= DRAW_LOD_DIST_HIGH
+	//     draws its high-detail sibling (tile.c:290-295);
+	//   * otherwise, Z > DRAW_LOD_DIST_LOW swaps the detail key for the LOD key
+	//     (draw.c:1041, tile.c:304);
+	//   * otherwise the detail key is drawn.
+	// Buildings never take the high-detail tier. Re-submit only when at least
+	// one selection changed, which keeps a settled frame from re-uploading the
+	// whole instance array.
+	int changed = !s_regionDrawSelectionValid;
+	int lodSelectedCount = 0;
+	int highDetailSelectedCount = 0;
+
+	for (int i = 0; i < count; ++i)
+	{
+		const AssetCatalogGameDrawPlacement& placement = s_regionDrawPlacements[i];
+
+		const int z = LegacyPlacementZ(placement);
+		const int wantHighDetail = s_regionDrawHasHighDetail[i] && z <= DRAW_LOD_DIST_HIGH;
+		const int wantLod = !wantHighDetail && s_regionDrawHasLod[i] && z > DRAW_LOD_DIST_LOW;
+
+		if ((int)s_regionDrawHighDetailSelected[i] != wantHighDetail)
+		{
+			changed = 1;
+			s_regionDrawHighDetailSelected[i] = (unsigned char)wantHighDetail;
+		}
+
+		if ((int)s_regionDrawLodSelected[i] != wantLod)
+		{
+			changed = 1;
+			s_regionDrawLodSelected[i] = (unsigned char)wantLod;
+		}
+
+		lodSelectedCount += wantLod;
+		highDetailSelectedCount += wantHighDetail;
+	}
+
+	s_regionDrawLodSelectedCount = lodSelectedCount;
+	s_regionDrawHighDetailSelectedCount = highDetailSelectedCount;
+
+	if (!changed)
+		return count;
+
+	for (int i = 0; i < count; ++i)
+	{
+		NativeInstance& instance = s_regionDrawInstances[i];
+		const char* key = s_regionDrawHighDetailSelected[i]
+			? s_regionDrawHighDetailKeys[i]
+			: (s_regionDrawLodSelected[i] ? s_regionDrawLodKeys[i] : s_regionDrawDetailKeys[i]);
+		snprintf(instance.resourceKey, sizeof(instance.resourceKey), "%s", key);
+	}
+
+	char error[256];
+	if (!NativeRenderer_SetInstances(s_regionDrawInstances, count, error, sizeof(error)))
+	{
+		PsyX_Log_Warning("native region draw: set instances failed: %s\n", error);
+		s_regionDrawInstancesSet = 1; // do not retry every frame
+		s_regionDrawSubmittedCount = 0;
+		return 0;
+	}
+
+	s_regionDrawInstancesSet = 1;
+	s_regionDrawSelectionValid = 1;
+	if (s_regionDrawRetirePending)
+	{
+		NativeRenderer_RetireRegionDrawResources();
+		s_regionDrawRetirePending = 0;
+		PsyX_Log_Info("native region draw: committed %d resources, %d placements; retainedFrames=%d loadingFrames=%d\n",
+			s_regionDrawRegisteredCount, count, s_regionDrawRetainedFrames, s_regionDrawLoadingFrames);
+		s_regionDrawRetainedFrames = 0;
+		s_regionDrawLoadingFrames = 0;
+	}
+	return count;
+}
+
+static int NativeRenderer_KeepRegionDrawPublication(void)
+{
+	const int count = NativeRenderer_SelectRegionDrawInstances();
+	if (count > 0)
+		++s_regionDrawRetainedFrames;
+	else
+		++s_regionDrawLoadingFrames;
+	return count;
+}
+
+static void NativeRenderer_RefreshRegionDrawState(void)
+{
+	// Keep the published scene and GPU keys alive until the next upload batch
+	// completes. The previous placement values remain owned by presentation.
+	// Reserve a conservative upper bound for both publications. Dense scenes
+	// exceeding that bound enter explicit loading rather than losing uploads
+	// because the old snapshot consumes the bounded resource registry.
+	if (s_regionDrawRegisteredCount + AssetCatalogGame_GetModelResourceCount() > NATIVE_MAX_RESOURCES)
+	{
+		PsyX_Log_Warning("native region draw: transition exceeds resource staging budget; loading new publication\n");
+		NativeRenderer_ResetRegionDrawState();
+	}
 	s_regionRegistrationCursor = 0;
 	s_regionDrawRegistered = 0;
 	s_regionDrawKeysBuilt = 0;
-	s_regionDrawSelectionValid = 0;
-	s_regionDrawSubmittedCount = 0;
 	s_regionDrawReported = 0;
 	s_regionDrawValidFrames = 0;
 }
 
 // World-space transforms are rebuilt for each resident publication; camera/LOD
-// selection remains per frame. Loading never draws a stale barrel snapshot.
+// selection remains per frame. Preparation retains an owned native publication,
+// never references partially overwritten barrel data, and resets on level changes.
 static int NativeRenderer_DevRegionDrawSubmit(const float view[16])
 {
 	(void)view;
@@ -970,19 +1081,6 @@ static int NativeRenderer_DevRegionDrawSubmit(const float view[16])
 	// run it here once the delay elapses. Until then there is nothing to submit.
 	if (NativeRenderer_RegionDrawPrepareDeferred())
 		return 0;
-
-	char refreshStatus[512];
-	const int refresh = AssetCatalogGame_UpdateRegionDraw(refreshStatus, sizeof(refreshStatus));
-	if (refresh != 0)
-	{
-		NativeRenderer_ClearInstances();
-		s_regionDrawSelectionValid = 0;
-		if (refresh < 0 && !s_regionDrawRefreshFailed)
-			PsyX_Log_Warning("native region draw: publication unavailable: %s\n", refreshStatus);
-		s_regionDrawRefreshFailed = refresh < 0;
-		return 0;
-	}
-	s_regionDrawRefreshFailed = 0;
 
 	// A level change bumps the generation. Reset before re-registering so the
 	// previous level's instances and resources never draw under the new camera,
@@ -995,6 +1093,23 @@ static int NativeRenderer_DevRegionDrawSubmit(const float view[16])
 		NativeRenderer_ResetRegionDrawState();
 		s_regionDrawGeneration = generation;
 	}
+
+	char refreshStatus[512];
+	const int refresh = AssetCatalogGame_UpdateRegionDraw(refreshStatus, sizeof(refreshStatus));
+	if (refresh > 0)
+		return NativeRenderer_KeepRegionDrawPublication();
+	if (refresh < 0)
+	{
+		NativeRenderer_ClearInstances();
+		s_regionDrawSelectionValid = 0;
+		s_regionDrawSubmittedCount = 0;
+		if (refresh < 0 && !s_regionDrawRefreshFailed)
+			PsyX_Log_Warning("native region draw: publication unavailable: %s\n", refreshStatus);
+		s_regionDrawRefreshFailed = refresh < 0;
+		return 0;
+	}
+	s_regionDrawRefreshFailed = 0;
+
 	const unsigned int revision = AssetCatalogGame_RegionDrawRevision();
 	if (revision != s_regionDrawRevision)
 	{
@@ -1046,12 +1161,9 @@ static int NativeRenderer_DevRegionDrawSubmit(const float view[16])
 					CONVERSION_CACHE_KEY_CAPACITY, "%s", key);
 		}
 		if (s_regionRegistrationCursor < resourceCount)
-			return 0;
+			return NativeRenderer_KeepRegionDrawPublication();
 
 		s_regionDrawRegistered = 1;
-		PsyX_Log_Info("native region draw: registered %d/%d resources, %d LOD variants, %d high-detail slots\n",
-			s_regionDrawRegisteredCount, resourceCount, AssetCatalogGame_RegionDrawLodSlotCount(),
-			AssetCatalogGame_RegionDrawHighDetailSlotCount());
 	}
 
 	// Build the transforms and both resource keys once. The transforms are
@@ -1071,6 +1183,7 @@ static int NativeRenderer_DevRegionDrawSubmit(const float view[16])
 			if (!AssetCatalogGame_GetRegionDrawPlacement(i, &placement))
 				continue;
 
+			s_regionDrawPlacements[i] = placement;
 			NativeInstance& instance = s_regionDrawInstances[i];
 			memset(&instance, 0, sizeof(instance));
 
@@ -1118,79 +1231,11 @@ static int NativeRenderer_DevRegionDrawSubmit(const float view[16])
 
 		s_regionDrawSubmittedCount = count;
 		s_regionDrawKeysBuilt = 1;
+		s_regionDrawSelectionValid = 0;
+		s_regionDrawRetirePending = 1;
 	}
 
-	const int count = s_regionDrawSubmittedCount;
-	if (count <= 0)
-		return 0;
-
-	// Per-frame tier selection, exactly like the legacy world draw:
-	//   * a TILE-classified placement with camera-space Z <= DRAW_LOD_DIST_HIGH
-	//     draws its high-detail sibling (tile.c:290-295);
-	//   * otherwise, Z > DRAW_LOD_DIST_LOW swaps the detail key for the LOD key
-	//     (draw.c:1041, tile.c:304);
-	//   * otherwise the detail key is drawn.
-	// Buildings never take the high-detail tier. Re-submit only when at least
-	// one selection changed, which keeps a settled frame from re-uploading the
-	// whole instance array.
-	int changed = !s_regionDrawSelectionValid;
-	int lodSelectedCount = 0;
-	int highDetailSelectedCount = 0;
-
-	for (int i = 0; i < count; ++i)
-	{
-		AssetCatalogGameDrawPlacement placement;
-
-		if (!AssetCatalogGame_GetRegionDrawPlacement(i, &placement))
-			continue;
-
-		const int z = LegacyPlacementZ(placement);
-		const int wantHighDetail = s_regionDrawHasHighDetail[i] && z <= DRAW_LOD_DIST_HIGH;
-		const int wantLod = !wantHighDetail && s_regionDrawHasLod[i] && z > DRAW_LOD_DIST_LOW;
-
-		if ((int)s_regionDrawHighDetailSelected[i] != wantHighDetail)
-		{
-			changed = 1;
-			s_regionDrawHighDetailSelected[i] = (unsigned char)wantHighDetail;
-		}
-
-		if ((int)s_regionDrawLodSelected[i] != wantLod)
-		{
-			changed = 1;
-			s_regionDrawLodSelected[i] = (unsigned char)wantLod;
-		}
-
-		lodSelectedCount += wantLod;
-		highDetailSelectedCount += wantHighDetail;
-	}
-
-	s_regionDrawLodSelectedCount = lodSelectedCount;
-	s_regionDrawHighDetailSelectedCount = highDetailSelectedCount;
-
-	if (!changed)
-		return count;
-
-	for (int i = 0; i < count; ++i)
-	{
-		NativeInstance& instance = s_regionDrawInstances[i];
-		const char* key = s_regionDrawHighDetailSelected[i]
-			? s_regionDrawHighDetailKeys[i]
-			: (s_regionDrawLodSelected[i] ? s_regionDrawLodKeys[i] : s_regionDrawDetailKeys[i]);
-		snprintf(instance.resourceKey, sizeof(instance.resourceKey), "%s", key);
-	}
-
-	char error[256];
-	if (!NativeRenderer_SetInstances(s_regionDrawInstances, count, error, sizeof(error)))
-	{
-		PsyX_Log_Warning("native region draw: set instances failed: %s\n", error);
-		s_regionDrawInstancesSet = 1; // do not retry every frame
-		s_regionDrawSubmittedCount = 0;
-		return 0;
-	}
-
-	s_regionDrawInstancesSet = 1;
-	s_regionDrawSelectionValid = 1;
-	return count;
+	return NativeRenderer_SelectRegionDrawInstances();
 }
 
 static int NativeRenderer_DevDrawSubmit(const float view[16])
@@ -1370,7 +1415,7 @@ static int CameraValid(const float view[16], const int cameraPosition[3])
 static void NativeRenderer_DevRegionDrawReport(int submitted, const float view[16],
 	const int cameraPosition[3])
 {
-	if (submitted <= 0 || s_regionDrawReported)
+	if (submitted <= 0 || s_regionDrawReported || !s_regionDrawRegistered || !s_regionDrawKeysBuilt)
 		return;
 
 	if (!CameraValid(view, cameraPosition))

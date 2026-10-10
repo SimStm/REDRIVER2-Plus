@@ -31,6 +31,9 @@ The old rework branch is reference-only; do not resume its unfinished R03 here.
   model/VRAM pointers. Poll in normal frames; join at level-load/shutdown boundaries.
   Validate publication provenance after completion and bound GPU upload batches.
   Preserve persisted cache-key bytes/seeds unless a deliberate version change is adopted.
+- Keep published visual placement values/resource keys independent of a mutable
+  preparation catalog. Replace instances before retiring old keys; reset at level
+  boundaries/errors and diagnose bounded staging-capacity loading explicitly.
 - Never recover a native scene by drawing the old world. Backend/platform support
   remains an independent declared contract; no premature OpenGL deletion.
 - Record real validation and pending scope. A build or old-renderer screenshot

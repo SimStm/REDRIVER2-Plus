@@ -154,5 +154,33 @@ VS native and Release_dev x64 builds passed; OpenGL mission 1 startup reports ve
 3.3.0. Both debug sessions stopped; the original generated debugger profile was restored
 byte-for-byte and Visual Studio returned to Release_dev_native|x64.
 These observations do not establish whole-city coverage or full replay determinism.
-Loading still clears until the new native scene is ready. Continuous visual residency,
-prefetch, native draw distance and player vehicle/on-foot presentation remain required.
+### Published-scene continuity
+
+Presentation now owns copied placement values and resource keys independently of the
+catalog's next preparation. During conversion and incremental GPU upload, it retains
+the published native scene and updates its camera-dependent LOD. Replacement instances
+are submitted before obsolete keys retire. Level changes and explicit source failures
+invalidate the old scene. A conservative combined old/new resource reservation exceeding
+1024 enters named loading instead of exhausting the registry silently. Initial loading
+still clears. This does not prefetch visual sectors beyond gameplay residency.
+
+Reports wait for the committed publication; intermediate catalog counts are not presented
+as active scene counts. Commit diagnostics count retained and loading frames. Native GPU
+smoke passes 1220 checks, including byte-identical output during staging and visible new
+pixels/no unresolved instance after replacement and retirement.
+
+Final ATTRACT.400 transitions committed 206/185 resources and 8594/10167 placements,
+retaining the prior publication for 99/35 frames respectively, with zero empty loading
+frames between scenes. Initial loading recorded 132 frames without a published scene.
+Performance intervals through tick 717 report zero dropped ticks before capture.
+RenderDoc `native-continuity.rdc/png` has 5897 draws/zero messages; the inspected image
+shows the committed new-sector street/buildings. Capture added 15 ticks of bounded
+backlog loss separately. These bounded observations do not accept whole-city residency.
+VS Release_dev_native/Release_dev x64 builds passed; compatibility mission 1 started
+with OpenGL 3.3.0. Sessions stopped and the original generated debugger profile restored
+byte-for-byte; VS returned to Release_dev_native x64. No gameplay/tick source changed.
+
+Prefetch, native draw distance and player vehicle/on-foot presentation remain required.
+The source draw-distance control counts square-spiral cell visits, filtered by PVS and
+active event lists. The current resident union drops cell/list provenance during collection;
+world-origin radius filtering would not preserve that meaning for straddling objects.

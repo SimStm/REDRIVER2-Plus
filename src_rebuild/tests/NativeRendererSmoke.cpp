@@ -1700,6 +1700,33 @@ static void TestInstanceResidencyAndDiagnostics()
 	Check(drawn == 1, "the resolved instance was drawn");
 	Check(CountRed(image, 64, 64) > 50, "the instance is visible");
 
+	// Uploading the next publication must leave the active framebuffer intact.
+	// Commit instances first, then retire the old key, so retirement cannot make
+	// the newly presented scene unresolved or expose a loading placeholder.
+	const float green[4] = { 0.0f, 1.0f, 0.0f, 1.0f };
+	Check(WriteRectangleFixture("instance-next.glb", 2500.0f, 1500.0f, false, green, error, sizeof(error)),
+		"next publication fixture written");
+	Check(NativeRenderer_RegisterResource("quad-next", "instance-next.glb", error, sizeof(error)) == 1,
+		"next publication uploaded while the current scene remains active");
+	unsigned char staged[64 * 64 * 4] = {};
+	Check(NativeRenderer_RenderSceneToRGBA(staged, 64, 64, error, sizeof(error)) == 1 &&
+		memcmp(staged, image, sizeof(staged)) == 0,
+		"staging a new resource preserves every active framebuffer byte");
+	NativeInstance next = instance;
+	snprintf(next.resourceKey, sizeof(next.resourceKey), "%s", "quad-next");
+	Check(NativeRenderer_SetInstances(&next, 1, error, sizeof(error)) == 1, "next publication committed");
+	NativeRenderer_UnregisterResource("quad-red");
+	Check(NativeRenderer_RenderSceneToRGBA(staged, 64, 64, error, sizeof(error)) == 1 &&
+		CountGreen(staged, 64, 64) > 50 && CountRed(staged, 64, 64) == 0,
+		"retiring the old resource preserves the committed publication pixels");
+	NativeRenderer_GetInstanceStats(&submitted, &drawn, &skipped, &resident);
+	Check(submitted == 1 && drawn == 1 && skipped == 0 && resident == 1,
+		"publication retirement leaves no stale or unresolved instance");
+	Check(NativeRenderer_RegisterResource("quad-red", "instance-red.glb", error, sizeof(error)) == 1 &&
+		NativeRenderer_SetInstances(&instance, 1, error, sizeof(error)) == 1,
+		"original publication restored for remaining residency checks");
+	NativeRenderer_UnregisterResource("quad-next");
+
 	// set -> render -> clear -> absent
 	NativeRenderer_ClearInstances();
 	NativeRenderer_GetInstanceStats(&submitted, &drawn, &skipped, &resident);
