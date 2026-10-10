@@ -10,6 +10,9 @@ where release policy permits it.
 
 ### Changed
 
+- Native sector conversion builds/hashes/publishes owned snapshots asynchronously;
+  GPU resource registration uses a 4 ms batch budget. Automatic region-image
+  readback is now opt-in (`RED2_NATIVE_REGION_CAPTURE=1`). Existing cache keys remain compatible.
 - Native resident-world snapshots now refresh after local filesystem sector/area
   streaming, retaining unchanged converted/GPU resources and retiring obsolete keys.
   Dense-sector submission supports the source inventory's 16384-placement bound;

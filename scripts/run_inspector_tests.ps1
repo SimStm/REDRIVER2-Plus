@@ -154,6 +154,8 @@ try
 		-ExtraIncludes @() -LinkLibraries @()
 	Invoke-Suite -Name 'WorldMeshBuilderTests' -Sources @('tests\WorldMeshBuilderTests.cpp', 'utils\WorldMeshBuilder.cpp', 'utils\SourceModelDecoder.cpp', 'utils\GltfWriter.cpp', 'utils\GltfLoader.cpp', 'utils\AssetConverter.cpp', 'Game\C\conversioncache.c') `
 		-ExtraIncludes @() -LinkLibraries @('windowscodecs.lib', 'ole32.lib')
+	Invoke-Suite -Name 'WorldMeshConversionTests' -Sources @('tests\WorldMeshConversionTests.cpp', 'utils\WorldMeshConversion.cpp', 'utils\WorldMeshBuilder.cpp', 'utils\SourceModelDecoder.cpp', 'utils\GltfWriter.cpp', 'utils\GltfLoader.cpp', 'utils\AssetConverter.cpp', 'Game\C\conversioncache.c') `
+		-ExtraIncludes @() -LinkLibraries @('windowscodecs.lib', 'ole32.lib')
 	Invoke-Suite -Name 'ModelPtypeProbeTests' -Sources @('tests\ModelPtypeProbeTests.cpp', 'Game\C\modelptypeprobe.c') `
 		-ExtraIncludes @() -LinkLibraries @()
 	Invoke-Suite -Name 'TextureDecodeTests' -Sources @('tests\TextureDecodeTests.cpp', 'utils\TextureDecode.cpp') `

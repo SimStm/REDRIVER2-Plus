@@ -18,6 +18,7 @@
 #include "../../utils/WorldMeshBuilder.h"
 #include "../../utils/AssetConverter.h"
 #include "../../utils/GltfWriter.h"
+#include "../../utils/WorldMeshConversion.h"
 
 #include <limits.h>
 #include <stdio.h>
@@ -28,6 +29,8 @@
 #ifdef _WIN32
 #include <direct.h>
 #include <stdarg.h>
+#include <future>
+#include <memory>
 #include "../../utils/InspectorExport.h"
 #endif
 
@@ -193,6 +196,31 @@ unsigned int s_regionModelRevision = 0;
 std::vector<AssetCatalogGameModelResource> s_reusableRegionResources;
 int s_regionReusedSlotCount = 0;
 
+#ifdef _WIN32
+struct RegionConversionResult
+{
+	int code;
+	WorldMeshConversionResult converted;
+	char error[256];
+};
+std::future<RegionConversionResult> s_regionConversionTask;
+ResidentRegionState s_regionTaskState = {};
+int s_regionTaskSlot = -1;
+enum class RegionPreparationMode { Immediate, Asynchronous };
+RegionPreparationMode s_regionPreparationMode = RegionPreparationMode::Immediate;
+int s_regionPendingSlots = 0;
+bool s_conversionPending = false;
+unsigned char s_regionFailedSlots[MAX_MODEL_SLOTS] = {};
+
+void FinishRegionConversionTask()
+{
+	if (!s_regionConversionTask.valid())
+		return;
+	try { s_regionConversionTask.get(); }
+	catch (const std::exception& error) { printWarning("AssetCatalog: conversion shutdown: %s\n", error.what()); }
+}
+#endif
+
 // Per-slot probe record. The loader reports each model once at its size-live
 // site; a reused slot replaces its record in place.
 struct ModelPtypeSlotRecord
@@ -260,6 +288,13 @@ void AssetCatalogGame_RecordModelSpan(int modelIndex, const unsigned char* model
 
 void AssetCatalogGame_BeginLevel(void)
 {
+#ifdef _WIN32
+	// Level loading is a synchronization boundary. No prior worker may race
+	// this level's synchronous cache writer; normal frames never wait here.
+	FinishRegionConversionTask();
+	memset(s_regionFailedSlots, 0, sizeof(s_regionFailedSlots));
+	s_regionPendingSlots = 0;
+#endif
 	AssetCatalog_BeginContext(GameLevel, (int)GetCityType(), gMultiplayerLevels);
 
 	// A new level starts a fresh generation. The bridge compares this to detect
@@ -288,6 +323,13 @@ void AssetCatalogGame_BeginLevel(void)
 	s_regionFailedSlotCount = 0;
 	s_regionLodSlotCount = 0;
 	s_regionHighDetailSlotCount = 0;
+}
+
+void AssetCatalogGame_ShutdownNativeConversion(void)
+{
+#ifdef _WIN32
+	FinishRegionConversionTask();
+#endif
 }
 
 void AssetCatalogGame_RegisterModel(int modelIndex)
@@ -877,46 +919,6 @@ bool AssetCatalogGame_WriteModelPtypeReport(char* status, int statusCapacity)
 	return true;
 }
 
-// Canonical digest of the decoded SourceMesh inputs the world mesh builder
-// consumes, so a changed source model produces a different conversion-cache key.
-// Arrays are hashed in a fixed order, then each submesh descriptor, so colour
-// presence and material grouping are part of the identity. Deterministic.
-static unsigned long long HashSourceMesh(const SourceMesh& mesh)
-{
-	std::vector<unsigned char> bytes;
-	bytes.reserve(mesh.positions.size() * sizeof(float) + mesh.uvs.size() * sizeof(float) +
-		mesh.colors.size() + mesh.shadeIndices.size() + mesh.indices.size() * sizeof(unsigned int) +
-		mesh.submeshes.size() * 12);
-
-	const unsigned char* positions = (const unsigned char*)mesh.positions.data();
-	bytes.insert(bytes.end(), positions, positions + mesh.positions.size() * sizeof(float));
-	const unsigned char* uvs = (const unsigned char*)mesh.uvs.data();
-	bytes.insert(bytes.end(), uvs, uvs + mesh.uvs.size() * sizeof(float));
-	bytes.insert(bytes.end(), mesh.colors.begin(), mesh.colors.end());
-	bytes.insert(bytes.end(), mesh.shadeIndices.begin(), mesh.shadeIndices.end());
-	const unsigned char* indices = (const unsigned char*)mesh.indices.data();
-	bytes.insert(bytes.end(), indices, indices + mesh.indices.size() * sizeof(unsigned int));
-
-	for (size_t i = 0; i < mesh.submeshes.size(); ++i)
-	{
-		const SourceSubmesh& submesh = mesh.submeshes[i];
-		bytes.push_back((unsigned char)submesh.primitiveClass);
-		bytes.push_back(submesh.textureSet);
-		bytes.push_back(submesh.textureId);
-		bytes.push_back(submesh.hasColors ? 1 : 0);
-		bytes.push_back(submesh.hasNormals ? 1 : 0);
-		for (int byte = 0; byte < 4; ++byte)
-			bytes.push_back((unsigned char)(submesh.firstIndex >> (byte * 8)));
-		for (int byte = 0; byte < 4; ++byte)
-			bytes.push_back((unsigned char)(submesh.indexCount >> (byte * 8)));
-	}
-
-	if (bytes.size() > (size_t)INT_MAX)
-		return 0;
-
-	return ConversionCache_HashBytes(bytes.data(), (int)bytes.size());
-}
-
 // Stores (or replaces) the published resource of a slot. The registry is
 // capacity-limited; a full table is a named warning and drops the new entry
 // rather than evicting a resident one.
@@ -961,163 +963,6 @@ static void StoreModelResource(int slot, const char* resourceKey, const char* gl
 	entry.sourceHash = sourceHash;
 	entry.modelRevision = AssetCatalog_GetModelHandle(AssetCatalog_FindModel(slot)).revision;
 	entry.baseModelRevision = SharedModelRevision(slot);
-}
-
-// Reads a whole file into `out`. Returns false for a missing/empty/unreadable
-// file. Local to the multi-mesh publish path below.
-static bool ReadWholeFileBytes(const char* path, std::vector<unsigned char>& out)
-{
-	FILE* file = fopen(path, "rb");
-	if (file == NULL)
-		return false;
-	fseek(file, 0, SEEK_END);
-	const long size = ftell(file);
-	fseek(file, 0, SEEK_SET);
-	if (size <= 0)
-	{
-		fclose(file);
-		return false;
-	}
-	out.resize((size_t)size);
-	const bool read = fread(out.data(), 1, (size_t)size, file) == (size_t)size;
-	fclose(file);
-	return read;
-}
-
-// Publishes a multi-primitive converted mesh transactionally, mirroring
-// AssetConverter_ConvertMesh for the single-primitive record: a fresh cached GLB
-// at the key's path is reused, otherwise the mesh is written to a temporary
-// file, verified by reading it back, then renamed into place. AssetConverter is
-// deliberately left untouched for this block, so the return codes reuse its
-// vocabulary and the existing diagnostic wording stays unchanged.
-static int PublishMultiMesh(const char* cacheDirectory, const ConversionCacheKey* key,
-	const GltfMultiMeshData& mesh, AssetConverterResult* out, char* error, int errorCapacity)
-{
-	if (error && errorCapacity > 0)
-		error[0] = '\0';
-	if (cacheDirectory == NULL || key == NULL || out == NULL)
-	{
-		if (error && errorCapacity > 0)
-			snprintf(error, errorCapacity, "no cache directory, key or output");
-		return ASSET_CONVERTER_ERR_ARGUMENT;
-	}
-
-	memset(out, 0, sizeof(*out));
-	if (mesh.primitives.empty())
-	{
-		if (error && errorCapacity > 0)
-			snprintf(error, errorCapacity, "the converted mesh has no primitives");
-		return ASSET_CONVERTER_ERR_EMPTY_MESH;
-	}
-
-	char cachePath[CONVERSION_CACHE_PATH_CAPACITY];
-	if (!ConversionCache_MakeCachePath(cacheDirectory, key, cachePath, sizeof(cachePath)))
-	{
-		if (error && errorCapacity > 0)
-			snprintf(error, errorCapacity, "the cache path is too long");
-		return ASSET_CONVERTER_ERR_ARGUMENT;
-	}
-	snprintf(out->glbPath, sizeof(out->glbPath), "%s", cachePath);
-
-	// A file at the key's path is fresh by construction: the key encodes the
-	// source hash, converter, schema, options and active mods.
-	std::vector<unsigned char> bytes;
-	if (ReadWholeFileBytes(cachePath, bytes))
-	{
-		snprintf(out->contentHash, sizeof(out->contentHash), "%016llx",
-			ConversionCache_HashBytes(bytes.data(), (int)bytes.size()));
-		out->converted = 0;
-		out->reused = 1;
-		return ASSET_CONVERTER_OK;
-	}
-
-	// Convert to a temporary file, verify it reads back, then publish it.
-	char temporary[CONVERSION_CACHE_PATH_CAPACITY + 8];
-	snprintf(temporary, sizeof(temporary), "%s.tmp", cachePath);
-	if (Gltf_WriteFileMulti(temporary, mesh, error, errorCapacity) != 0)
-	{
-		remove(temporary);
-		return ASSET_CONVERTER_ERR_WRITE;
-	}
-
-	GltfMultiMeshData verified;
-	if (Gltf_LoadFileMulti(temporary, &verified, error, errorCapacity) != 0 ||
-		verified.primitives.size() != mesh.primitives.size())
-	{
-		remove(temporary);
-		if (error && errorCapacity > 0 && error[0] == '\0')
-			snprintf(error, errorCapacity, "the converted GLB failed to read back");
-		return ASSET_CONVERTER_ERR_VERIFY;
-	}
-
-	if (!ReadWholeFileBytes(temporary, bytes))
-	{
-		remove(temporary);
-		if (error && errorCapacity > 0)
-			snprintf(error, errorCapacity, "the converted GLB could not be read");
-		return ASSET_CONVERTER_ERR_VERIFY;
-	}
-	snprintf(out->contentHash, sizeof(out->contentHash), "%016llx",
-		ConversionCache_HashBytes(bytes.data(), (int)bytes.size()));
-
-	remove(cachePath);
-	if (rename(temporary, cachePath) != 0)
-	{
-		remove(temporary);
-		if (error && errorCapacity > 0)
-			snprintf(error, errorCapacity, "the converted GLB could not be published");
-		return ASSET_CONVERTER_ERR_PUBLISH;
-	}
-
-	out->converted = 1;
-	out->reused = 0;
-	return ASSET_CONVERTER_OK;
-}
-
-// Deterministic FNV-1a 64 over the baked submesh images, used as the conversion
-// key's options hash. A textured conversion must not reuse a cached untextured
-// GLB for the same source model (and a re-bake with different VRAM pixels must
-// not reuse an older one), so the key reflects the baked pixels. Returns 0 when
-// nothing was baked, which keeps the legacy untextured key exactly unchanged.
-static unsigned long long HashBakedImages(const TextureBakeResult& bake)
-{
-	if (bake.pixels.empty())
-		return 0;
-
-	std::vector<unsigned char> stream;
-	for (size_t i = 0; i < bake.images.size(); i++)
-	{
-		const WorldSubmeshImage& image = bake.images[i];
-		stream.push_back(image.rgba ? 1 : 0);
-		for (int shift = 0; shift < 32; shift += 8)
-		{
-			stream.push_back((unsigned char)((unsigned)image.width >> shift));
-			stream.push_back((unsigned char)((unsigned)image.height >> shift));
-			stream.push_back((unsigned char)((unsigned)image.byteCount >> shift));
-		}
-		if (image.rgba)
-			stream.insert(stream.end(), image.rgba, image.rgba + image.byteCount);
-	}
-	return ConversionCache_HashBytes(stream.data(), (int)stream.size());
-}
-
-// Combines the baked-image hash with the legacy-shading colour hash so a
-// time-of-day/weather change (which changes the baked colours) never reuses a
-// stale GLB. Returns the image hash unchanged when there are no legacy colours,
-// so a sprite/override conversion keeps its historical key.
-static unsigned long long HashConversionOptions(const TextureBakeResult& bake,
-	const std::vector<unsigned char>& legacyColors)
-{
-	const unsigned long long imageHash = HashBakedImages(bake);
-	if (legacyColors.empty())
-		return imageHash;
-
-	std::vector<unsigned char> stream;
-	stream.push_back(0xA5); // separator: keeps the colour stream distinct from the image stream
-	for (int shift = 0; shift < 64; shift += 8)
-		stream.push_back((unsigned char)(imageHash >> shift));
-	stream.insert(stream.end(), legacyColors.begin(), legacyColors.end());
-	return ConversionCache_HashBytes(stream.data(), (int)stream.size());
 }
 
 // ---------------------------------------------------------------------------
@@ -1331,6 +1176,7 @@ static bool LegacyComputeWorldColors(const SourceMesh& source, const MODEL* mode
 // `-convertmodel` flag and the `-drawmodel` preparation.
 static bool ConvertModelSlot(int slot, char* status, int statusCapacity)
 {
+	s_conversionPending = false;
 	if (slot < 0 || slot >= MAX_MODEL_SLOTS)
 	{
 		snprintf(status, statusCapacity, "convert-model: slot %d is out of range", slot);
@@ -1370,6 +1216,19 @@ static bool ConvertModelSlot(int slot, char* status, int statusCapacity)
 		++s_regionReusedSlotCount;
 		snprintf(status, statusCapacity, "convert-model: slot %d reuses its unchanged resident resource", slot);
 		return true;
+	}
+	if (s_regionPreparationMode == RegionPreparationMode::Asynchronous)
+	{
+		if (s_regionFailedSlots[slot])
+		{
+			snprintf(status, statusCapacity, "convert-model: slot %d worker failed (previous diagnostic)", slot);
+			return false;
+		}
+		if (s_regionConversionTask.valid())
+		{
+			s_conversionPending = true;
+			return false;
+		}
 	}
 	const unsigned char* end = begin + span;
 
@@ -1443,85 +1302,86 @@ static bool ConvertModelSlot(int slot, char* status, int statusCapacity)
 		return false;
 	}
 
-	GltfMultiMeshData mesh;
-	WorldMeshBuilderResult built;
-
-	// Bake the model's per-submesh base-colour images from the resident VRAM
-	// before building. The decoded mesh only carries the texture set/id, so this
-	// reads VRAM once and turns each referenced (page, CLUT) pair into one RGBA
-	// image. A submesh whose page is missing or fails to decode stays untextured;
-	// the conversion still proceeds.
+	// Capture all game-owned inputs before handing work to another thread.
 	TextureBakeResult bake;
 	TextureBake_BakeModel(source, &bake);
-
-	// E03 visual parity P2: bake the legacy per-polygon shading into per-vertex
-	// colours. Sprites and metadata-less decodes leave the override null and keep
-	// the historical base-colour-factor behaviour.
-	std::vector<unsigned char> legacyColors;
-	const unsigned char* vertexColors = NULL;
-	size_t vertexColorBytes = 0;
-	if (LegacyComputeWorldColors(source, model, legacyColors))
+	std::shared_ptr<WorldMeshConversionInput> input(new WorldMeshConversionInput);
+	LegacyComputeWorldColors(source, model, input->legacyColors);
+	input->source = std::move(source);
+	for (size_t i = 0; i < bake.images.size(); ++i)
 	{
-		vertexColors = legacyColors.data();
-		vertexColorBytes = legacyColors.size();
+		const WorldSubmeshImage& image = bake.images[i];
+		WorldConversionImage snapshot = { -1, image.width, image.height };
+		if (image.rgba)
+		{
+			for (size_t pixel = 0; pixel < bake.pixels.size(); ++pixel)
+				if (image.rgba == bake.pixels[pixel].data())
+					{
+						snapshot.pixelIndex = (int)pixel;
+						break;
+					}
+			if (snapshot.pixelIndex < 0)
+			{
+				snprintf(status, statusCapacity, "convert-model: slot %d has an unowned image", slot);
+				return false;
+			}
+		}
+		input->images.push_back(snapshot);
 	}
+	input->pixels = std::move(bake.pixels);
+	if (bake.untexturedCount || bake.truncatedCount)
+		printWarning("AssetCatalog: texture-bake: slot %d: %d untextured, %d truncated: %s (%s)\n",
+			slot, bake.untexturedCount, bake.truncatedCount,
+			TextureBake_ReasonName(bake.firstReason), bake.firstDetail);
 
-	if (WorldMeshBuilder_BuildMulti(source, &mesh, &built, error, sizeof(error),
-			bake.images.empty() ? NULL : bake.images.data(), (int)bake.images.size(),
-			vertexColors, vertexColorBytes) != WORLD_MESH_ERROR_NONE)
+	_mkdir("native_cache");
+	if (s_regionPreparationMode == RegionPreparationMode::Asynchronous)
 	{
-		snprintf(status, statusCapacity, "convert-model: slot %d build failed: %s (%s)",
-			slot, WorldMeshBuilder_ErrorName(built.error), error);
-		return false;
+		try
+		{
+			const std::shared_ptr<const WorldMeshConversionInput> taskInput = input;
+			s_regionConversionTask = std::async(std::launch::async, [taskInput]() {
+				RegionConversionResult result = {};
+				try
+				{
+					result.code = WorldMeshConversion_Publish("native_cache", *taskInput,
+						&result.converted, result.error, sizeof(result.error));
+				}
+				catch (const std::exception& error)
+				{
+					result.code = ASSET_CONVERTER_ERR_PUBLISH;
+					snprintf(result.error, sizeof(result.error), "%s", error.what());
+				}
+				catch (...)
+				{
+					result.code = ASSET_CONVERTER_ERR_PUBLISH;
+					snprintf(result.error, sizeof(result.error), "unknown conversion exception");
+				}
+				return result;
+			});
+			s_regionTaskState = s_preparedRegionState;
+			s_regionTaskSlot = slot;
+			s_conversionPending = true;
+			return false;
+		}
+		catch (const std::exception& error)
+		{
+			snprintf(status, statusCapacity, "convert-model: slot %d task launch failed: %s", slot, error.what());
+			return false;
+		}
 	}
-
-	// Additive texture-bake diagnostics; the conversion/publish wording below is
-	// unchanged. A missing/evicted page, an unsupported format or a decode
-	// failure is a named warning and leaves only that submesh untextured.
-	if (bake.submeshCount > 0)
-	{
-		if (bake.untexturedCount == 0 && bake.truncatedCount == 0)
-			printInfo("AssetCatalog: texture-bake: slot %d, %d/%d submeshes textured (%d deduped, %d images)\n",
-				slot, bake.bakedCount, bake.submeshCount, bake.dedupedCount, (int)bake.pixels.size());
-		else
-			printWarning("AssetCatalog: texture-bake: slot %d, %d/%d submeshes textured (%d deduped), "
-				"%d untextured (%d by image cap); first %s (%s)\n",
-				slot, bake.bakedCount, bake.submeshCount, bake.dedupedCount,
-				bake.untexturedCount, bake.truncatedCount,
-				TextureBake_ReasonName(bake.firstReason), bake.firstDetail);
-	}
-
-	const unsigned long long sourceHash = HashSourceMesh(source);
-	const unsigned long long optionsHash = HashConversionOptions(bake, legacyColors);
-	ConversionCacheKey key;
-	ConversionCache_MakeKey(&key, "world-mesh", sourceHash, optionsHash, 0ULL, CONVERSION_CACHE_SCHEMA_VERSION);
-
-	const char* cacheDirectory = "native_cache";
-	_mkdir(cacheDirectory); // an existing directory is fine; a real failure surfaces in the publish step
-
-	AssetConverterResult published;
-	const int code = PublishMultiMesh(cacheDirectory, &key, mesh, &published, error, sizeof(error));
+	WorldMeshConversionResult converted = {};
+	const int code = WorldMeshConversion_Publish("native_cache", *input, &converted, error, sizeof(error));
 	if (code != ASSET_CONVERTER_OK)
 	{
-		snprintf(status, statusCapacity, "convert-model: slot %d publish failed: %s (%s)",
+		snprintf(status, statusCapacity, "convert-model: slot %d failed: %s (%s)",
 			slot, AssetConverter_ErrorName(code), error);
 		return false;
 	}
-
-	// Record the published resource so the native-draw bridge can register it
-	// by key without re-decoding. A key-format failure leaves the entry out and
-	// is a named warning, not a conversion failure.
-	char keyText[CONVERSION_CACHE_KEY_CAPACITY];
-	if (ConversionCache_FormatKey(&key, keyText, sizeof(keyText)) > 0)
-		StoreModelResource(slot, keyText, published.glbPath, published.contentHash, sourceHash);
-	else
-		printWarning("AssetCatalog: convert-model: slot %d key formatting failed; resource not tracked\n", slot);
-
-	snprintf(status, statusCapacity,
-		"convert-model: slot %d, span %d bytes, submeshes %d, vertices %d, triangles %d, skipped %u, "
-		"source-hash %016llx, content-hash %s -> %s",
-		slot, span, built.submeshCount, built.vertexCount, built.triangleCount, decoded.skippedCount,
-		sourceHash, published.contentHash, published.glbPath);
+	StoreModelResource(slot, converted.resourceKey, converted.asset.glbPath,
+		converted.asset.contentHash, converted.sourceHash);
+	snprintf(status, statusCapacity, "convert-model: slot %d, span %d bytes, vertices %d, triangles %d, skipped %u -> %s",
+		slot, span, converted.built.vertexCount, converted.built.triangleCount, decoded.skippedCount, converted.asset.glbPath);
 	return true;
 }
 
@@ -1954,6 +1814,7 @@ static bool PrepareResidentRegionDraw(char* status, int statusCapacity)
 	s_regionResourcesTruncated = false;
 	s_regionConvertedSlotCount = 0;
 	s_regionFailedSlotCount = 0;
+	s_regionPendingSlots = 0;
 
 	// Dev-only content filter (RED2_NATIVE_REGION_FILTER). Read once; NONE when
 	// unset, in which case every branch below is the unchanged original path.
@@ -2146,6 +2007,8 @@ static bool PrepareResidentRegionDraw(char* status, int statusCapacity)
 
 		if (ConvertModelSlot(distinctSlots[s], convertStatus, sizeof(convertStatus)))
 			s_regionConvertedSlotCount++;
+		else if (s_conversionPending)
+			s_regionPendingSlots++;
 		else
 		{
 			s_regionFailedSlotCount++;
@@ -2161,6 +2024,8 @@ static bool PrepareResidentRegionDraw(char* status, int statusCapacity)
 
 		if (ConvertModelSlot(lodSlots[l], convertStatus, sizeof(convertStatus)))
 			s_regionConvertedSlotCount++;
+		else if (s_conversionPending)
+			s_regionPendingSlots++;
 		else
 		{
 			s_regionFailedSlotCount++;
@@ -2177,11 +2042,21 @@ static bool PrepareResidentRegionDraw(char* status, int statusCapacity)
 
 		if (ConvertModelSlot(highDetailSlots[h], convertStatus, sizeof(convertStatus)))
 			s_regionConvertedSlotCount++;
+		else if (s_conversionPending)
+			s_regionPendingSlots++;
 		else
 		{
 			s_regionFailedSlotCount++;
 			printWarning("AssetCatalog: region draw (high-detail): %s\n", convertStatus);
 		}
+	}
+
+	if (s_regionPendingSlots > 0)
+	{
+		free(placements);
+		free(visited);
+		snprintf(status, statusCapacity, "region draw: preparing %d resource slots", s_regionPendingSlots);
+		return false;
 	}
 
 	s_regionLodSlotCount = lodCount;
@@ -2391,7 +2266,7 @@ bool AssetCatalogGame_PrepareRegionDraw(char* status, int statusCapacity)
 	const ResidentRegionState current = ReadResidentRegionState();
 	s_reusableRegionResources.clear();
 	s_regionReusedSlotCount = 0;
-	if (s_preparedRegionStateValid && s_regionPrepareSucceeded &&
+	if (s_preparedRegionStateValid &&
 		current.area == s_preparedRegionState.area &&
 		memcmp(current.pageSlots, s_preparedRegionState.pageSlots, sizeof(current.pageSlots)) == 0 &&
 		memcmp(current.loadedPages, s_preparedRegionState.loadedPages, sizeof(current.loadedPages)) == 0)
@@ -2403,9 +2278,12 @@ bool AssetCatalogGame_PrepareRegionDraw(char* status, int statusCapacity)
 	s_regionPrepareSucceeded = PrepareResidentRegionDraw(status, statusCapacity);
 	snprintf(s_regionPrepareError, sizeof(s_regionPrepareError), "%s", s_regionPrepareSucceeded ? "" : status);
 	s_reusableRegionResources.clear();
-	s_regionDrawRevision++;
-	printInfo("AssetCatalog: native publication %u reuses %d converted slots\n",
-		s_regionDrawRevision, s_regionReusedSlotCount);
+	if (s_regionPendingSlots == 0)
+	{
+		s_regionDrawRevision++;
+		printInfo("AssetCatalog: native publication %u reuses %d converted slots\n",
+			s_regionDrawRevision, s_regionReusedSlotCount);
+	}
 	return s_regionPrepareSucceeded;
 }
 
@@ -2434,13 +2312,35 @@ int AssetCatalogGame_UpdateRegionDraw(char* status, int statusCapacity)
 		if (loading_region[i] != -1)
 			return 1;
 	const ResidentRegionState current = ReadResidentRegionState();
-	if (s_preparedRegionStateValid && SameResidentRegionState(current, s_preparedRegionState))
+	if (!s_preparedRegionStateValid || !SameResidentRegionState(current, s_preparedRegionState))
+		memset(s_regionFailedSlots, 0, sizeof(s_regionFailedSlots));
+	if (s_regionConversionTask.valid() &&
+		s_regionConversionTask.wait_for(std::chrono::seconds(0)) == std::future_status::ready)
+	{
+		const RegionConversionResult result = s_regionConversionTask.get();
+		if (SameResidentRegionState(current, s_regionTaskState))
+		{
+			if (result.code == ASSET_CONVERTER_OK)
+				StoreModelResource(s_regionTaskSlot, result.converted.resourceKey, result.converted.asset.glbPath,
+					result.converted.asset.contentHash, result.converted.sourceHash);
+			else
+			{
+				s_regionFailedSlots[s_regionTaskSlot] = 1;
+				printWarning("AssetCatalog: slot %d asynchronous conversion failed: %s\n", s_regionTaskSlot, result.error);
+			}
+		}
+	}
+	if (s_preparedRegionStateValid && SameResidentRegionState(current, s_preparedRegionState) && s_regionPendingSlots == 0)
 	{
 		if (!s_regionPrepareSucceeded)
 			snprintf(status, statusCapacity, "%s", s_regionPrepareError);
 		return s_regionPrepareSucceeded ? 0 : -1;
 	}
+	s_regionPreparationMode = RegionPreparationMode::Asynchronous;
 	const bool success = AssetCatalogGame_PrepareRegionDraw(status, statusCapacity);
+	s_regionPreparationMode = RegionPreparationMode::Immediate;
+	if (s_regionPendingSlots > 0)
+		return 1;
 	printInfo("AssetCatalog: native resident revision %u: regions [%d,%d,%d,%d], area %d: %s\n",
 		s_regionDrawRevision, current.regions[0], current.regions[1], current.regions[2],
 		current.regions[3], current.area, status);
@@ -2724,6 +2624,10 @@ unsigned int AssetCatalogGame_LevelGeneration(void)
 unsigned int AssetCatalogGame_RegionDrawRevision(void)
 {
 	return 0;
+}
+
+void AssetCatalogGame_ShutdownNativeConversion(void)
+{
 }
 
 int AssetCatalogGame_UpdateRegionDraw(char* status, int statusCapacity)

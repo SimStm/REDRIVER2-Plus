@@ -236,6 +236,9 @@ int AssetCatalogGame_UpdateRegionDraw(char* status, int statusCapacity);
 /* Changes on every attempted publication, including an explicit empty/error
    snapshot. Independent of the level generation and camera/LOD selection. */
 unsigned int AssetCatalogGame_RegionDrawRevision(void);
+/* Joins the owned conversion task at application shutdown, before services are
+   destroyed. Normal presentation frames only poll completion. */
+void AssetCatalogGame_ShutdownNativeConversion(void);
 
 /* Number of placements collected by AssetCatalogGame_PrepareRegionDraw (0 when
    none were collected or the flag is off). */

@@ -585,6 +585,7 @@ static int s_regionDrawHighDetailSelectedCount = 0;
 // than relying on the registry being transiently empty.
 static unsigned int s_regionDrawGeneration = 0;
 static unsigned int s_regionDrawRevision = 0;
+static int s_regionRegistrationCursor = 0;
 static int s_regionDrawRefreshFailed = 0;
 static unsigned int s_nativeDrawGeneration = 0;
 
@@ -676,6 +677,7 @@ static void NativeRenderer_ResetRegionDrawState(void)
 		NativeRenderer_UnregisterResource(s_regionDrawRegisteredKeys[i]);
 	s_regionDrawRegistered = 0;
 	s_regionDrawRegisteredCount = 0;
+	s_regionRegistrationCursor = 0;
 	s_regionDrawReported = 0;
 	s_regionDrawWaitingLogged = 0;
 	s_regionDrawValidFrames = 0;
@@ -949,6 +951,7 @@ static void NativeRenderer_RefreshRegionDrawState(void)
 		}
 	}
 	s_regionDrawRegisteredCount = kept;
+	s_regionRegistrationCursor = 0;
 	s_regionDrawRegistered = 0;
 	s_regionDrawKeysBuilt = 0;
 	s_regionDrawSelectionValid = 0;
@@ -1010,8 +1013,14 @@ static int NativeRenderer_DevRegionDrawSubmit(const float view[16])
 		const int resourceCount = AssetCatalogGame_GetModelResourceCount();
 		char error[256];
 
-		for (int i = 0; i < resourceCount; ++i)
+		const Uint64 registerStart = SDL_GetPerformanceCounter();
+		const int batchStart = s_regionRegistrationCursor;
+		for (; s_regionRegistrationCursor < resourceCount; ++s_regionRegistrationCursor)
 		{
+			if (s_regionRegistrationCursor != batchStart &&
+				(SDL_GetPerformanceCounter() - registerStart) * 1000.0 / SDL_GetPerformanceFrequency() >= 4.0)
+				break;
+			const int i = s_regionRegistrationCursor;
 			char key[CONVERSION_CACHE_KEY_CAPACITY];
 			char glbPath[CONVERSION_CACHE_PATH_CAPACITY];
 			int slot = -1;
@@ -1036,6 +1045,8 @@ static int NativeRenderer_DevRegionDrawSubmit(const float view[16])
 				snprintf(s_regionDrawRegisteredKeys[s_regionDrawRegisteredCount++],
 					CONVERSION_CACHE_KEY_CAPACITY, "%s", key);
 		}
+		if (s_regionRegistrationCursor < resourceCount)
+			return 0;
 
 		s_regionDrawRegistered = 1;
 		PsyX_Log_Info("native region draw: registered %d/%d resources, %d LOD variants, %d high-detail slots\n",
@@ -1508,7 +1519,9 @@ static void NativeRenderer_DevRegionDrawReport(int submitted, const float view[1
 		zFirst, zMin, zMax, inFrustum, statsSubmitted, onScreen, statsSubmitted,
 		GameLevel, (int)GetCityType(), AssetCatalogGame_LevelGeneration(), diagText);
 
-	NativeRenderer_DevDrawCaptureFrame("native_region_draw.rgba");
+	const char* capture = getenv("RED2_NATIVE_REGION_CAPTURE");
+	if (capture && !strcmp(capture, "1"))
+		NativeRenderer_DevDrawCaptureFrame("native_region_draw.rgba");
 }
 
 // One line per run with the instance stats, the resource identity and a few
@@ -2196,6 +2209,7 @@ int main(int argc, char** argv)
 	DeterministicBaseline_Shutdown();
 	DeinitStringMng();
 	DeveloperModernMesh_Shutdown();
+	AssetCatalogGame_ShutdownNativeConversion();
 	DeveloperGraphicsPanel_Shutdown();
 
 #ifdef _WIN32

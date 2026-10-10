@@ -55,18 +55,21 @@ residency. Publications rebuild transforms/LOD provenance, retain unchanged GPU 
 retire removed keys; loading clears without the renderer fixture. Source/native placement
 bounds agree at 16384. ATTRACT.400 changed to regions [198,199,214,215] (8594 placements,
 206 resources) then [198,199,182,183] (10167/185); zero conversion failures/truncations.
-Reused 152/166 conversions. Initial synchronous reconversion dropped 107 ticks; reuse
-reduced this to 37 in the second run, still unacceptable for acceptance. New content must
-be prepared without blocking the game loop. Local-file spooling is synchronous; no CD-thread
-buffers are inspected. Inspector 16 suites passed, native smoke 1213/0 including the last
-instance at capacity and clear-frame diagnostics. Evidence under native-performance/
-resident-refresh-*. Final VS Release_dev_native|x64 and Release_dev|x64 builds passed;
-OpenGL mission 1 startup passed. Debug args restored byte-for-byte; VS native x64 selected.
-RenderDoc replay/export inspected: 5904 draws, zero replay messages; capture added 13
-dropped ticks (runtime total 50), separate from the 37 transition drops above.
-Next: async/budgeted content preparation with immutable source ownership, then draw
-distance/world corrections and player vehicle/on-foot presentation. No playable
-actor or whole-city acceptance yet; interactive F9/input/display validation remains open.
+Synchronous reconversion dropped 107 ticks; reuse reduced this to 37. New preparation
+captures owned geometry, indexed pixel buffers and colours, then runs build/hash/cache
+publication in a single asynchronous task. Normal frames poll; level loading/shutdown join.
+Obsolete source-state results are discarded. GPU uploads use 4 ms batches; region readback
+is opt-in (`RED2_NATIVE_REGION_CAPTURE=1`). New pure WorldMeshConversion module preserves
+the historical nonstandard hash seed; the compatibility test caught the initial wrong
+seed and now passes. Final replay reached tick 5551, two transitions, zero drops before capture.
+Loading currently clears until the new scene is ready; this is not continuous residency
+or city acceptance. Local-file spooling stays synchronous; CD-thread buffers are not read.
+WorldMeshConversionTests: 14/0 (owned pixels, concurrent .tmp safety, cache identity,
+16 MiB owned/64 MiB expanded image bounds). Earlier GPU smoke: 1213/0. Evidence:
+native-performance/async-world-*. Final RenderDoc: 6347 draws/zero messages, PNG inspected;
+capture added 17 drops. Native/OpenGL builds/startups passed; debugger profile restored exactly.
+Next: finish loading continuity/prefetch and native draw distance, then world corrections
+and player vehicle/on-foot presentation. Interactive F9/input/display and actors remain open.
 
 - Fixed dynamic constant updates (Map/Discard), wired configured VSync and added
   conservative AABB culling against the exact homogeneous MVP. Local mission 1 baseline
@@ -95,9 +98,6 @@ actor or whole-city acceptance yet; interactive F9/input/display validation rema
 - Release_dev|x64 compatibility build and -opengl mission 1 launch passed; log confirms
   OpenGL 3.3.0. Native smoke after UNORM change again passed 1200 checks. Both debug
   sessions were stopped. Native diagnostic env is local/generated, not committed.
-- Next: finish configuration/pacing verification above, then tick/interpolation-anchored
-  world texture/material/model diagnosis and the player/vehicle slice.
-
 Prior bounded parity evidence (preserved; not full acceptance):
 
 - World pipeline: `CULL_NONE`, opaque alpha / `0000h` discard, LEQUAL; legacy world colours

@@ -120,11 +120,39 @@ The bounded source/native instance capacity is 16384, rather than mission 1's 81
 
 ATTRACT.400 reached 8594/10167 placements and 206/185 resources without truncation or
 conversion failures. The second run reused 152/166 converted slots. Tick drops fell from
-107 to 37 over the observed two transitions, but synchronous new conversions still block
-the loop. Async content preparation is required before driving/streaming acceptance.
+107 to 37 over the observed two transitions with synchronous new conversions.
 Native smoke passes 1213 checks, including a visible instance at the final capacity index
 and loading-frame counters; all 16 inspector suites pass. These tests do not establish
 whole-city coverage or deterministic replay parity through conversion stalls.
 The final RenderDoc replay/export has 5904 draws and zero replay messages; the PNG
 shows the new-sector street/buildings. Capture introduced 13 additional dropped ticks
 (runtime total 50), separate from the 37 drops observed across the two transitions.
+
+### Owned asynchronous preparation
+
+New conversions capture geometry, indexed CPU pixel buffers and legacy colours on the
+game thread. One worker builds, hashes and publishes immutable owned inputs; it never
+reads live MODEL/VRAM/game pointers or accesses the GPU. Normal frames poll completion;
+level loading and shutdown join. Completed results are published only when their sector,
+area, model and page provenance still matches. Failed slots retain named diagnostics
+until source state changes. GPU registration resumes across frames with a 4 ms batch
+target; one indivisible resource upload may exceed that target.
+
+WorldMeshConversion preserves the historical cache seed and encoded key bytes. Pixel
+inputs are bounded to 64 buffers/16 MiB, expanded images to 64 MiB and cache reads to
+128 MiB. Cache writers serialize transactional publication. Automatic region readback
+now requires `RED2_NATIVE_REGION_CAPTURE=1`; normal diagnostic reports do not dump images.
+
+Final Release_dev_native replay observed both sector transitions above, then tick 5551,
+with zero dropped ticks before GPU capture. Later steady samples were about 36-38 FPS,
+30/31 ticks per interval, with 10167 placements and 6347 draws. The RenderDoc capture
+`native-async-world.rdc` reports 6347 draws/zero replay messages; its inspected PNG shows
+the new-sector street and buildings. Capture induced 17 dropped ticks, recorded separately.
+All 17 inspector suites passed; WorldMeshConversionTests passed 14 checks covering owned
+inputs, concurrent cache publication, historical key compatibility and allocation bounds.
+VS native and Release_dev x64 builds passed; OpenGL mission 1 startup reports version
+3.3.0. Both debug sessions stopped; the original generated debugger profile was restored
+byte-for-byte and Visual Studio returned to Release_dev_native|x64.
+These observations do not establish whole-city coverage or full replay determinism.
+Loading still clears until the new native scene is ready. Continuous visual residency,
+prefetch, native draw distance and player vehicle/on-foot presentation remain required.

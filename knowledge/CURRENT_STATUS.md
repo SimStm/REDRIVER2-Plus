@@ -99,16 +99,19 @@ accepted.
 
 ## Engine migration E03 (in progress; parity not accepted)
 
-- Resident streaming bridge (2026-10-10): local-file sector/area/model/page changes
-  republish the native snapshot; unchanged conversions and GPU keys are reused,
-  obsolete keys retired, pending loading clears without the native test fixture.
-  Source/native placement limits now agree at 16384. ATTRACT.400 reached 8594 and
-  10167 placements (206/185 resources, zero conversion failures/truncations), reusing
-  152/166 converted slots. New conversions still block: 37 dropped ticks versus 107
-  before reuse in these bounded runs. Native smoke 1213/0; inspector 16 suites passed.
-  Final VS Release_dev_native|x64 and Release_dev|x64 builds passed.
-  Async content preparation, draw distance, full-city/actor coverage remain required;
-  this bridge does not support CD-thread buffers or prove city/game acceptance.
+- Resident streaming (2026-10-10): local-file sector/area/model/page changes republish
+  the scene, retaining unchanged conversions/GPU keys and retiring obsolete keys.
+  Source/native capacity is 16384; ATTRACT.400 reached 8594/10167 placements (206/185
+  resources, zero conversion failures/truncations). Owned geometry/pixel/colour snapshots
+  now build/hash/publish on one asynchronous task; normal frames poll, level-load/shutdown
+  join. Provenance rejects obsolete results; GPU registration batches target 4 ms.
+  Region-image readback is opt-in. The historical cache seed/keys are preserved.
+  Earlier synchronous runs dropped 107 then 37 ticks; the corrected-key asynchronous
+  final run reached tick 5551 with zero drops across the same two transitions. A bounded
+  result, not city/replay acceptance. Conversion tests 14/0 cover ownership, concurrency,
+  identity and allocation bounds (17 suites passed); native/OpenGL builds/startups passed.
+  Pending loading clears; draw distance, continuous visual
+  residency and actors remain open. This bridge does not read CD-thread buffers.
 - Native settings/F9 block (2026-10-10): config.ini `[render] presentationFps` is read
   before selective developer overrides; missing FPS preserves the baseline. Diligent
   samplers follow live bilinear filtering for resident/new resources. The native F9
