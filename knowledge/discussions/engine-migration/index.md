@@ -54,6 +54,120 @@ Conversion removes repeated source-format interpretation from presentation but
 does not solve every overlap/alpha/streaming/dynamic integration problem. No "99%"
 reduction or schedule estimate is established. Native failures remain explicit.
 
+## Content decode-base strategy (E02/E03)
+
+User decision (2026-10-09): adopt the hybrid decode-base strategy for
+original-content conversion. The project's reconstructed decode stays the
+authority for anything simulated or identified; OpenDriver2Tools (ODT) is a
+format/placement reference and gap-filler, never a runtime dependency and never
+a second long-lived parser. Rationale from the review: a foreign parser would
+drift on flags/winding/LOD/damage and cannot supply catalog identities, while a
+from-scratch rewrite alone would delay the slice and redo solved format
+plumbing.
+
+- Authority: game-reconstructed decode owns world MODEL geometry, sector
+  instances/LOD, car damage/vertex mappings and sound IDs; identity and bindings
+  reconcile with `assetcatalog.*`.
+- One pure decode module (`utils/`, no PsyCross/GPU, cross-platform) serves the
+  offline converter and any runtime bridge; one shipped implementation per asset
+  category. Runtime consumes published packages via `GltfLoader` +
+  `NativeRenderer`, never a parallel decode.
+- ODT role: format/export reference (as previously planned) plus gap-filler for
+  pure format plumbing (texture palette-to-RGBA, sound containers), lifted into
+  the same module or reimplemented from documented behavior. Pin the inspected
+  revision and record provenance; adapted code stays in tooling and is not
+  reachable from the shipped runtime.
+- A bounded, external ODT-to-GLB tooling spike (temporary directory, no repo
+  integration) was authorized for a reference GLB and to concretize the
+  adaptation surface; it does not authorize a shipped ODT conversion path.
+
+Verified ODT facts (source `master`, head 2025-10-28; the repo has no LICENSE
+file - the user accepted reuse for this non-commercial project):
+
+- `DriverLevelTool/driver_routines/` parses standalone: no SDL2/OpenGL/ImGui
+  coupling in the parse path; Win32 appears only in shared helpers
+  (`core/cmdlib.cpp` console spew under `#ifdef _WIN32`, `util` path handling,
+  `math` `fsincos` with a C fallback).
+- In-memory representation: `decode_poly` yields per-face positions/UVs/normals/
+  colour plus `page`/`detail`; placements are `CELL_OBJECT {pos, yang, type}`
+  (the Unity export keeps instances, the region OBJ export bakes them);
+  `ConvertIndexedTextureToRGBA` decodes palette variants.
+- No glTF/GLB or PNG writer exists (TGA/TIM/BMP only). A GLB layer must add
+  index de-duplication, node/TRS synthesis, handedness conventions, `TEXINF`
+  sub-rect material mapping, normals for polygons without them and alpha
+  semantics.
+- Audio: `DriverSoundTool` yields decoded 16-bit PCM (`PCMSample` with loops);
+  XM is emitted as raw bytes, not a parsed module; MP3 would need an encoder.
+
+Adopted acceptance gates (on top of E02's existing criteria):
+
+- Cross-interpretation agreement fixture: offline decode and the game's live
+  interpretation of the same source bytes reconcile in positions/UVs/indices/
+  texture id/flags.
+- Identity/binding fixture: damage, LOD and `source_object_index` reconcile with
+  the asset catalog; missing bindings are explicit errors.
+- Convergence ledger per category (`game-authority | otd-derived | not-covered`)
+  with one owning implementation per category.
+- Portability/isolation gate: the pure module builds on all declared targets
+  without SDL2/OpenGL/ImGui.
+- Named diagnostics with no partial output; unsupported categories remain
+  explicit in the coverage report.
+
+Recommended sequencing for the first visible native world content (continues
+E03 Block 2; ODT-independent):
+
+1. Capture the real MODEL byte span at load (`models.c:131-139`) into the
+   decoder's `[begin,end)` contract.
+2. Extend `SourceModelDecoder` to the full world ptype set, settling the
+   skip-vs-fail policy once against a real-data ptype histogram.
+3. Decode one real building/tile MODEL into `SourceMesh` and publish a GLB
+   through the existing `GltfWriter`/`AssetConverter`.
+4. Add a bounded per-instance draw API plus sector/instance transforms in
+   `NativeRenderer` and draw the converted region with the game camera.
+
+Open questions:
+
+- Which categories stay `otd-derived` permanently (texture palettes? sound
+  containers?) versus converging to project decode.
+- The runtime skip-vs-fail ptype divergence (`draw.c` skips unknown ptypes; the
+  decoder fails the model) must be decided once in the shared module.
+- ODT code-adaptation provenance and confinement details.
+- Remaining ODT gaps stay explicit: character/skeleton geometry, video/FMV,
+  event models, mission tool stub.
+
+### ODT-to-GLB spike results (2026-10-09)
+
+Bounded external spike in the approved temp directory (repo read-only;
+artifacts and command logs under `odt-glb-spike/`). Local `data\DRIVER2\` is a
+full retail NTSC tree; `MLEVELS\CHICAGO.LEV` (1.73 MB, 10 regions) served as
+the small level. ODT v1.10 and master (2025-10-28) were both exercised; GLBs
+were produced for car clean/low and the whole mini level with embedded PNG
+textures (Khronos validator 0 errors / 0 warnings, hints only, on every
+artifact).
+
+Confirmed facts for the future GLB writer and package contract:
+
+- Instance placements are baked into vertices by both OBJ paths (`g regNN`
+  only); the Unity mode is the only placement-preserving path and was not
+  exercised. Package instances must come from the project decode/catalog.
+- `damaged` car models are deformation data, not geometry: most faces are
+  degenerate (`f 1 1 1`) and the game uses only the vertex array for denting
+  (`CleanVert + (DamVert - CleanVert) * damage/2`). Packages must carry damage
+  as vertex mappings/arrays, never as renderable meshes.
+- UVs address full 256x256 pages; `PAGE_N.ini` sub-rect metadata is ignored and
+  per-face `texture_id`/CLUT selection is dropped. The writer layer must
+  recover both from project decode.
+- World exports contain zero `vn` lines; car exports have normals only on
+  smooth polygons. Conversion must synthesize normals or use flat shading.
+- TGA alpha is binary from the STP bit with a magenta transparency key; real
+  per-primitive ABE blending is not representable in OBJ/MTL.
+- Missing texture references occur in practice (`usemtl page_89` with no MTL
+  entry/TGA); conversion must report them explicitly.
+- Master writes `regions\<lev>_regN.obj`; v1.10 writes one merged
+  `<lev>_LEVELMODEL.obj`.
+
+Reference GLBs stay in the temp spike folder (not copied into the repository).
+
 ## Temporary legacy backend recommendation
 
 2026-10-08 analysis on parent `9c353405` with existing local migration edits:
@@ -92,6 +206,21 @@ regional/replay compatibility and backlog policy. Later physics changes require
 separate game/replay versioning. No unresolved choice authorizes a silent fallback.
 
 ## History
+
+2026-10-09 ODT-to-GLB spike follow-up: bounded external spike produced
+validator-clean GLBs (car clean/low, mini-level) from ODT exports of the local
+retail data and confirmed the writer-layer gaps plus damaged-model semantics
+(deformation data, not renderable geometry); results recorded under the
+decode-base section. No code changed in this task.
+
+2026-10-09 decode-base follow-up: user adopted the hybrid content conversion
+strategy (project-reconstructed decode stays the authority; OpenDriver2Tools is
+a format/placement reference and gap-filler, never a runtime dependency) after
+a modularity inspection of ODT's reader layer and an oracle review of the
+alternatives. One pure decode module serves the offline converter and runtime
+consumers; E03 Block 2 and a bounded external ODT-to-GLB tooling spike are the
+authorized next steps. No runtime ODT dependency was authorized. No code changed
+in this task.
 
 2026-10-09 effects/replay follow-up: complementary updates moved legacy effect
 emission/lifecycle, light phases and input-gating title time to regional ticks;

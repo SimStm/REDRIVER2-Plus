@@ -668,6 +668,19 @@ void State_GameInit(void* param)
 			printWarning("AssetCatalog: %s\n", inventoryStatus);
 	}
 
+	// E03 block 2a: the -modelptypes developer flag writes the accumulated
+	// polygon-type probe report once, after the models are resident. A failed
+	// report must never interrupt the game, so it only logs.
+	if (AssetCatalogGame_ModelPtypesRequested())
+	{
+		char ptypeStatus[512];
+
+		if (AssetCatalogGame_WriteModelPtypeReport(ptypeStatus, sizeof(ptypeStatus)))
+			printInfo("AssetCatalog: %s\n", ptypeStatus);
+		else
+			printWarning("AssetCatalog: %s\n", ptypeStatus);
+	}
+
 	// The playground replaces the loaded world with a generated, resident
 	// fixture while reusing the donor level's car, texture and sound data.
 	if (NewLevel)
@@ -1883,6 +1896,7 @@ void PrintCommandLineArguments()
 		"  -savereplay <file> : save the in-progress replay recording to <file>\n"
 		"  -saveat <tick> : tick at which -savereplay writes the file\n"
 		"  -assetinventory : write a level asset inventory report after loading\n"
+		"  -modelptypes : write a model polygon-type report after loading\n"
 #endif // DEBUG_OPTIONS
 		"  -replay <filename.d2rp> : starts replay from file\n"
 #ifdef CUTSCENE_RECORDER
@@ -2113,6 +2127,12 @@ int redriver2_main(int argc, char** argv)
 				i++;
 		}
 		else if (!strcmp(argv[i], "-assetinventory"))
+		{
+			// Consumed by AssetCatalogGame_ConfigureFromCommandLine in the
+			// platform entry point; accepted here only to avoid the command
+			// line helper popup.
+		}
+		else if (!strcmp(argv[i], "-modelptypes"))
 		{
 			// Consumed by AssetCatalogGame_ConfigureFromCommandLine in the
 			// platform entry point; accepted here only to avoid the command

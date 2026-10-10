@@ -8,7 +8,7 @@ tags: [okf, status, agents]
 # Recent engineering context
 
 > Updated: 2026-10-09.
-> Read the handoff below first: E03 Block 1, E04 P0 and the next A1/Block 2 step.
+> Read the handoff below first: E03 Block 2 (2a/2.1/2.5) and E04 A1; next B2.4/B2.6.
 > Older task narratives are condensed; their change records
 > hold the detail.
 
@@ -46,24 +46,67 @@ fixed ticks independent of presentation FPS and CPU speed.
   logging were added after the oracle gate. Evidence: smoke 38/0 (orchestrator
   re-run), `Release_dev_native` build exit 0, in-game probe with resize applied
   and graceful exit code 0.
-- Source MODEL decoder foundation (E03 Block 1, oracle-approved attempt 1 with
-  F1-F8 remediation): `utils/SourceModelDecoder.*` is a pure, asset-free decoder
-  of the reconstructed MODEL poly block from an explicit `[begin,end)` span
-  (MODEL has no byte span; loader span capture is Block 2). Allowlisted ptypes
-  11/20/21/22/23, stride `PolySizes[ptype&0x1f]`, world quad vertex/UV order,
-  declared 20/22 decoded as triangles, total span/index/normal validation with
-  named errors and zero output, unsupported ptypes fail the model, instanced
-  models rejected, per-submesh colour/normal flags with raw stored face colours.
-  New `SourceModelDecoderTests` 336/0 (synthetic byte-exact fixtures); the full
-  inspector runner passes (catalog 258, audio contract 221, others as before).
+- Source MODEL decoder foundation (E03 Block 1, extended in Block 2):
+  `utils/SourceModelDecoder.*` is a pure, asset-free decoder of the reconstructed
+  MODEL poly block from an explicit `[begin,end)` span. Allowlist
+  `{10,11,20,21,22,23}` (10/20/22 triangles, 11/21/23 quads), stride
+  `PolySizes[ptype&0x1f]`, world quad vertex/UV order, named span/index/normal
+  validation with zero output, instanced models rejected, per-submesh
+  colour/normal flags with raw stored face colours. `SourceModelDecoderTests`
+  1186 checks (synthetic byte-exact fixtures).
+- E03 Block 2a (2026-10-09): loader-owned `model_byte_sizes[]` captured at both
+  size-live sites (`models.c` `ProcessMDSLump`, `spool.c` `init_spooled_models`)
+  before relocation and exposed as catalog `ModelRecord.spanBytes` via
+  `AssetCatalog_RegisterModelWithSpan`/`GetModelSpan`, cleared on slot
+  invalidation (no stored pointers); `AssetCatalogPlacement.sourceObjectIndex` set
+  from the walker's 14-bit index (dedup key unchanged). New pure
+  `Game/C/modelptypeprobe.{h,c}` counts declared ptypes from real `PolySizes`
+  (bounds; zero-stride reported, never advanced; no draw-path class guessed);
+  `ModelPtypeProbeTests` 68 checks. The `-modelptypes` flag (accepted in `main.c`)
+  writes `model_ptypes_level_<N>.txt` via `InspectorExport_WriteText` with a
+  per-level accumulator reset at `AssetCatalogGame_BeginLevel`. Real Chicago
+  histogram (Release_dev, `-opengl -nointro -nofmv -mission 1 -modelptypes`): 516
+  slots, 5538 records; building-class 379 slots (ptypes 9x2, 10x30, 11x350, 20x11,
+  21x28); tile-class 132 and sprite-class 5 slots contain only ptype 21; pre-policy
+  outside-allowlist 118 (ptype 10 x116 + 9 x2, all building); after the final
+  allowlist the re-run reports 2 outside (ptype 9 only); 0 stride-zero, 0 invalid.
+  `AssetCatalogTests` 278 checks.
+- E03 Block 2.1 (gate-driven skip-vs-fail policy): the runtime
+  `ConvertPolygonTypes` (draw.c:721-730) converts every even declared ptype except
+  8 (10->11, 20->21, 22->23); the building loop draws `{11,21,23}`, so the declared
+  types it can draw are `{10,11,20,21,22,23}`. `SourceModelDecoder` adds a policy
+  enum: `Strict` (default, unchanged hard error/zero output) and
+  `SkipUnsupported` (advance by `PolySizes`, count; bounds stay strict; zero-stride
+  is `UNSKIPPABLE_PTYPE`) for building-class models only; tile/sprite callers stay
+  `Strict` (Chicago tile/sprite data contains only ptype 21).
+- E03 Block 2.5 (camera/unit/winding fixture): pure fixtures pin yang ==
+  `RotMatrixY(yang*64)` (4096-unit turn), view = `R_cam*(R_obj*p + pos - cam)`,
+  the NDC signed-area winding of the decoder's `(v0,v1,v3,v2)`->`(0,1,2)+(0,2,3)`
+  emission, and the raw-unit policy (0.02/300 is not a valid raw-unit projection).
+  Renderer scene pipelines changed from `CULL_MODE_NONE` to `CULL_MODE_BACK` with
+  `FrontCounterClockwise=True` (Vulkan negative-viewport emulation), asserted
+  through the real offscreen pipeline; near/far and the game camera bridge remain
+  deferred to B2.6. Native renderer smoke 46 checks (38 preserved + 8 new).
+- E03 Block 2 gate: attempt 1 found one High must-fix (ptype 10 is drawn by the
+  runtime, not skipped) plus probe counting/reset items; remediation applied and
+  verified; attempt 2 verdict COMMIT-ready on code (remaining item was this
+  documentation). `Release_dev` and `Release_dev_native` builds exit 0 with the
+  batch.
+- ODT spike (user-authorized; temp-only, no repo integration): OpenDriver2Tools
+  master @ `89009f7f4f48f37a886b376292432cdab4a136` (2025-10-28) built headless
+  (Win32) and produced a full Chicago export (498 model OBJs, 159 texture pages,
+  135 region OBJs) plus one reference GLB (`CHICAGO_HEAD.glb`) via a stdlib
+  converter; adaptation surface recorded (lift rgb5a1 conversion/RLE/`PolySizes`/
+  byte structs into tooling; reimplement decode/inventory/LOD/writers in the
+  project module; ODT divergences: no index dedup, normal-index bug, gouraud
+  colours undecoded, `TEXINF` subrect not applied, transparency key). Informs B2.4.
 
-**Current step: E03 Block 2 / E04 A1 next, in progress.** E03 Block 1 and E04 P0
-are complete; the next audio step is A1 and the next E03 step is Block 2. Gate 4B
-attempt 2 approved the SDK-isolated service only, not consumer migration or
-audible correctness. Parent integration builds/suites and the final Chicago
-diagnostic are complete. E03 is still without a playable original-world native
-slice. No
-game consumers are migrated.
+**Current step: E03 Block 2.4 / B2.6 next.** E03 Block 2 (2a/2.1/2.5) is complete
+and gate-approved on code; E04 A1 is complete (below). Next: B2.4 CPU texture
+decode contract (from the research digest + ODT spike) and B2.6 per-instance draw
+API + first real object. Gate 4B approved the SDK-isolated service only, not
+consumer migration or audible correctness; E03 still has no playable original-world
+native slice, and no game consumers are migrated.
 Evidence and boundaries:
 - Fix-5 originally reported AudioContractTests 221/0 and AudioServiceSmoke 49/0;
   the final smoke follow-up is 57/0. Implemented
@@ -142,24 +185,24 @@ Evidence and boundaries:
   limits: [inventory evidence](engine-migration/e02/chicago-inventory.md).
 
 **Remaining before full acceptance:**
-1. E03 Block 2 — loader span capture (`models.c:131-139`), `source_object_index`
-   identity (the E02 placement record lacks it), CPU TIM/page/CLUT decode,
-   per-instance draw API, camera/unit/winding fixture, then the original-world
-   conversion seam (blocked on the E02 city conversion slice).
-2. A1 — FESound routing (runtime SPU_ONLY/FMOD_ONLY switch defaulting to SPU,
-   master gain helper, pitch `gamePitch/4096` clamped to `16383/4096`, lazy
-   service init, per-frame Update in `VsyncProc`, shutdown at exit,
-   `gInFrontend` menu gating, in-game log evidence).
+1. E03 Block 2 remainder — CPU TIM/page/CLUT decode (B2.4), per-instance draw API
+   and first real object (B2.6), then the original-world conversion seam (blocked
+   on the E02 city conversion slice). Block 2a loader span capture,
+   `sourceObjectIndex` identity, ptype coverage and the camera/unit/winding fixture
+   are done.
+2. E04 remaining consumer slices — A1 (FESound routing + service lifecycle) is
+   complete; migrate the remaining audio consumers.
 3. E02 — other cities/variants and dynamic/streamed categories (E06 coverage);
    debug configurations are not wired (only the Release Diligent libraries exist).
 
-**Next concrete action:** implement A1 and E03 Block 2 as separately scoped work.
-Gate approval does not authorize audible acceptance. E05/E06 remain pending.
+**Next concrete action:** implement E03 B2.4/B2.6 and the remaining E04 consumer
+slices as separately scoped work. Gate approval does not authorize audible
+acceptance. E05/E06 remain pending.
 
 **Commands:** build `Release_dev|x64` or `Release_dev_native|x64` with
 `premake5.exe vs2022` + MSBuild (env `SDL2_DIR`/`OPENAL_DIR`/`JPEG_DIR`,
 `RED2_BUILD_DIR=build_e00`, `RED2_BIN_DIR=bin/Release_dev`);
-`pwsh -NoProfile -File scripts/run_native_renderer_smoke.ps1` (38 checks);
+`pwsh -NoProfile -File scripts/run_native_renderer_smoke.ps1` (46 checks);
 Previous smoke commands/results are historical where noted; do not treat bounded
 SDK-isolated service approval as consumer or audible correctness.
 
@@ -174,10 +217,15 @@ the new gitlink. Both commits are pushed.
 
 Uncommitted after that checkpoint: the E02 inventory; the E04 blocks
 (`Game/C/audiocontract.*`, `tests/AudioContractTests.cpp`, `scripts/fetch_fmod.ps1`,
-`knowledge/rules/fmod-integration.md`) and the E04 P0 seam
+`knowledge/rules/fmod-integration.md`), the E04 P0 seam
 (`Game/C/sounddecode.{h,c}`, `Game/C/sound.c`, `tests/AudioServiceSmoke.cpp`,
-`scripts/run_audio_service_smoke.ps1`); the E03 Block 1 decoder
-(`utils/SourceModelDecoder.{h,c}`, `tests/SourceModelDecoderTests.cpp`,
+`scripts/run_audio_service_smoke.ps1`) and E04 A1
+(`Game/C/audiofmod_adapter.{h,c}`, `redriver2_psxpc.cpp`); the E03 Block 1/2
+decoder and probe (`utils/SourceModelDecoder.{h,c}`,
+`Game/C/modelptypeprobe.{h,c}`, `Game/C/assetcatalog*`, `Game/C/models.*`,
+`Game/C/spool.c`, `Game/C/main.c`, `native/NativeRenderer.*`,
+`tests/SourceModelDecoderTests.cpp`, `tests/ModelPtypeProbeTests.cpp`,
+`tests/AssetCatalogTests.cpp`, `tests/NativeRendererSmoke.cpp`,
 `scripts/run_inspector_tests.ps1`, `tests/README.md`); and the suite
 registration/README plus the status/handoff/changelog updates. The ignored FMOD SDK
 is present locally at `src_rebuild/dependencies/fmod/core`; its local version
@@ -232,6 +280,16 @@ FPS or CPU clocks must not accelerate simulation. Initial fixed ticks retain
 actual NTSC/PAL behavior. Conversion produces modern representations, not
 automatically new high-detail art or complete gameplay packages.
 
+2026-10-09 content decode-base decision: user adopted the hybrid strategy for
+original-content conversion - the project's reconstructed decode remains the
+authority for identity/bindings/simulation; OpenDriver2Tools is a format/
+placement reference and gap-filler only (never a runtime dependency, never a
+second shipped parser); one pure decode module serves the offline converter and
+runtime consumers. Authorized next steps: continue E03 Block 2 (MODEL span
+capture, ptype coverage, one building to GLB, per-instance native draw) and a
+bounded external ODT-to-GLB tooling spike. Acceptance gates and sequencing:
+[engine-migration discussion](discussions/engine-migration/index.md).
+
 ## Branch preservation (completed)
 
 The rework snapshot is preserved on `feat/vulkan-native-rework` at `e68b6ea6`
@@ -255,12 +313,12 @@ E00/E01 implementation details and bounded validation are summarized in
 [`CURRENT_STATUS.md`](CURRENT_STATUS.md) and the dated records linked there.
 E02 inventory findings and limitations are in
 [`chicago-inventory.md`](engine-migration/e02/chicago-inventory.md). E03 Block 1
-(source MODEL decoder) is done; E03 still has no playable original-world native
-slice, and Block 2 loader capture follows. E04 has the PCM decode + registration
-seam (P0); A1 is the next audio step, and neither is audible acceptance — do not
-describe historical smoke/contract results as accepted correctness. Continue only
-the requested implementation block; E05/E06 remain pending. The wall-collision
-replay route remains deferred by the user
+and Block 2 (2a/2.1/2.5) are done; E03 still has no playable original-world native
+slice, and B2.4/B2.6 follow. E04 has the PCM decode + registration seam (P0) and
+A1 routing; neither is audible acceptance — do not describe historical
+smoke/contract results as accepted correctness. Continue only the requested
+implementation block; E05/E06 remain pending. The wall-collision replay route
+remains deferred by the user
 ([evidence](changes/2026-10-09/effect-timing-replay-regression/index.md)).
 
 Night/rain follow-up: ATTRACT.401 first froze at 857 due to a static `cyclecluts`

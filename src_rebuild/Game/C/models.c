@@ -18,6 +18,9 @@ char *car_models_lump = NULL;
 MODEL* modelpointers[MAX_MODEL_SLOTS];
 MODEL* pLodModels[MAX_MODEL_SLOTS];
 
+// Per-slot model byte size, valid only between load and the next free.
+int model_byte_sizes[MAX_MODEL_SLOTS];
+
 int num_models_in_pack = 0;
 
 u_short *Low2HighDetailTable = NULL;
@@ -48,6 +51,7 @@ int CleanSpooledModelSlots()
 				litSprites[i >> 5] &= ~(1 << (i & 31));
 
 				// A freed streamed slot invalidates any retained catalog handle.
+				model_byte_sizes[i] = 0;
 				AssetCatalogGame_InvalidateModel(i);
 
 				num_freed++;
@@ -138,6 +142,11 @@ void ProcessMDSLump(char *lump_file, int lump_size)
 			
 			model = (MODEL*)mdsfile;
 			modelpointers[i] = model;
+			model_byte_sizes[i] = size;
+
+			// Capture the declared polygon types from the live span before any
+			// relocation. The probe is a no-op unless -modelptypes is active.
+			AssetCatalogGame_RecordModelSpan(i, (const unsigned char*)model, size);
 
 			ProcessModel(i);
 		}

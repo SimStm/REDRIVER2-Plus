@@ -665,6 +665,11 @@ void init_spooled_models(void)
 
 		modelpointers[model_number] = model;
 		pLodModels[model_number] = model;
+		model_byte_sizes[model_number] = size;
+
+		// Capture the declared polygon types from the live span before any
+		// relocation. The probe is a no-op unless -modelptypes is active.
+		AssetCatalogGame_RecordModelSpan(model_number, (const unsigned char*)model, size);
 
 		lod = Low2LowerDetailTable[model_number];
 

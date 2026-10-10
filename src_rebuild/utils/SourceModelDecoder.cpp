@@ -76,17 +76,40 @@ void SetError(char* error, int capacity, const char* message)
 		snprintf(error, (size_t)capacity, "%s", message);
 }
 
-// Allowlisted record stride, mirroring PolySizes; 0 means unsupported.
+// Mirror of draw.c PolySizes[ptype & 0x1f] for the masked range 0..31. It is the
+// record stride the runtime advances by; 0 means no advance is possible.
+const int kPolySizes[32] = {
+	8,  12, 16, 24,
+	20, 20, 28, 32,
+	8,  12, 16, 16,
+	0,  0,  0,  0,
+	12, 12, 12, 16,
+	20, 20, 24, 24,
+	0,  0,  0,  0,
+	0,  0,  0,  0,
+};
+
+// Record stride for any masked polygon type, mirroring PolySizes; 0 means the
+// record cannot be advanced (and therefore cannot be skipped).
 int StrideForType(unsigned int ptype)
 {
-	switch (ptype)
+	return kPolySizes[ptype & 0x1f];
+}
+
+// Decode allowlist: only these declared types have a mirrored layout.
+bool IsSupportedType(unsigned int ptype)
+{
+	switch (ptype & 0x1f)
 	{
-	case 11: return 16; // PL_POLYFT4
-	case 20: return 20; // POLYFT3
-	case 21: return 20; // POLYFT4
-	case 22: return 24; // POLYGT3
-	case 23: return 24; // POLYGT4
-	default: return 0;
+	case 10:
+	case 11:
+	case 20:
+	case 21:
+	case 22:
+	case 23:
+		return true;
+	default:
+		return false;
 	}
 }
 
@@ -94,6 +117,7 @@ int LayoutSizeForType(unsigned int ptype)
 {
 	switch (ptype)
 	{
+	case 10: return (int)sizeof(LayoutPLFT4); // PL 3-vertex in the 16-byte record
 	case 11: return (int)sizeof(LayoutPLFT4);
 	case 20: return (int)sizeof(LayoutFT3);
 	case 21: return (int)sizeof(LayoutFT4);
@@ -112,6 +136,10 @@ SourceModelDecoderResult Failure(SourceModelDecoderError code, const char* messa
 	result.primitiveIndex = primitiveIndex;
 	result.primitiveType = primitiveType;
 	result.offset = offset;
+	result.skippedCount = 0;
+	result.firstSkippedIndex = -1;
+	result.firstSkippedType = 0;
+	result.firstSkippedOffset = -1;
 	SetError(error, capacity, message);
 	return result;
 }
@@ -123,6 +151,10 @@ SourceModelDecoderResult Success()
 	result.primitiveIndex = -1;
 	result.primitiveType = 0;
 	result.offset = -1;
+	result.skippedCount = 0;
+	result.firstSkippedIndex = -1;
+	result.firstSkippedType = 0;
+	result.firstSkippedOffset = -1;
 	return result;
 }
 
@@ -136,7 +168,7 @@ short ReadInt16(const unsigned char* begin, long long offset)
 
 bool SourceModelDecoder_IsSupportedType(unsigned int ptype)
 {
-	return StrideForType(ptype & 0x1f) != 0;
+	return IsSupportedType(ptype & 0x1f);
 }
 
 const char* SourceModelDecoder_ErrorName(SourceModelDecoderError error)
@@ -155,12 +187,14 @@ const char* SourceModelDecoder_ErrorName(SourceModelDecoderError error)
 	case SOURCE_MODEL_ERROR_NORMAL_INDEX: return "normal-index";
 	case SOURCE_MODEL_ERROR_UNSUPPORTED_PTYPE: return "unsupported-ptype";
 	case SOURCE_MODEL_ERROR_LAYOUT_SIZE: return "layout-size";
+	case SOURCE_MODEL_ERROR_UNSKIPPABLE_PTYPE: return "unskippable-ptype";
 	default: return "unknown";
 	}
 }
 
 SourceModelDecoderResult DecodeSourceModel(const unsigned char* begin, const unsigned char* end,
-	const SourceModelView& model, SourceMesh* out, char* error, int capacity)
+	const SourceModelView& model, SourceMesh* out, char* error, int capacity,
+	SourceModelDecoderPolicy policy)
 {
 	if (error && capacity > 0)
 		error[0] = '\0';
@@ -192,6 +226,10 @@ SourceModelDecoderResult DecodeSourceModel(const unsigned char* begin, const uns
 	bool pointNormalsValidated = false;
 	bool sawGouraud = false;
 	bool sawColor = false;
+	unsigned int skippedCount = 0;
+	int firstSkippedIndex = -1;
+	unsigned int firstSkippedType = 0;
+	long long firstSkippedOffset = -1;
 
 	long long offset = (long long)model.polyBlock;
 
@@ -204,13 +242,46 @@ SourceModelDecoderResult DecodeSourceModel(const unsigned char* begin, const uns
 		const unsigned int ptype = (unsigned int)(begin[offset] & 0x1f);
 		const int stride = StrideForType(ptype);
 
-		if (stride == 0)
+		if (!IsSupportedType(ptype))
 		{
-			char message[256];
-			snprintf(message, sizeof(message),
-				"unsupported polygon type %u at polygon %u (offset %lld)", ptype, i, offset);
-			return Failure(SOURCE_MODEL_ERROR_UNSUPPORTED_PTYPE, message, error, capacity,
-				(int)i, ptype, offset);
+			if (policy == SourceModelDecoderPolicy::Strict)
+			{
+				char message[256];
+				snprintf(message, sizeof(message),
+					"unsupported polygon type %u at polygon %u (offset %lld)", ptype, i, offset);
+				return Failure(SOURCE_MODEL_ERROR_UNSUPPORTED_PTYPE, message, error, capacity,
+					(int)i, ptype, offset);
+			}
+
+			// SkipUnsupported: advance by the runtime stride. A zero stride
+			// cannot be advanced and a record that does not fit the span is
+			// still a hard error, never a silent skip.
+			if (stride == 0)
+			{
+				char message[256];
+				snprintf(message, sizeof(message),
+					"polygon %u type %u has no record stride and cannot be skipped", i, ptype);
+				return Failure(SOURCE_MODEL_ERROR_UNSKIPPABLE_PTYPE, message, error, capacity,
+					(int)i, ptype, offset);
+			}
+			if (offset + stride > spanSize)
+			{
+				char message[256];
+				snprintf(message, sizeof(message),
+					"skipped polygon %u (type %u) extends beyond the model span", i, ptype);
+				return Failure(SOURCE_MODEL_ERROR_POLY_RECORD_RANGE, message, error, capacity,
+					(int)i, ptype, offset);
+			}
+
+			if (skippedCount == 0)
+			{
+				firstSkippedIndex = (int)i;
+				firstSkippedType = ptype;
+				firstSkippedOffset = offset;
+			}
+			skippedCount++;
+			offset += stride;
+			continue;
 		}
 
 		if (LayoutSizeForType(ptype) != stride)
@@ -252,7 +323,19 @@ SourceModelDecoderResult DecodeSourceModel(const unsigned char* begin, const uns
 		SourcePrimitiveClass primitiveClass = SourcePrimitiveClass::TexturedFlatQuad;
 		bool storesColor = true;
 
-		if (ptype == 11)
+		if (ptype == 10)
+		{
+			// PL 3-vertex record in the 16-byte stride; no RGB. ODT decodes
+			// case 4/10/20 as POLYFT3 (v0/v1/v2, uv0/uv1/uv2, no color for 10).
+			LayoutPLFT4 record;
+			memcpy(&record, begin + offset, sizeof(record));
+			vertexIndex[0] = record.v0; vertexIndex[1] = record.v1; vertexIndex[2] = record.v2;
+			uv[0] = record.uv0; uv[1] = record.uv1; uv[2] = record.uv2;
+			cornerCount = 3;
+			primitiveClass = SourcePrimitiveClass::TexturedPlTriangle;
+			storesColor = false;
+		}
+		else if (ptype == 11)
 		{
 			// PL_POLYFT4 has no RGB; `th` is a light/normal index, ignored here.
 			LayoutPLFT4 record;
@@ -432,5 +515,11 @@ SourceModelDecoderResult DecodeSourceModel(const unsigned char* begin, const uns
 		mesh.normals.clear(); // no submesh stored per-vertex normals
 
 	*out = mesh;
-	return Success();
+
+	SourceModelDecoderResult result = Success();
+	result.skippedCount = skippedCount;
+	result.firstSkippedIndex = firstSkippedIndex;
+	result.firstSkippedType = firstSkippedType;
+	result.firstSkippedOffset = firstSkippedOffset;
+	return result;
 }

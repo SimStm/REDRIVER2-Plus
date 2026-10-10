@@ -10,21 +10,73 @@ where release policy permits it.
 
 ### Added
 
-- E03 source MODEL decoder foundation: `utils/SourceModelDecoder.*` is a pure,
-  asset-free decoder of the reconstructed MODEL poly block from an explicit
-  `[begin,end)` span (the MODEL structure has no byte span; loader span capture
-  is Block 2). It accepts only the allowlisted ptypes 11 (`PL_POLYFT4`, 16 B, no
-  RGB), 20/21 (`POLYFT3`/`FT4`, 20 B) and 22/23 (`POLYGT3`/`GT4`, 24 B), strides
-  by `PolySizes[ptype & 0x1f]`, emits the world quad order `(v0,v1,v3,v2)` with
-  UVs `(uv0,uv1,uv3,uv2)`, decodes declared 20/22 as triangles, validates the
+- E03 source MODEL decoder foundation (Block 1, extended in Block 2):
+  `utils/SourceModelDecoder.*` is a pure, asset-free decoder of the reconstructed
+  MODEL poly block from an explicit `[begin,end)` span (the MODEL structure has no
+  byte span; loader span capture is Block 2a). It decodes the allowlist
+  `{10,11,20,21,22,23}`: 10 (`PL_POLYFT4`, 16 B, textured triangle, no RGB),
+  20/21 (`POLYFT3`/`FT4`, 20 B) and 22/23 (`POLYGT3`/`GT4`, 24 B); 10/20/22 are
+  triangles and 11/21/23 quads. It strides by `PolySizes[ptype & 0x1f]`, emits the
+  world quad order `(v0,v1,v3,v2)` with UVs `(uv0,uv1,uv3,uv2)`, validates the
   total span/indices/normals with named errors and zero output, rejects instanced
   models, and stores raw stored face colours per submesh with aligned zero
-  placeholders and per-submesh `hasColors`/`hasNormals`. It deliberately does not
-  rely on the runtime `ConvertPolygonTypes` mutation (20->21, 22->23);
-  unsupported ptypes fail the model (the runtime skips them, and skip-vs-fail is a
-  Block 2 real-data decision). No GPU/GLB/texture/loader/renderer work. Covered
-  by the new `SourceModelDecoderTests` (336 checks, 0 failures) with synthetic
+  placeholders and per-submesh `hasColors`/`hasNormals`. The runtime
+  `ConvertPolygonTypes` converts every even declared ptype except 8 (10->11,
+  20->21, 22->23), so the building loop draws `{11,21,23}` and the declared types
+  it can draw are `{10,11,20,21,22,23}`. No GPU/GLB/texture/loader/renderer work.
+  Covered by `SourceModelDecoderTests` (extended to 1186 checks) with synthetic
   byte-exact fixtures; all other inspector suites still pass.
+
+- E03 Block 2a (loader span capture, source identity and real-model ptype probe):
+  loader-owned `model_byte_sizes[]` is captured at both size-live sites
+  (`models.c` `ProcessMDSLump`, `spool.c` `init_spooled_models`) before relocation
+  and exposed as catalog `ModelRecord.spanBytes` via
+  `AssetCatalog_RegisterModelWithSpan`/`GetModelSpan`, cleared on slot
+  invalidation with no stored pointers; `AssetCatalogPlacement.sourceObjectIndex`
+  is set from the walker's 14-bit index (dedup key unchanged). New pure
+  `Game/C/modelptypeprobe.{h,c}` counts declared ptypes from real `PolySizes`
+  (bounds checked; zero-stride reported and never advanced; no draw-path class
+  guessed), and the `-modelptypes` developer flag (accepted in `main.c` to avoid
+  the modal helper) writes `model_ptypes_level_<N>.txt` through
+  `InspectorExport_WriteText` with a per-level accumulator reset at
+  `AssetCatalogGame_BeginLevel`. Covered by `ModelPtypeProbeTests` (68 checks) and
+  `AssetCatalogTests` (278 checks). Real Chicago histogram (Release_dev,
+  `-opengl -nointro -nofmv -mission 1 -modelptypes`): 516 slots, 5538 records;
+  building-class 379 slots (ptypes 9x2, 10x30, 11x350, 20x11, 21x28); tile-class
+  132 and sprite-class 5 slots contain only ptype 21; pre-policy outside-allowlist
+  118 (ptype 10 x116 + 9 x2, all building); after the final allowlist the re-run
+  reports 2 outside (ptype 9 only); 0 stride-zero, 0 invalid.
+
+- E03 Block 2.1 (skip-vs-fail policy): `SourceModelDecoder` gains a policy enum -
+  `Strict` (default, unchanged hard error/zero output) and `SkipUnsupported`
+  (advance by `PolySizes`, count; bounds stay strict; zero-stride is
+  `UNSKIPPABLE_PTYPE`) - applied to building-class models only, while tile/sprite
+  callers stay `Strict` (Chicago tile/sprite data contains only ptype 21).
+  `SourceModelDecoderTests` 1186 checks, 0 failures.
+
+- E03 Block 2.5 (camera/unit/winding fixture): pure fixtures pin yang ==
+  `RotMatrixY(yang*64)` (4096-unit turn), view = `R_cam*(R_obj*p + pos - cam)`,
+  the NDC signed-area winding of the decoder's `(v0,v1,v3,v2)`->`(0,1,2)+(0,2,3)`
+  emission, and the raw-unit policy (0.02/300 is not a valid raw-unit projection).
+  Renderer scene pipelines changed from `CULL_MODE_NONE` to `CULL_MODE_BACK` with
+  `FrontCounterClockwise=True` (Vulkan negative-viewport emulation), asserted
+  through the real offscreen pipeline. Native renderer smoke 46 checks (38
+  preserved + 8 new). Near/far and the game camera bridge remain deferred to B2.6.
+
+- E03 Block 2 gate: attempt 1 found one High must-fix (ptype 10 is drawn by the
+  runtime, not skipped) plus probe counting/reset items; remediation was applied
+  and verified; attempt 2 returned a COMMIT-ready verdict on the code. `Release_dev`
+  and `Release_dev_native` builds exit 0 with the batch.
+
+- ODT-to-GLB tooling spike (bounded, external, temp-only; no repository
+  integration): OpenDriver2Tools master @
+  `89009f7f4f48f37a886b376292432cdab4a136` (2025-10-28) was built headless (Win32)
+  and produced a full Chicago export (498 model OBJs, 159 texture pages, 135 region
+  OBJs) plus one reference GLB (`CHICAGO_HEAD.glb`) through a stdlib converter.
+  The adaptation surface was recorded (lift rgb5a1 conversion/RLE/`PolySizes`/byte
+  structs into tooling; reimplement decode/inventory/LOD/writers in the project
+  module; ODT divergences: no index dedup, normal-index bug, gouraud colours
+  undecoded, `TEXINF` subrect not applied, transparency key). Informs E03 B2.4.
 
 - E04 menu-bank PCM decode and registration seam: `Game/C/sounddecode.{h,c}` is
   an SDK-free PSX SPU ADPCM (VAG) decoder (16 B -> 28 frames, coefficient

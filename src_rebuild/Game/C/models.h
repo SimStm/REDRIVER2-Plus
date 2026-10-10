@@ -17,6 +17,10 @@ extern MODEL* modelpointers[MAX_MODEL_SLOTS];
 extern MODEL* pLodModels[MAX_MODEL_SLOTS];
 extern int litSprites[MAX_MODEL_SLOTS / 32];
 
+/* Loader-owned per-slot model byte size, captured at the transient load site
+   and cleared when the slot is freed. 0 means "not captured". */
+extern int model_byte_sizes[MAX_MODEL_SLOTS];
+
 extern unsigned short *Low2HighDetailTable;
 extern unsigned short *Low2LowerDetailTable;
 

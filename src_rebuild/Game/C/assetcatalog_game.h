@@ -34,6 +34,28 @@ void AssetCatalogGame_ConfigureFromCommandLine(int argc, char** argv);
    world regions are resident. */
 bool AssetCatalogGame_InventoryRequested(void);
 
+/* --- E03 block 2a model polygon-type probe -------------------------------- */
+
+/* True when the developer `-modelptypes` flag requested the polygon-type
+   report. The loader feeds the probe only while this is true. */
+bool AssetCatalogGame_ModelPtypesRequested(void);
+
+/* Records one model's byte span for the polygon-type probe. Reads the live
+   MODEL header (poly_block, num_polys, shape_flags, flags2) before relocation,
+   so it must be called at the loader's size-live site. No-op when the flag is
+   absent. `modelBegin` is the MODEL base and `spanBytes` its byte size. */
+void AssetCatalogGame_RecordModelSpan(int modelIndex, const unsigned char* modelBegin, int spanBytes);
+
+/* Writes the accumulated polygon-type report to
+   `<working dir>/model_ptypes_level_<GameLevel>.txt` with the atomic
+   InspectorExport writer. Per-slot: model index, span bytes, shape_flags/flags2
+   and the dispatch decision inputs, declared ptype counts, first zero-stride
+   type+offset and occurrences outside the decoder allowlist {10,11,20,21,22,23};
+   then aggregate totals. Never decides a draw-path class; it records the inputs.
+   Returns true when the report was written; `status` always receives a short
+   result. Windows-only (the atomic publisher is Win32). */
+bool AssetCatalogGame_WriteModelPtypeReport(char* status, int statusCapacity);
+
 /* Decodes the resident level regions' cell object lists into placements,
    reconciles them against the live asset catalog and publishes a readable
    report to `<working dir>/assetcatalog_level_<GameLevel>_inventory.txt` with

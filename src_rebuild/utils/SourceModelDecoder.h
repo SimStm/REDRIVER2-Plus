@@ -11,36 +11,40 @@
  * legacy runtime `ConvertPolygonTypes` (which mutates a model in place).
  *
  * The module is deliberately narrow and evidence-backed:
- *  - It mirrors only the textured world layouts the building/tile paths
- *    consume (Game/engine/mdl.h):
- *        ptype 11 -> PL_POLYFT4 (flat quad,     16-byte record, NO RGB)
- *        ptype 20 -> POLYFT3   (flat triangle,  20-byte record)
- *        ptype 21 -> POLYFT4   (flat quad,      20-byte record)
- *        ptype 22 -> POLYGT3   (gouraud tri,    24-byte record)
- *        ptype 23 -> POLYGT4   (gouraud quad,   24-byte record)
- *    Every other polygon type is a named error with no output. The 4..7
- *    textured bank and every untextured/other type are outside the allowlist.
- *    The runtime building loop instead SKIPS unknown types and advances by
- *    PolySizes (draw.c:733-737, 773-777); this decoder fails the whole model
- *    instead. Block 2 must histogram real model ptypes before this skip-vs-fail
- *    policy is final.
- *  - ptype 11's `th` byte is a light/normal index (draw.c:793); it is NEVER
- *    treated as color and no RGB is fabricated for a PL record.
- *  - The span captures the model BEFORE ConvertPolygonTypes runs. The declared
- *    ptypes are decoded as stored: 20/22 decode as triangles (v0,v1,v2). The
- *    runtime mutates them in place (20->21, 22->23) behind the tri_verts & 0x80
- *    guard (draw.c:704-731); reproducing that mutation is a Block 2 concern and
- *    is deliberately not relied on here.
- *  - The tile paths (tile.c) iterate every record with PL_POLYFT4 field
- *    offsets. Types beyond {11,20,21,22,23} are unverified until Block 2 checks
- *    real world data, so they remain hard errors here.
- *  - Record stride is PolySizes[ptype & 0x1f] (draw.c), and the mirrored
- *    layout size must equal it.
- *  - World quad emission order is (v0,v1,v3,v2) with UVs (uv0,uv1,uv3,uv2);
- *    this applies to ptypes 11, 21 and 23. The decoder then applies the same
+ *  - Allowlist = the declared polygon types the runtime building path can draw
+ *    after its in-place conversion (Game/engine/mdl.h layouts):
+ *        ptype 10 -> PL textured triangle (16-byte record, NO RGB)
+ *        ptype 11 -> PL_POLYFT4 (flat quad,   16-byte record, NO RGB)
+ *        ptype 20 -> POLYFT3   (flat triangle, 20-byte record)
+ *        ptype 21 -> POLYFT4   (flat quad,     20-byte record)
+ *        ptype 22 -> POLYGT3   (gouraud tri,   24-byte record)
+ *        ptype 23 -> POLYGT4   (gouraud quad,  24-byte record)
+ *    ptype 10's 3-vertex fields share the 16-byte PL_POLYFT4 record: v0/v1/v2
+ *    at offsets 4/5/6 and uv0/uv1/uv2 at 8/10/12, with no color. This matches
+ *    the ODT driver_routines/models.cpp `case 4,10,20` POLYFT3 dispatch (which
+ *    also suppresses color for 10) and the local PL_POLYFT4 layout.
+ *  - ConvertPolygonTypes (draw.c:721-730) converts EVERY even declared ptype
+ *    except 8 in place (id |= 1): 10->11, 20->21, 22->23. The building loop then
+ *    draws only {11,21,23} (draw.c:733, 773), so the declared types it can draw
+ *    are exactly {10,11,20,21,22,23}. This decoder reads the pre-conversion
+ *    record: declared 10/20/22 decode as triangles and 11/21/23 as quads. It
+ *    never calls ConvertPolygonTypes.
+ *  - ptype 10's and ptype 11's `th`/padding bytes are a light/normal index or
+ *    unused (draw.c:793); they are NEVER treated as color and no RGB is
+ *    fabricated for a PL record.
+ *  - Type -> action table and the real Chicago histogram evidence are recorded
+ *    next to SourceModelDecoderPolicy below.
+ *  - The tile paths (tile.c) iterate every record with PL_POLYFT4 field offsets.
+ *    The Chicago evidence shows tile/sprite models contain only ptype 21, so the
+ *    allowlist membership of 10/11 does not misroute them today; a future
+ *    caller-class input is needed if tile/sprite data ever contains 10/11.
+ *  - Record stride is PolySizes[ptype & 0x1f] (draw.c), and the mirrored layout
+ *    size must equal it.
+ *  - World quad emission order is (v0,v1,v3,v2) with UVs (uv0,uv1,uv3,uv2); this
+ *    applies to ptypes 11, 21 and 23. The decoder then applies the same
  *    (0,1,2)/(0,2,3) fan over those emitted corners. The car vertex order
  *    (v0,v1,v2,v3) is NOT used.
- *  - Three-vertex types emit (v0,v1,v2) with UVs (uv0,uv1,uv2).
+ *  - Three-vertex types (10, 20, 22) emit (v0,v1,v2) with UVs (uv0,uv1,uv2).
  *  - The caller supplies an explicit [begin,end) span. Every derived offset and
  *    every count*stride is validated inside the span; every vertex index is
  *    below the declared vertex count; every gouraud normal index is below the
@@ -64,19 +68,60 @@ enum SourceModelDecoderError
 	SOURCE_MODEL_ERROR_POLY_RECORD_RANGE,  // a polygon record extends past the span
 	SOURCE_MODEL_ERROR_VERTEX_INDEX,       // polygon vertex index >= vertex count
 	SOURCE_MODEL_ERROR_NORMAL_INDEX,       // gouraud normal index >= point-normal count
-	SOURCE_MODEL_ERROR_UNSUPPORTED_PTYPE,  // polygon type outside the allowlist
+	SOURCE_MODEL_ERROR_UNSUPPORTED_PTYPE,  // polygon type outside the allowlist (STRICT)
 	SOURCE_MODEL_ERROR_LAYOUT_SIZE,        // mirrored layout size != PolySizes[ptype]
+	SOURCE_MODEL_ERROR_UNSKIPPABLE_PTYPE,  // SKIP_UNSUPPORTED type with a zero PolySizes stride
 };
+
+/* Decode policy for unsupported polygon types.
+   - Strict (default): an unsupported type fails the whole model with
+     SOURCE_MODEL_ERROR_UNSUPPORTED_PTYPE and zero output.
+   - SkipUnsupported: an unsupported record is advanced by PolySizes[ptype & 0x1f]
+     and counted, and the supported records still decode. Every bounds check
+     stays strict: a record that does not fit the span is still an error, never a
+     skip, and a zero-stride type cannot be advanced (UNSKIPPABLE_PTYPE). Use this
+     only for models the runtime building path draws, which skips the same
+     records; tile/sprite callers must use Strict. */
+enum class SourceModelDecoderPolicy : unsigned char
+{
+	Strict = 0,
+	SkipUnsupported,
+};
+
+/* Type -> action table (Block 2.1 policy), from the real Chicago histogram
+   (-modelptypes: 516 slots, 5538 records; building-class 379 slots with ptype 9
+   x2, 10 x30, 11 x350, 20 x11, 21 x28; tile-class 132 slots and sprite-class 5
+   slots with only ptype 21; the re-run with the final allowlist reports 2
+   records outside it - ptype 9 x2, both building-class; the pre-policy run that
+   exposed the 10->11 conversion reported 118 (ptype 10 x116 + 9 x2);
+   0 stride-zero, 0 invalid):
+       decoded {10,11,20,21,22,23} -> geometry emitted (the declared types the
+                                     building runtime can draw after 10->11,
+                                     20->21 and 22->23 conversion)
+       other, building class       -> runtime-skipped: SKIP_UNSUPPORTED skips and
+                                     counts (e.g. ptype 9 x2; ptype 8 is excluded
+                                     from the conversion and also skipped)
+       other, tile/sprite          -> NOT COVERED: callers must use Strict
+   ConvertPolygonTypes (draw.c:721-730) converts EVERY even ptype except 8
+   (id |= 1); the building loop then draws only {11,21,23} (draw.c:733, 773).
+   The tile/sprite loops iterate every record as FT4 (tile.c), so SKIP_UNSUPPORTED
+   matches only the building path. */
 
 /* Result of a decode attempt. On failure `error` is the named code and
    `primitiveIndex`/`primitiveType`/`offset` describe the offending record
-   (-1/0 when not applicable). On success `error` is SOURCE_MODEL_ERROR_NONE. */
+   (-1/0 when not applicable). On success `error` is SOURCE_MODEL_ERROR_NONE.
+   `skippedCount`/`firstSkipped*` are mesh-level: they report the unsupported
+   records a SKIP_UNSUPPORTED decode advanced past (all zero/-1 under Strict). */
 struct SourceModelDecoderResult
 {
 	SourceModelDecoderError error;
 	int primitiveIndex;      // index of the failing polygon, or -1
 	unsigned int primitiveType; // declared polygon type (id & 0x1f), or 0
 	long long offset;        // byte offset of the failing polygon, or -1
+	unsigned int skippedCount;    // unsupported records skipped (SKIP_UNSUPPORTED)
+	int firstSkippedIndex;        // index of the first skipped record, or -1
+	unsigned int firstSkippedType;// declared type of the first skipped record, or 0
+	long long firstSkippedOffset; // byte offset of the first skipped record, or -1
 };
 
 /* POD echo of the MODEL fields the decoder needs. Every offset is a byte
@@ -95,12 +140,14 @@ struct SourceModelView
 };
 
 /* Coarse class of a decoded primitive. The class plus the source texture
-   set/id is the material grouping key. The class distinguishes a PL record
-   (no RGB) from an FT4 record even when they share a texture, so a submesh
-   never mixes color-bearing and color-less primitives. */
+   set/id is the material grouping key. The class distinguishes the PL records
+   (10/11, no RGB) from color-bearing records even when they share a texture, so
+   a submesh never mixes a triangle and a quad or a color-bearing and a
+   color-less primitive. */
 enum class SourcePrimitiveClass : unsigned char
 {
-	TexturedPlQuad = 0,         // ptype 11 (PL_POLYFT4, no RGB)
+	TexturedPlTriangle = 0,     // ptype 10 (PL 3-vertex, 16-byte, no RGB)
+	TexturedPlQuad,             // ptype 11 (PL_POLYFT4, no RGB)
 	TexturedFlatTriangle,       // ptype 20
 	TexturedFlatQuad,           // ptype 21
 	TexturedGouraudTriangle,    // ptype 22
@@ -110,7 +157,7 @@ enum class SourcePrimitiveClass : unsigned char
 /* One contiguous, complete run of indices sharing a material key.
    `hasColors` and `hasNormals` are the explicit per-submesh presence states:
    colors come only from layouts that store an RGB face color (ptypes 20/21/22/23,
-   never the PL ptype 11), and normals come only from the gouraud layouts
+   never the PL ptypes 10/11), and normals come only from the gouraud layouts
    (ptypes 22/23). A run never mixes a present and an absent attribute. */
 struct SourceSubmesh
 {
@@ -156,11 +203,14 @@ struct SourceMesh
    complete mesh and returns a result whose error is SOURCE_MODEL_ERROR_NONE. On
    any failure `out` is reset to an empty mesh and the returned result carries a
    named code; `error` receives a human-readable message when it is non-NULL and
-   `capacity` is positive. */
+   `capacity` is positive. `policy` is a trailing option that defaults to Strict,
+   so existing Strict call sites are unchanged. */
 SourceModelDecoderResult DecodeSourceModel(const unsigned char* begin, const unsigned char* end,
-	const SourceModelView& model, SourceMesh* out, char* error, int capacity);
+	const SourceModelView& model, SourceMesh* out, char* error, int capacity,
+	SourceModelDecoderPolicy policy = SourceModelDecoderPolicy::Strict);
 
-/* True when `ptype` (masked with 0x1f) is inside the decoder's allowlist. */
+/* True when `ptype` (masked with 0x1f) is inside the decoder's decode allowlist
+   {10,11,20,21,22,23}. False types are strict errors or skipped, per policy. */
 bool SourceModelDecoder_IsSupportedType(unsigned int ptype);
 
 /* Human-readable name of a decoder error code. */

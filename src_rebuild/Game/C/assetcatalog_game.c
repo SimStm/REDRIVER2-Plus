@@ -4,6 +4,7 @@
 #ifndef PSX
 
 #include "assetcatalog.h"
+#include "modelptypeprobe.h"
 #include "models.h"
 #include "texture.h"
 #include "mission.h"
@@ -11,6 +12,7 @@
 #include "map.h"
 #include "cell.h"
 #include "spool.h"
+#include "draw.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -25,12 +27,18 @@
 // regions are resident. Parsed from the command line before the game starts.
 static bool s_inventoryRequested = false;
 
+// Developer flag: accumulate the model polygon-type probe at load and write a
+// report once after SpoolSYNC. Never interrupts the game on failure.
+static bool s_modelPtypesRequested = false;
+
 void AssetCatalogGame_ConfigureFromCommandLine(int argc, char** argv)
 {
 	for (int i = 1; i < argc; i++)
 	{
 		if (strcmp(argv[i], "-assetinventory") == 0)
 			s_inventoryRequested = true;
+		else if (strcmp(argv[i], "-modelptypes") == 0)
+			s_modelPtypesRequested = true;
 	}
 }
 
@@ -39,9 +47,87 @@ bool AssetCatalogGame_InventoryRequested(void)
 	return s_inventoryRequested;
 }
 
+bool AssetCatalogGame_ModelPtypesRequested(void)
+{
+	return s_modelPtypesRequested;
+}
+
+namespace
+{
+// Per-slot probe record. The loader reports each model once at its size-live
+// site; a reused slot replaces its record in place.
+struct ModelPtypeSlotRecord
+{
+	bool used;
+	int modelIndex;
+	int spanBytes;
+	int shapeFlags;
+	int flags2;
+	ModelPtypeCounts counts;
+	ModelPtypeProbeIssue issue;
+};
+
+ModelPtypeSlotRecord s_ptypeSlots[MAX_MODEL_SLOTS];
+int s_ptypeSlotCount = 0;
+}
+
+void AssetCatalogGame_RecordModelSpan(int modelIndex, const unsigned char* modelBegin, int spanBytes)
+{
+	if (!s_modelPtypesRequested)
+		return;
+
+	if (modelIndex < 0 || modelIndex >= MAX_MODEL_SLOTS || modelBegin == 0 || spanBytes <= 0)
+		return;
+
+	ModelPtypeSlotRecord* slot = 0;
+
+	for (int i = 0; i < s_ptypeSlotCount; i++)
+	{
+		if (s_ptypeSlots[i].modelIndex == modelIndex)
+		{
+			slot = &s_ptypeSlots[i];
+			break;
+		}
+	}
+
+	if (slot == 0)
+	{
+		if (s_ptypeSlotCount >= MAX_MODEL_SLOTS)
+			return;
+
+		slot = &s_ptypeSlots[s_ptypeSlotCount++];
+	}
+
+	const MODEL* model = (const MODEL*)modelBegin;
+
+	memset(slot, 0, sizeof(*slot));
+	slot->used = true;
+	slot->modelIndex = modelIndex;
+	slot->spanBytes = spanBytes;
+	slot->shapeFlags = (int)model->shape_flags;
+	slot->flags2 = (int)model->flags2;
+	slot->issue.kind = MODEL_PTYPE_PROBE_ISSUE_NONE;
+	slot->issue.ptype = -1;
+	slot->issue.recordIndex = -1;
+	slot->issue.offset = -1;
+
+	ModelPtypeView view;
+	view.polyBlock = model->poly_block;
+	view.numPolys = model->num_polys;
+
+	ModelPtypeProbe_AddModel(modelBegin, modelBegin + spanBytes, &view, PolySizes, 56,
+		&slot->counts, &slot->issue);
+}
+
 void AssetCatalogGame_BeginLevel(void)
 {
 	AssetCatalog_BeginContext(GameLevel, (int)GetCityType(), gMultiplayerLevels);
+
+	// A new level starts a fresh probe: discard the previous level's per-slot
+	// records so a multi-level session reports only the current level. This is
+	// always safe and never interrupts the game; the probe itself stays
+	// flag-gated in AssetCatalogGame_RecordModelSpan.
+	s_ptypeSlotCount = 0;
 }
 
 void AssetCatalogGame_RegisterModel(int modelIndex)
@@ -68,8 +154,9 @@ void AssetCatalogGame_RegisterModel(int modelIndex)
 		highDetailModelIndex = Low2HighDetailTable[modelIndex];
 	}
 
-	int record = AssetCatalog_RegisterModel(modelIndex, name ? name : "",
-		name ? ASSET_CATALOG_SOURCE_DECLARED : ASSET_CATALOG_SOURCE_UNKNOWN, -1, highDetailModelIndex);
+	int record = AssetCatalog_RegisterModelWithSpan(modelIndex, name ? name : "",
+		name ? ASSET_CATALOG_SOURCE_DECLARED : ASSET_CATALOG_SOURCE_UNKNOWN, -1, highDetailModelIndex,
+		modelIndex < MAX_MODEL_SLOTS ? model_byte_sizes[modelIndex] : 0);
 
 	if (record >= 0)
 		RegisterCatalogModelTextures(model, record);
@@ -192,6 +279,7 @@ void AddLevelPlacement(LevelPlacementWalk& walk, int objectIndex, const XZPAIR& 
 	placement->y = decoded.pos.vy;
 	placement->z = decoded.pos.vz;
 	placement->rotation = decoded.yang;
+	placement->sourceObjectIndex = objectIndex;
 }
 
 // Walks every list (default and event variants) of every referenced cell of
@@ -453,12 +541,195 @@ bool AssetCatalogGame_ReconcileLevel(char* status, int statusCapacity)
 	return true;
 }
 
+static const char* PtypeProbeIssueName(ModelPtypeProbeIssueKind kind)
+{
+	switch (kind)
+	{
+	case MODEL_PTYPE_PROBE_ISSUE_NONE: return "none";
+	case MODEL_PTYPE_PROBE_ISSUE_ARGUMENT: return "argument";
+	case MODEL_PTYPE_PROBE_ISSUE_RANGE: return "range";
+	case MODEL_PTYPE_PROBE_ISSUE_POLY_BLOCK_RANGE: return "poly-block-range";
+	case MODEL_PTYPE_PROBE_ISSUE_STRIDE_ZERO: return "stride-zero";
+	case MODEL_PTYPE_PROBE_ISSUE_RECORD_RANGE: return "record-range";
+	default: return "unknown";
+	}
+}
+
+// The exact dispatch decision inputs the world draw uses (draw.c). They are
+// recorded, never turned into a decided class, because the same model can be
+// referenced from more than one context.
+static void ClassifyDispatchInputs(int shapeFlags, int flags2, int* sprite, int* tile, int* building)
+{
+	*sprite = (shapeFlags & SHAPE_FLAG_SPRITE) != 0;
+	*tile = ((shapeFlags & (SHAPE_FLAG_WATER | SHAPE_FLAG_TILE)) != 0) ||
+		((flags2 & (MODEL_FLAG_PATH | MODEL_FLAG_GRASS)) != 0);
+	*building = !*sprite && !*tile;
+}
+
+bool AssetCatalogGame_WriteModelPtypeReport(char* status, int statusCapacity)
+{
+	if (status == NULL || statusCapacity <= 0)
+		return false;
+
+	status[0] = '\0';
+
+	if (!s_modelPtypesRequested)
+	{
+		snprintf(status, statusCapacity, "model ptype report not requested");
+		return false;
+	}
+
+	const size_t capacity = 1048576;
+	char* report = (char*)malloc(capacity);
+
+	if (report == NULL)
+	{
+		snprintf(status, statusCapacity, "model ptype report allocation failed");
+		return false;
+	}
+
+	size_t reportSize = 0;
+	report[0] = '\0';
+
+	AppendReport(report, capacity, &reportSize,
+		"REDRIVER2-Plus model polygon-type probe\n"
+		"city: %s (level %d)\n"
+		"variant: %s (%d)\n"
+		"multiplayer: %d\n"
+		"recorded model slots: %d\n"
+		"decoder allowlist: {10,11,20,21,22,23}\n"
+		"scope: declared ptypes of the models seen at load; no draw-path class is decided.\n"
+		"building path draws only {11,21,23} after its even->odd conversion; tile and sprite paths\n"
+		"iterate every record as FT4, so their input count is the walked record count.\n",
+		GameLevel >= 0 && GameLevel < 4 ? LevelNames[GameLevel] : "unknown", GameLevel,
+		CityVariantName((int)GetCityType()), (int)GetCityType(), gMultiplayerLevels,
+		s_ptypeSlotCount);
+
+	ModelPtypeCounts totals;
+	memset(&totals, 0, sizeof(totals));
+	totals.firstStrideZeroPtype = -1;
+	totals.firstStrideZeroOffset = -1;
+
+	int slots = 0;
+	int outsideSlots = 0;
+	int strideZeroSlots = 0;
+	int invalidSlots = 0;
+
+	for (int i = 0; i < s_ptypeSlotCount; i++)
+	{
+		const ModelPtypeSlotRecord& slot = s_ptypeSlots[i];
+
+		if (!slot.used)
+			continue;
+
+		slots++;
+
+		int sprite = 0, tile = 0, building = 0;
+		ClassifyDispatchInputs(slot.shapeFlags, slot.flags2, &sprite, &tile, &building);
+
+		AppendReport(report, capacity, &reportSize,
+			"slot %d: span %d bytes; shape_flags 0x%04x flags2 0x%04x\n"
+			"  dispatch inputs: sprite %d, tile %d, building %d\n"
+			"  path inputs: building-drawn %d, catalog-material %d, tile/sprite-as-FT4 %d\n"
+			"  records %d, outside-allowlist %d, stride-zero %d, invalid %d, issue %s (ptype %d @ %lld)\n",
+			slot.modelIndex, slot.spanBytes, (unsigned)slot.shapeFlags, (unsigned)slot.flags2,
+			sprite, tile, building,
+			slot.counts.buildingPathRecords, slot.counts.catalogMaterialRecords, slot.counts.records,
+			slot.counts.records, slot.counts.outsideAllowlistRecords, slot.counts.strideZeroRecords,
+			slot.counts.invalidRecords, PtypeProbeIssueName(slot.issue.kind), slot.issue.ptype,
+			slot.issue.offset);
+
+		AppendReport(report, capacity, &reportSize, "  declared ptypes:");
+
+		for (int p = 0; p < MODEL_PTYPE_PROBE_PTYPE_COUNT; p++)
+			if (slot.counts.declaredPtypeCounts[p] > 0)
+				AppendReport(report, capacity, &reportSize, " %d=%d", p, slot.counts.declaredPtypeCounts[p]);
+
+		AppendReport(report, capacity, &reportSize, "\n");
+
+		if (slot.counts.outsideAllowlistRecords > 0)
+			outsideSlots++;
+		if (slot.counts.strideZeroRecords > 0)
+			strideZeroSlots++;
+		if (slot.counts.invalidRecords > 0)
+			invalidSlots++;
+
+		totals.models += slot.counts.models;
+		totals.records += slot.counts.records;
+		totals.outsideAllowlistRecords += slot.counts.outsideAllowlistRecords;
+		totals.strideZeroRecords += slot.counts.strideZeroRecords;
+		totals.invalidRecords += slot.counts.invalidRecords;
+		totals.buildingPathRecords += slot.counts.buildingPathRecords;
+		totals.catalogMaterialRecords += slot.counts.catalogMaterialRecords;
+
+		for (int p = 0; p < MODEL_PTYPE_PROBE_PTYPE_COUNT; p++)
+		{
+			totals.declaredPtypeCounts[p] += slot.counts.declaredPtypeCounts[p];
+			totals.outsideAllowlistPtypeCounts[p] += slot.counts.outsideAllowlistPtypeCounts[p];
+		}
+
+		if (totals.firstStrideZeroPtype < 0 && slot.counts.firstStrideZeroPtype >= 0)
+		{
+			totals.firstStrideZeroPtype = slot.counts.firstStrideZeroPtype;
+			totals.firstStrideZeroOffset = slot.counts.firstStrideZeroOffset;
+		}
+	}
+
+	AppendReport(report, capacity, &reportSize,
+		"aggregate: slots %d, models %d, records %d, building-drawn %d, catalog-material %d\n"
+		"aggregate: outside-allowlist %d (in %d slots), stride-zero %d (in %d slots, first ptype %d @ %lld), invalid %d (in %d slots)\n",
+		slots, totals.models, totals.records, totals.buildingPathRecords, totals.catalogMaterialRecords,
+		totals.outsideAllowlistRecords, outsideSlots, totals.strideZeroRecords, strideZeroSlots,
+		totals.firstStrideZeroPtype, totals.firstStrideZeroOffset, totals.invalidRecords, invalidSlots);
+
+	AppendReport(report, capacity, &reportSize, "aggregate declared ptypes:");
+
+	for (int p = 0; p < MODEL_PTYPE_PROBE_PTYPE_COUNT; p++)
+		if (totals.declaredPtypeCounts[p] > 0)
+			AppendReport(report, capacity, &reportSize, " %d=%d", p, totals.declaredPtypeCounts[p]);
+
+	AppendReport(report, capacity, &reportSize, "\naggregate outside-allowlist ptypes:");
+
+	for (int p = 0; p < MODEL_PTYPE_PROBE_PTYPE_COUNT; p++)
+		if (totals.outsideAllowlistPtypeCounts[p] > 0)
+			AppendReport(report, capacity, &reportSize, " %d=%d", p, totals.outsideAllowlistPtypeCounts[p]);
+
+	AppendReport(report, capacity, &reportSize, "\n");
+
+	char path[96];
+	snprintf(path, sizeof(path), "model_ptypes_level_%d.txt", GameLevel);
+
+	char exportStatus[512];
+
+	if (!InspectorExport_WriteText(path, report, exportStatus, sizeof(exportStatus)))
+	{
+		free(report);
+		snprintf(status, statusCapacity, "model ptype report failed: %s", exportStatus);
+		return false;
+	}
+
+	snprintf(status, statusCapacity,
+		"model ptype report: %d slots, %d records, %d outside-allowlist, %d stride-zero -> %s",
+		slots, totals.records, totals.outsideAllowlistRecords, totals.strideZeroRecords, path);
+
+	free(report);
+	return true;
+}
+
 #else // !_WIN32
 
 bool AssetCatalogGame_ReconcileLevel(char* status, int statusCapacity)
 {
 	if (status != NULL && statusCapacity > 0)
 		snprintf(status, statusCapacity, "Level inventory reconciliation is currently available on Windows only");
+
+	return false;
+}
+
+bool AssetCatalogGame_WriteModelPtypeReport(char* status, int statusCapacity)
+{
+	if (status != NULL && statusCapacity > 0)
+		snprintf(status, statusCapacity, "Model polygon-type report is currently available on Windows only");
 
 	return false;
 }
@@ -481,7 +752,27 @@ bool AssetCatalogGame_InventoryRequested(void)
 	return false;
 }
 
+bool AssetCatalogGame_ModelPtypesRequested(void)
+{
+	return false;
+}
+
+void AssetCatalogGame_RecordModelSpan(int modelIndex, const unsigned char* modelBegin, int spanBytes)
+{
+	(void)modelIndex;
+	(void)modelBegin;
+	(void)spanBytes;
+}
+
 bool AssetCatalogGame_ReconcileLevel(char* status, int statusCapacity)
+{
+	if (status != NULL && statusCapacity > 0)
+		status[0] = '\0';
+
+	return false;
+}
+
+bool AssetCatalogGame_WriteModelPtypeReport(char* status, int statusCapacity)
 {
 	if (status != NULL && statusCapacity > 0)
 		status[0] = '\0';

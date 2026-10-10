@@ -134,6 +134,28 @@ cl.exe /nologo /TP /EHsc /std:c++14 /O2 /Gy tests\SourceModelDecoderTests.cpp ut
 build\SourceModelDecoderTests.exe
 ```
 
+## Model polygon-type probe tests
+
+`ModelPtypeProbeTests.cpp` tests the E03 block 2a polygon-type probe
+(`Game/C/modelptypeprobe.*`), a pure, asset-free module with no game/PSX headers
+and no GPU dependency. Synthetic byte spans pin the declared-type walk with the
+real `PolySizes` stride table, the quad/triangle and textured 4..7 bank counts,
+the draw-path classification inputs (building-drawn vs catalog-material), the
+zero-stride finding (recorded and never advanced past), out-of-span records and
+polygon blocks, argument/empty-span handling and multi-model accumulation. It
+creates no files:
+
+```bat
+cl.exe /nologo /TP /EHsc /std:c++14 /O2 /Gy tests\ModelPtypeProbeTests.cpp Game\C\modelptypeprobe.c /Fo:build\ /Fe:build\ModelPtypeProbeTests.exe /link /OPT:REF
+build\ModelPtypeProbeTests.exe
+```
+
+`AssetCatalogTests.cpp` additionally covers the model byte-span lifecycle
+(`AssetCatalog_RegisterModelWithSpan` / `AssetCatalog_GetModelSpan`: register,
+re-register revision bump, invalidation, stale handle) and that a placement's
+`sourceObjectIndex` is provenance that does not participate in the duplicate
+identity key.
+
 ## Asset pipeline tests
 
 `AssetPipelineTests.cpp` tests the E02 conversion → package pipeline: source

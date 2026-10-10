@@ -10,6 +10,7 @@
 
 #include "../utils/SourceModelDecoder.h"
 
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 #include <vector>
@@ -203,12 +204,28 @@ static void AddPL(SourceModelBuilder& b, unsigned char set, unsigned char id, un
 	b.AddPoly(rec, sizeof(rec));
 }
 
+// ptype 10: a PL 3-vertex record in the 16-byte stride. Bytes 7 and 14..15 are
+// padding before the runtime 10->11 conversion writes v3/uv3 into them.
+static void AddPLTriangle(SourceModelBuilder& b, unsigned char set, unsigned char id, unsigned char th,
+	unsigned char v0, unsigned char v1, unsigned char v2,
+	SourceUV uv0, SourceUV uv1, SourceUV uv2)
+{
+	unsigned char rec[16];
+	memset(rec, 0, sizeof(rec));
+	rec[0] = 10; rec[1] = set; rec[2] = id; rec[3] = th;
+	rec[4] = v0; rec[5] = v1; rec[6] = v2;
+	rec[8] = uv0.u; rec[9] = uv0.v; rec[10] = uv1.u; rec[11] = uv1.v;
+	rec[12] = uv2.u; rec[13] = uv2.v;
+	b.AddPoly(rec, sizeof(rec));
+}
+
 static SourceModelDecoderResult Decode(const SourceModelBuilder& b, SourceMesh& out,
-	char* error, int capacity)
+	char* error, int capacity,
+	SourceModelDecoderPolicy policy = SourceModelDecoderPolicy::Strict)
 {
 	SourceModelView view = b.View();
 	return DecodeSourceModel(b.bytes.data(), b.bytes.data() + b.bytes.size(), view, &out,
-		error, capacity);
+		error, capacity, policy);
 }
 
 static bool MeshIsEmpty(const SourceMesh& mesh)
@@ -417,12 +434,14 @@ static void TestGouraudTriangleOrderAndUVs()
 
 static void TestUnsupportedPolygonType()
 {
+	CHECK(SourceModelDecoder_IsSupportedType(10));
 	CHECK(SourceModelDecoder_IsSupportedType(11));
 	CHECK(SourceModelDecoder_IsSupportedType(20));
 	CHECK(SourceModelDecoder_IsSupportedType(21));
 	CHECK(SourceModelDecoder_IsSupportedType(22));
 	CHECK(SourceModelDecoder_IsSupportedType(23));
 	CHECK(!SourceModelDecoder_IsSupportedType(8));
+	CHECK(!SourceModelDecoder_IsSupportedType(9));
 	CHECK(!SourceModelDecoder_IsSupportedType(4));
 	CHECK(!SourceModelDecoder_IsSupportedType(0));
 
@@ -459,6 +478,162 @@ static void TestUnsupportedPolygonType()
 	CHECK(result.error == SOURCE_MODEL_ERROR_UNSUPPORTED_PTYPE);
 	CHECK(result.primitiveType == 4);
 	CHECK(MeshIsEmpty(mesh2));
+}
+
+// --- Block 2.1 skip-vs-fail policy ------------------------------------------
+
+// A declared ptype 10 (PL textured triangle) is in the allowlist and decodes
+// alongside ptype 11; nothing is skipped. STRICT and SKIP_UNSUPPORTED agree.
+static void TestMixedPlTriangleAndQuad()
+{
+	const unsigned char type10Record[16] = { 10, 0, 0, 0, 0, 1, 2, 3, 0, 0, 0, 0, 0, 0, 0, 0 };
+
+	SourceModelBuilder b;
+	b.BeginVertices();
+	b.AddVertex(0, 0, 0);
+	b.AddVertex(1, 0, 0);
+	b.AddVertex(1, 1, 0);
+	b.AddVertex(0, 1, 0);
+	b.BeginPolys();
+	AddPL(b, 1, 2, 0x11, 0, 1, 2, 3, UV(1, 1), UV(2, 2), UV(3, 3), UV(4, 4));
+	b.AddPoly(type10Record, sizeof(type10Record));
+
+	SourceMesh mesh;
+	char error[256] = "";
+	SourceModelDecoderResult result = Decode(b, mesh, error, sizeof(error));
+	CHECK(result.error == SOURCE_MODEL_ERROR_NONE);
+	CHECK(result.skippedCount == 0);
+	CHECK(mesh.submeshes.size() == 2);
+	CHECK(mesh.submeshes[0].primitiveClass == SourcePrimitiveClass::TexturedPlQuad);
+	CHECK(mesh.submeshes[0].indexCount == 6);
+	CHECK(mesh.submeshes[1].primitiveClass == SourcePrimitiveClass::TexturedPlTriangle);
+	CHECK(mesh.submeshes[1].indexCount == 3);
+	CHECK(mesh.indices.size() == 9);
+	CHECK(mesh.colors.empty());
+	CHECK(mesh.normals.empty());
+
+	// SKIP_UNSUPPORTED produces the same result: there is nothing to skip.
+	SourceMesh skipMesh;
+	result = Decode(b, skipMesh, error, sizeof(error),
+		SourceModelDecoderPolicy::SkipUnsupported);
+	CHECK(result.error == SOURCE_MODEL_ERROR_NONE);
+	CHECK(result.skippedCount == 0);
+	CHECK(MeshEqual(mesh, skipMesh));
+}
+
+// ptype 9 is odd, so ConvertPolygonTypes leaves it and the building loop does
+// not draw it: a genuine runtime skip. SKIP_UNSUPPORTED advances by
+// PolySizes[9] = 12 and counts it; STRICT rejects the same model.
+static void TestSkipUnsupportedBuildingType()
+{
+	const unsigned char type9Record[12] = { 9, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+
+	SourceModelBuilder b;
+	b.BeginVertices();
+	b.AddVertex(0, 0, 0);
+	b.AddVertex(1, 0, 0);
+	b.AddVertex(1, 1, 0);
+	b.AddVertex(0, 1, 0);
+	b.BeginPolys();
+	AddPL(b, 1, 2, 0x11, 0, 1, 2, 3, UV(1, 1), UV(2, 2), UV(3, 3), UV(4, 4));
+	const long long secondOffset = (long long)b.bytes.size();
+	b.AddPoly(type9Record, sizeof(type9Record));
+
+	SourceMesh mesh;
+	char error[256] = "";
+	SourceModelDecoderResult result = Decode(b, mesh, error, sizeof(error),
+		SourceModelDecoderPolicy::SkipUnsupported);
+	CHECK(result.error == SOURCE_MODEL_ERROR_NONE);
+	CHECK(mesh.submeshes.size() == 1);
+	CHECK(mesh.submeshes[0].primitiveClass == SourcePrimitiveClass::TexturedPlQuad);
+	CHECK(mesh.indices.size() == 6);
+	CHECK(result.skippedCount == 1);
+	CHECK(result.firstSkippedIndex == 1);
+	CHECK(result.firstSkippedType == 9);
+	CHECK(result.firstSkippedOffset == secondOffset);
+
+	// STRICT on the same bytes is a named error with zero output.
+	SourceMesh strictMesh;
+	result = Decode(b, strictMesh, error, sizeof(error));
+	CHECK(result.error == SOURCE_MODEL_ERROR_UNSUPPORTED_PTYPE);
+	CHECK(result.primitiveType == 9);
+	CHECK(result.skippedCount == 0);
+	CHECK(result.firstSkippedIndex == -1);
+	CHECK(MeshIsEmpty(strictMesh));
+}
+
+// SKIP_UNSUPPORTED with no unsupported records reports zero skips.
+static void TestSkipUnsupportedNone()
+{
+	SourceModelBuilder b;
+	b.BeginVertices();
+	b.AddVertex(0, 0, 0);
+	b.AddVertex(1, 0, 0);
+	b.AddVertex(1, 1, 0);
+	b.AddVertex(0, 1, 0);
+	b.BeginPolys();
+	AddPL(b, 1, 2, 0x11, 0, 1, 2, 3, UV(1, 1), UV(2, 2), UV(3, 3), UV(4, 4));
+
+	SourceMesh mesh;
+	char error[256] = "";
+	SourceModelDecoderResult result = Decode(b, mesh, error, sizeof(error),
+		SourceModelDecoderPolicy::SkipUnsupported);
+	CHECK(result.error == SOURCE_MODEL_ERROR_NONE);
+	CHECK(result.skippedCount == 0);
+	CHECK(result.firstSkippedIndex == -1);
+	CHECK(result.firstSkippedType == 0);
+	CHECK(result.firstSkippedOffset == -1);
+	CHECK(mesh.submeshes.size() == 1);
+}
+
+// Bounds stay strict under SKIP_UNSUPPORTED: an unsupported record that does not
+// fit the span is still a hard error, never a silent skip.
+static void TestSkipUnsupportedOutOfSpan()
+{
+	SourceModelBuilder b;
+	b.BeginVertices();
+	b.AddVertex(0, 0, 0);
+	b.AddVertex(1, 0, 0);
+	b.AddVertex(1, 1, 0);
+	b.AddVertex(0, 1, 0);
+	b.BeginPolys();
+	AddPL(b, 1, 2, 0x11, 0, 1, 2, 3, UV(1, 1), UV(2, 2), UV(3, 3), UV(4, 4));
+	// A ptype 9 header with only 8 bytes of body: stride 12 does not fit.
+	const unsigned char partial[8] = { 9, 0, 0, 0, 0, 0, 0, 0 };
+	b.AddPoly(partial, sizeof(partial));
+
+	SourceMesh mesh;
+	char error[256] = "";
+	SourceModelDecoderResult result = Decode(b, mesh, error, sizeof(error),
+		SourceModelDecoderPolicy::SkipUnsupported);
+	CHECK(result.error == SOURCE_MODEL_ERROR_POLY_RECORD_RANGE);
+	CHECK(result.primitiveType == 9);
+	CHECK(MeshIsEmpty(mesh));
+}
+
+// A type whose PolySizes stride is zero cannot be advanced, so it is an error
+// even under SKIP_UNSUPPORTED (and a strict error under STRICT).
+static void TestSkipUnsupportedZeroStride()
+{
+	const unsigned char type12Record[8] = { 12, 0, 0, 0, 0, 0, 0, 0 };
+
+	SourceModelBuilder b;
+	b.BeginVertices();
+	b.AddVertex(0, 0, 0);
+	b.BeginPolys();
+	b.AddPoly(type12Record, sizeof(type12Record));
+
+	SourceMesh mesh;
+	char error[256] = "";
+	SourceModelDecoderResult result = Decode(b, mesh, error, sizeof(error),
+		SourceModelDecoderPolicy::SkipUnsupported);
+	CHECK(result.error == SOURCE_MODEL_ERROR_UNSKIPPABLE_PTYPE);
+	CHECK(result.primitiveType == 12);
+	CHECK(MeshIsEmpty(mesh));
+
+	result = Decode(b, mesh, error, sizeof(error));
+	CHECK(result.error == SOURCE_MODEL_ERROR_UNSUPPORTED_PTYPE);
+	CHECK(MeshIsEmpty(mesh));
 }
 
 // F-A PL variant: ptype 11 (PL_POLYFT4) uses the same world quad order and UV
@@ -505,6 +680,46 @@ static void TestPLQuadOrderAndUVs()
 	CHECK(!mesh.submeshes[0].hasNormals);
 	CHECK(mesh.submeshes[0].textureSet == 3 && mesh.submeshes[0].textureId == 4);
 	CHECK(mesh.submeshes[0].firstIndex == 0 && mesh.submeshes[0].indexCount == 6);
+}
+
+// ptype 10 is a declared PL 3-vertex record (stride 16): v0,v1,v2 with
+// uv0,uv1,uv2 and no RGB. Its v3/uv3 padding bytes are ignored (the runtime
+// 10->11 conversion would fill them).
+static void TestPLTriangleOrderAndUVs()
+{
+	SourceModelBuilder b;
+	b.BeginVertices();
+	b.AddVertex(10, 0, 0);
+	b.AddVertex(0, 10, 0);
+	b.AddVertex(0, 0, 10);
+	b.BeginPolys();
+	AddPLTriangle(b, 6, 7, 0x2a, 0, 1, 2, UV(1, 2), UV(3, 4), UV(5, 6));
+
+	SourceMesh mesh;
+	char error[256] = "";
+	SourceModelDecoderResult result = Decode(b, mesh, error, sizeof(error));
+	CHECK(result.error == SOURCE_MODEL_ERROR_NONE);
+
+	CHECK(mesh.positions.size() == 9);
+	CHECK(mesh.positions[0] == 10.0f && mesh.positions[3] == 0.0f && mesh.positions[4] == 10.0f);
+	CHECK(mesh.positions[6] == 0.0f && mesh.positions[8] == 10.0f);
+
+	CHECK(mesh.uvs.size() == 6);
+	CHECK(mesh.uvs[0] == 1.0f && mesh.uvs[1] == 2.0f);
+	CHECK(mesh.uvs[2] == 3.0f && mesh.uvs[3] == 4.0f);
+	CHECK(mesh.uvs[4] == 5.0f && mesh.uvs[5] == 6.0f);
+
+	CHECK(mesh.indices.size() == 3);
+	CHECK(mesh.indices[0] == 0 && mesh.indices[1] == 1 && mesh.indices[2] == 2);
+
+	CHECK(mesh.colors.empty());
+	CHECK(mesh.normals.empty());
+	CHECK(mesh.submeshes.size() == 1);
+	CHECK(mesh.submeshes[0].primitiveClass == SourcePrimitiveClass::TexturedPlTriangle);
+	CHECK(!mesh.submeshes[0].hasColors);
+	CHECK(!mesh.submeshes[0].hasNormals);
+	CHECK(mesh.submeshes[0].textureSet == 6 && mesh.submeshes[0].textureId == 7);
+	CHECK(mesh.submeshes[0].firstIndex == 0 && mesh.submeshes[0].indexCount == 3);
 }
 
 // A model may legally mix a PL record with an FT4 record (the building loop
@@ -788,19 +1003,78 @@ static void TestSpanViolations()
 	}
 }
 
-// --- Block-2 convention gate: yang -> rotation (not decoder coverage) -------
+// --- Block-2 convention fixtures: yang rotation, view, winding, unit ---------
 //
-// This fixture does NOT exercise the decoder. It is a prospective convention
-// gate for Block 2, which will consume decoded world geometry and apply object
-// rotations. The building/tile renderers derive a Y rotation from a packed
-// object's yang (draw.c matrixtable[i] = RotMatrixY(i*64),
-// CalcObjectRotationMatrices). A full PSX turn is 4096 units, so the angle is
-// yang*64 with yang taken modulo 64; a value and yang+64 are identical. It
-// deliberately avoids Game/PSX headers and only pins the convention.
+// These fixtures do NOT exercise the decoder. They pin the conventions Block 2
+// uses when it feeds decoded world geometry to the native renderer:
+//
+//  * object yaw: yang -> matrixtable[yang] = RotMatrixY(yang*64), a 4096-unit
+//    PSX turn (draw.c:507-525,1508-1517; cell.h:19). The building/tile
+//    renderers take yang modulo 64, so yang and yang+64 select the same entry.
+//  * camera composition: view = R_cam * (pos - cam) with R_obj =
+//    RotMatrixY(yang*64), mirroring utils/DeveloperModernMesh.cpp:494-531.
+//  * winding/cull: the decoder emits a world quad as (v0,v1,v3,v2) and fans it
+//    (0,1,2)+(0,2,3) (utils/SourceModelDecoder.cpp:384-393). The first triangle
+//    (v0,v1,v3) is exactly the triangle the runtime feeds to gte_nclip
+//    (draw.c:780-796). These fixtures pin the NDC sign of that triangle and the
+//    Diligent cull policy it implies.
+//  * unit policy: translation, vertices and projection near/far share one raw
+//    game unit (4096 per metre).
+//
+// All math is local: no Game/PSX headers and no GPU. C++11.
 
 static int YangToAngle(unsigned int yang)
 {
 	return (int)(yang & 63) * 64;
+}
+
+static bool Near(float a, float b, float tolerance)
+{
+	return fabsf(a - b) <= tolerance;
+}
+
+// Analytic PSX RotMatrixY at `angle` (4096-unit turn), row-major m[row][col].
+// Matches PsyCross RotMatrixY applied to an identity matrix
+// (PsyCross/src/psx/LIBGTE.C:696-716):
+//   [ c  0  s ]
+//   [ 0  1  0 ]
+//   [-s  0  c ]
+static void RotMatrixYAnalytic(int angle, float m[3][3])
+{
+	const float a = (float)(angle & 4095) * (2.0f * 3.14159265358979f / 4096.0f);
+	const float c = cosf(a);
+	const float s = sinf(a);
+	m[0][0] = c;    m[0][1] = 0.0f; m[0][2] = s;
+	m[1][0] = 0.0f; m[1][1] = 1.0f; m[1][2] = 0.0f;
+	m[2][0] = -s;   m[2][1] = 0.0f; m[2][2] = c;
+}
+
+// Object yaw from a packed cell object: the table entry is RotMatrixY(yang*64)
+// (draw.c:507-525, cell.h:19).
+static void ObjectRotationFromYang(unsigned int yang, float m[3][3])
+{
+	RotMatrixYAnalytic(YangToAngle(yang), m);
+}
+
+static bool MatrixNear(const float a[3][3], const float b[3][3], float tolerance)
+{
+	for (int i = 0; i < 3; ++i)
+		for (int j = 0; j < 3; ++j)
+			if (!Near(a[i][j], b[i][j], tolerance))
+				return false;
+	return true;
+}
+
+static float Dot3(const float a[3], const float b[3])
+{
+	return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+}
+
+static void Cross3(const float a[3], const float b[3], float out[3])
+{
+	out[0] = a[1] * b[2] - a[2] * b[1];
+	out[1] = a[2] * b[0] - a[0] * b[2];
+	out[2] = a[0] * b[1] - a[1] * b[0];
 }
 
 static void TestBlock2YangRotationGate()
@@ -832,6 +1106,299 @@ static void TestBlock2YangRotationGate()
 	for (int i = 0; i < 64; ++i)
 		if (seen[i]) covered++;
 	CHECK(covered == 64);
+
+	// Cardinal matrices: exact quarter-turn values catch a wrong axis or sign.
+	float m[3][3];
+	ObjectRotationFromYang(0, m);
+	CHECK(Near(m[0][0], 1.0f, 1e-5f) && Near(m[0][2], 0.0f, 1e-5f) &&
+		Near(m[2][0], 0.0f, 1e-5f) && Near(m[2][2], 1.0f, 1e-5f));
+	ObjectRotationFromYang(16, m);
+	CHECK(Near(m[0][0], 0.0f, 1e-5f) && Near(m[0][2], 1.0f, 1e-5f) &&
+		Near(m[2][0], -1.0f, 1e-5f) && Near(m[2][2], 0.0f, 1e-5f));
+	ObjectRotationFromYang(32, m);
+	CHECK(Near(m[0][0], -1.0f, 1e-5f) && Near(m[0][2], 0.0f, 1e-5f) &&
+		Near(m[2][0], 0.0f, 1e-5f) && Near(m[2][2], -1.0f, 1e-5f));
+	ObjectRotationFromYang(48, m);
+	CHECK(Near(m[0][0], 0.0f, 1e-5f) && Near(m[0][2], -1.0f, 1e-5f) &&
+		Near(m[2][0], 1.0f, 1e-5f) && Near(m[2][2], 0.0f, 1e-5f));
+
+	// Real matrix comparison: the yang convention equals the independent
+	// analytic RotMatrixY at yang*64, and the result is a proper rotation
+	// (orthonormal, right-handed) for every entry.
+	for (unsigned int yang = 0; yang < 64; ++yang)
+	{
+		float fromYang[3][3];
+		float analytic[3][3];
+		ObjectRotationFromYang(yang, fromYang);
+		RotMatrixYAnalytic(YangToAngle(yang), analytic);
+		CHECK(MatrixNear(fromYang, analytic, 1e-5f));
+
+		const float* r0 = fromYang[0];
+		const float* r1 = fromYang[1];
+		const float* r2 = fromYang[2];
+		CHECK(Near(Dot3(r0, r0), 1.0f, 1e-4f));
+		CHECK(Near(Dot3(r1, r1), 1.0f, 1e-4f));
+		CHECK(Near(Dot3(r2, r2), 1.0f, 1e-4f));
+		CHECK(Near(Dot3(r0, r1), 0.0f, 1e-4f));
+		CHECK(Near(Dot3(r0, r2), 0.0f, 1e-4f));
+		CHECK(Near(Dot3(r1, r2), 0.0f, 1e-4f));
+
+		float cross[3];
+		Cross3(r1, r2, cross);
+		CHECK(Near(Dot3(r0, cross), 1.0f, 1e-4f)); // det == +1, right-handed
+
+		// The rotation equals rotating the basis vectors about Y by the same
+		// angle, the independent definition of a Y rotation.
+		float wrapped[3][3];
+		ObjectRotationFromYang(yang + 64, wrapped);
+		CHECK(MatrixNear(fromYang, wrapped, 1e-5f));
+	}
+}
+
+// Column-major 4x4 helpers matching native/NativeRenderer.cpp
+// (MultiplyColumnMajor and the shader's mul(MVP, float4(pos, 1))).
+
+static void MultiplyColumnMajor(const float a[16], const float b[16], float out[16])
+{
+	for (int col = 0; col < 4; ++col)
+	{
+		for (int row = 0; row < 4; ++row)
+		{
+			float sum = 0.0f;
+			for (int k = 0; k < 4; ++k)
+				sum += a[k * 4 + row] * b[col * 4 + k];
+			out[col * 4 + row] = sum;
+		}
+	}
+}
+
+// view * p, with `view` column-major (matches the native shader).
+static void TransformPoint(const float view[16], const float p[3], float out[4])
+{
+	out[0] = view[0] * p[0] + view[4] * p[1] + view[8] * p[2] + view[12];
+	out[1] = view[1] * p[0] + view[5] * p[1] + view[9] * p[2] + view[13];
+	out[2] = view[2] * p[0] + view[6] * p[1] + view[10] * p[2] + view[14];
+	out[3] = view[3] * p[0] + view[7] * p[1] + view[11] * p[2] + view[15];
+}
+
+// Mirrors DeveloperModernMesh.cpp:494-531: view = R_cam * (R_obj * p + pos - cam).
+static void ComposeInstanceView(const float r[3][3], const float cam[3],
+	const float pos[3], unsigned int yang, float view[16])
+{
+	float o[3][3];
+	ObjectRotationFromYang(yang, o);
+
+	float m[3][3];
+	for (int i = 0; i < 3; ++i)
+		for (int j = 0; j < 3; ++j)
+			m[i][j] = r[i][0] * o[0][j] + r[i][1] * o[1][j] + r[i][2] * o[2][j];
+
+	const float dx = pos[0] - cam[0];
+	const float dy = pos[1] - cam[1];
+	const float dz = pos[2] - cam[2];
+	const float tx = r[0][0] * dx + r[0][1] * dy + r[0][2] * dz;
+	const float ty = r[1][0] * dx + r[1][1] * dy + r[1][2] * dz;
+	const float tz = r[2][0] * dx + r[2][1] * dy + r[2][2] * dz;
+
+	view[0] = m[0][0]; view[4] = m[0][1]; view[8] = m[0][2];  view[12] = tx;
+	view[1] = m[1][0]; view[5] = m[1][1]; view[9] = m[1][2];  view[13] = ty;
+	view[2] = m[2][0]; view[6] = m[2][1]; view[10] = m[2][2]; view[14] = tz;
+	view[3] = 0.0f;    view[7] = 0.0f;    view[11] = 0.0f;    view[15] = 1.0f;
+}
+
+// Independent reference: world = pos + R_obj * p, camera = R_cam * (world - cam).
+static void ReferenceCameraPoint(const float r[3][3], const float cam[3],
+	const float pos[3], unsigned int yang, const float p[3], float out[3])
+{
+	float o[3][3];
+	ObjectRotationFromYang(yang, o);
+
+	const float wx = pos[0] + o[0][0] * p[0] + o[0][1] * p[1] + o[0][2] * p[2];
+	const float wy = pos[1] + o[1][0] * p[0] + o[1][1] * p[1] + o[1][2] * p[2];
+	const float wz = pos[2] + o[2][0] * p[0] + o[2][1] * p[1] + o[2][2] * p[2];
+
+	const float dx = wx - cam[0];
+	const float dy = wy - cam[1];
+	const float dz = wz - cam[2];
+	out[0] = r[0][0] * dx + r[0][1] * dy + r[0][2] * dz;
+	out[1] = r[1][0] * dx + r[1][1] * dy + r[1][2] * dz;
+	out[2] = r[2][0] * dx + r[2][1] * dy + r[2][2] * dz;
+}
+
+// Pins the composition view = R_cam * (pos - cam) with R_obj = RotMatrixY(yang*64)
+// against an independently computed camera-space point.
+static void TestBlock2ViewComposition()
+{
+	// Known case: identity camera at the origin, object at (100,0,0) yawed a
+	// quarter turn (yang 16), object point (1,0,0). R_obj * (1,0,0) = (0,0,-1),
+	// so the camera-space point is (100,0,-1).
+	const float identity[3][3] = { { 1, 0, 0 }, { 0, 1, 0 }, { 0, 0, 1 } };
+	const float origin[3] = { 0, 0, 0 };
+	const float objectPos[3] = { 100, 0, 0 };
+	const float localPoint[3] = { 1, 0, 0 };
+
+	float view[16];
+	ComposeInstanceView(identity, origin, objectPos, 16, view);
+	float point[4];
+	TransformPoint(view, localPoint, point);
+	CHECK(Near(point[0], 100.0f, 1e-3f));
+	CHECK(Near(point[1], 0.0f, 1e-3f));
+	CHECK(Near(point[2], -1.0f, 1e-3f));
+	CHECK(Near(point[3], 1.0f, 1e-3f));
+
+	// The instance origin maps to the view translation (pos - cam), not to the
+	// object point.
+	float instanceOrigin[4];
+	TransformPoint(view, origin, instanceOrigin);
+	CHECK(Near(instanceOrigin[0], 100.0f, 1e-3f));
+	CHECK(Near(instanceOrigin[1], 0.0f, 1e-3f));
+	CHECK(Near(instanceOrigin[2], 0.0f, 1e-3f));
+
+	// Non-trivial camera and object: the composed view must agree with the
+	// independent world-then-camera computation for every yang and point.
+	float rCam[3][3];
+	RotMatrixYAnalytic(1024, rCam); // camera yawed a quarter turn
+	const float cam[3] = { 10, 20, 30 };
+	const float pos[3] = { 100, 0, 50 };
+	const float p[3] = { 3, 4, 5 };
+
+	for (unsigned int yang = 0; yang < 64; ++yang)
+	{
+		ComposeInstanceView(rCam, cam, pos, yang, view);
+		TransformPoint(view, p, point);
+
+		float reference[3];
+		ReferenceCameraPoint(rCam, cam, pos, yang, p, reference);
+
+		CHECK(Near(point[0], reference[0], 1e-3f));
+		CHECK(Near(point[1], reference[1], 1e-3f));
+		CHECK(Near(point[2], reference[2], 1e-3f));
+	}
+}
+
+// Right-handed perspective, matching native/NativeRenderer.cpp BuildPerspective.
+static void BuildPerspectiveFixture(float fovY, float aspect, float nearPlane,
+	float farPlane, float out[16])
+{
+	for (int i = 0; i < 16; ++i)
+		out[i] = 0.0f;
+	const float f = 1.0f / tanf(fovY * 0.5f);
+	out[0] = f / aspect;
+	out[5] = f;
+	out[10] = farPlane / (nearPlane - farPlane);
+	out[11] = -1.0f;
+	out[14] = nearPlane * farPlane / (nearPlane - farPlane);
+}
+
+// NDC z of a camera-space point on the view axis, matching the fixture
+// projection. |ndc| <= 1 means the point is inside the depth range.
+static float NdcZFixture(float nearPlane, float farPlane, float zView)
+{
+	float projection[16];
+	BuildPerspectiveFixture(1.0472f, 1.0f, nearPlane, farPlane, projection);
+	const float clipZ = projection[10] * zView + projection[14];
+	const float w = projection[11] * zView; // = -zView (camera looks down -Z)
+	return clipZ / w;
+}
+
+// Signed area of a triangle in the y-up NDC; positive is counter-clockwise.
+static float SignedAreaNdc(const float a[2], const float b[2], const float c[2])
+{
+	return 0.5f * (a[0] * (b[1] - c[1]) + b[0] * (c[1] - a[1]) + c[0] * (a[1] - b[1]));
+}
+
+// Pins the decoder's winding and the cull policy it implies.
+static void TestBlock2WindingAndCullPolicy()
+{
+	// The decoder emits a world quad as (v0,v1,v3,v2) and fans it
+	// (0,1,2)+(0,2,3) (SourceModelDecoder.cpp:384-393), so emitted corner 0..3
+	// are c0=v0, c1=v1, c2=v3, c3=v2. The first triangle (v0,v1,v3) is exactly
+	// the runtime's gte_nclip triangle (draw.c:780-796).
+	//
+	// Known front-facing quad: stored layout v0..v3 with outward normal +Z
+	// (toward the camera). v0=(-1,-1), v1=(1,-1), v2=(1,1), v3=(-1,1).
+	const float v0[3] = { -1, -1, 0 };
+	const float v1[3] = { 1, -1, 0 };
+	const float v2[3] = { 1, 1, 0 };
+	const float v3[3] = { -1, 1, 0 };
+
+	// Geometric front test: cross(v1-v0, v3-v0) = +Z points at the camera.
+	float edgeA[3] = { v1[0] - v0[0], v1[1] - v0[1], v1[2] - v0[2] };
+	float edgeB[3] = { v3[0] - v0[0], v3[1] - v0[1], v3[2] - v0[2] };
+	float normal[3];
+	Cross3(edgeA, edgeB, normal);
+	CHECK(Near(normal[0], 0.0f, 1e-4f) && Near(normal[1], 0.0f, 1e-4f) && normal[2] > 0.0f);
+
+	// Place the quad 10 m (40960 raw units) in front of an identity camera,
+	// using the pinned raw-unit projection window. The near/far choice does not
+	// affect the winding sign; it is kept consistent with the unit policy below.
+	// The mesh is local (the decoder emits local vertices); the view carries the
+	// placement.
+	const float identity[3][3] = { { 1, 0, 0 }, { 0, 1, 0 }, { 0, 0, 1 } };
+	const float origin[3] = { 0, 0, 0 };
+	const float objectPos[3] = { 0, 0, -40960 };
+	float view[16];
+	ComposeInstanceView(identity, origin, objectPos, 0, view);
+	float projection[16];
+	BuildPerspectiveFixture(1.0472f, 1.0f, 100.0f, 1000000.0f, projection);
+	float mvp[16];
+	MultiplyColumnMajor(projection, view, mvp); // model transform is identity
+
+	float clip0[4], clip1[4], clip2[4];
+	TransformPoint(mvp, v0, clip0);
+	TransformPoint(mvp, v1, clip1);
+	TransformPoint(mvp, v3, clip2);
+	CHECK(clip0[3] > 0.0f && clip1[3] > 0.0f && clip2[3] > 0.0f); // all in front
+
+	const float n0[2] = { clip0[0] / clip0[3], clip0[1] / clip0[3] };
+	const float n1[2] = { clip1[0] / clip1[3], clip1[1] / clip1[3] };
+	const float n2[2] = { clip2[0] / clip2[3], clip2[1] / clip2[3] };
+
+	const float frontArea = SignedAreaNdc(n0, n1, n2);
+	CHECK(frontArea > 0.0f); // counter-clockwise in the y-up NDC
+
+	// Reversing the winding flips the sign: this is the back face.
+	const float backArea = SignedAreaNdc(n0, n2, n1);
+	CHECK(backArea < 0.0f);
+	CHECK(Near(frontArea, -backArea, 1e-5f));
+
+	// Pinned cull policy. Front faces are the decoder's positive-NDC-area
+	// (counter-clockwise in the y-up NDC) triangles. Diligent runs on Vulkan
+	// through a negative viewport height to emulate Direct3D, which inverts the
+	// effective winding relative to the y-up NDC, so the scene pipeline culls
+	// back faces with CULL_MODE_BACK and FrontCounterClockwise = True; the
+	// reversed negative-area back faces are removed. CULL_MODE_NONE is not an
+	// accepted policy. tests/NativeRendererSmoke.cpp asserts the pixel result.
+	CHECK(frontArea > 0.0f);
+	CHECK(backArea < 0.0f);
+}
+
+// Pins the unit policy: translation, vertices and projection near/far share one
+// raw game unit (4096 per metre). It asserts the current renderer pair is not a
+// valid raw-unit scene projection; it does not change the renderer values.
+static void TestBlock2UnitPolicy()
+{
+	const float rawUnitsPerMetre = 4096.0f; // PSX ONE/FIXED
+
+	// The decoder emits raw SVECTOR positions (SourceModelDecoder.cpp:344-346)
+	// and the bridge keeps the camera translation raw while scaling only the
+	// rotation by 1/4096 (redriver2_psxpc.cpp:535-552;
+	// DeveloperModernMesh.cpp:496-525). A raw-unit scene therefore needs
+	// raw-unit near/far as well.
+
+	// The current pair is metre-scale (native/NativeRenderer.cpp:672): read as
+	// raw units, its far plane (300) is smaller than one world metre, so every
+	// raw vertex beyond 0.07 m is clipped away.
+	CHECK(300.0f < rawUnitsPerMetre);
+	CHECK(0.02f < 1.0f); // the near plane is below one raw unit
+
+	// A representative raw scene depth (24 m) is far beyond that far plane.
+	const float sceneDepthRaw = 24.0f * rawUnitsPerMetre; // 98304 raw units
+	CHECK(NdcZFixture(0.02f, 300.0f, -sceneDepthRaw) > 1.0f); // clipped: beyond far
+
+	// The same depth is inside a raw-unit window, so raw-unit near/far is the
+	// required policy.
+	CHECK(fabsf(NdcZFixture(100.0f, 1000000.0f, -sceneDepthRaw)) <= 1.0f);
 }
 
 // --- F-F: material grouping -------------------------------------------------
@@ -949,6 +1516,7 @@ int main()
 {
 	TestQuadOrderAndUVs();
 	TestPLQuadOrderAndUVs();
+	TestPLTriangleOrderAndUVs();
 	TestMixedModelPerSubmeshColors();
 	TestMixedModelPerSubmeshNormals();
 	TestEmptyModel();
@@ -956,8 +1524,16 @@ int main()
 	TestTriangleOrderAndUVs();
 	TestGouraudTriangleOrderAndUVs();
 	TestUnsupportedPolygonType();
+	TestMixedPlTriangleAndQuad();
+	TestSkipUnsupportedBuildingType();
+	TestSkipUnsupportedNone();
+	TestSkipUnsupportedOutOfSpan();
+	TestSkipUnsupportedZeroStride();
 	TestSpanViolations();
 	TestBlock2YangRotationGate();
+	TestBlock2ViewComposition();
+	TestBlock2WindingAndCullPolicy();
+	TestBlock2UnitPolicy();
 	TestMaterialGrouping();
 	TestDeterminism();
 

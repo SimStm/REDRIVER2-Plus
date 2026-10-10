@@ -15,6 +15,20 @@
  * content when one has been loaded through NativeRenderer_LoadContent and falls
  * back to a built-in placeholder otherwise. RenderSceneToRGBA runs the same
  * draw into an offscreen readback target for tests and evidence capture.
+ *
+ * Coordinate/unit policy (pinned by tests/SourceModelDecoderTests.cpp): the
+ * camera `view` matrix, decoded vertices and the projection near/far must share
+ * one unit. The game and the decoder use raw game units (4096 per metre), and
+ * the bridge keeps the camera translation raw while scaling only the rotation by
+ * 1/4096, so a raw-unit scene needs raw-unit near/far. The current
+ * BuildPerspective call still uses the metre-scale 0.02/300 pair and is not a
+ * valid raw-unit scene projection; supplying raw-unit near/far (or converting
+ * the whole scene consistently) is a later block and is not done here.
+ *
+ * Winding policy: decoder-emitted quads (v0,v1,v3,v2) are front-facing when the
+ * first triangle (v0,v1,v3) has a positive signed area in the y-up NDC, so the
+ * scene pipelines cull back faces (CULL_MODE_BACK, FrontCounterClockwise True
+ * under Diligent's Vulkan D3D emulation).
  */
 
 #ifdef _WIN32

@@ -683,6 +683,77 @@ static void TestConvertedContentScene()
 		"replaced content resources still draw the quad");
 }
 
+// E03-B2.5: pins the decoder's winding to the renderer's cull mode. The decoder
+// emits a world quad as (v0,v1,v3,v2) and fans it (0,1,2)+(0,2,3); the first
+// triangle (v0,v1,v3) has a positive signed area in the y-up NDC for a
+// front-facing face. The scene pipelines cull back faces with CULL_MODE_BACK and
+// FrontCounterClockwise = True (native/NativeRenderer.cpp), so a front-winding
+// quad must be visible and a reversed back-winding quad must be culled. Both
+// quads sit at z = -5 under an identity camera.
+static void TestWindingCullPolicy()
+{
+	const float identity[16] = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
+	NativeRenderer_SetCamera(identity, 1.0472f); // 60 degrees
+
+	GltfMeshData quad;
+	// Symmetric proxy quad stored in boundary order; the fan below is the same
+	// (0,1,2)+(0,2,3) emission the decoder produces, and the pure winding
+	// fixture pins the (v0,v1,v3,v2) vertex mapping.
+	quad.positions = { -1, -1, 0,  1, -1, 0,  1, 1, 0,  -1, 1, 0 };
+	quad.uvs = { 0, 0,  1, 0,  1, 1,  0, 1 };
+	quad.vertexCount = 4;
+	quad.triangleCount = 2;
+	quad.baseColorFactor[0] = 1.0f;
+	quad.baseColorFactor[1] = 0.0f;
+	quad.baseColorFactor[2] = 0.0f;
+	quad.baseColorFactor[3] = 1.0f;
+	for (int i = 0; i < 16; ++i)
+		quad.transform[i] = identity[i];
+	quad.transform[14] = -5.0f;
+
+	char error[256];
+
+	// Front winding: the same (0,1,2)+(0,2,3) fan the decoder emits for a quad.
+	GltfMeshData front = quad;
+	front.indices = { 0, 1, 2,  0, 2, 3 };
+	Check(Gltf_WriteFile("winding-front.glb", front, error, sizeof(error)) == 0,
+		"front-winding GLB written");
+	Check(NativeRenderer_LoadContent("winding-front.glb", error, sizeof(error)) == 1,
+		"front-winding content loaded");
+	unsigned char frontImage[64 * 64 * 4] = {};
+	Check(NativeRenderer_RenderSceneToRGBA(frontImage, 64, 64, error, sizeof(error)) == 1,
+		"front-winding quad rendered offscreen");
+	const unsigned char* frontCentre = &frontImage[((32 * 64) + 32) * 4];
+	const bool frontVisible = frontCentre[0] >= 239 && frontCentre[1] <= 16 &&
+		frontCentre[2] <= 16 && frontCentre[3] == 255;
+	if (!frontVisible)
+		printf("    (front centre %u,%u,%u,%u, expected red: front face must survive the cull)\n",
+			frontCentre[0], frontCentre[1], frontCentre[2], frontCentre[3]);
+	Check(frontVisible, "front-winding quad is kept by the pinned back-face cull");
+
+	// Back winding: reversed index order gives a negative NDC signed area and
+	// must be culled, leaving the scene clear colour at the centre.
+	GltfMeshData back = quad;
+	back.indices = { 0, 2, 1,  0, 3, 2 };
+	Check(Gltf_WriteFile("winding-back.glb", back, error, sizeof(error)) == 0,
+		"back-winding GLB written");
+	Check(NativeRenderer_LoadContent("winding-back.glb", error, sizeof(error)) == 1,
+		"back-winding content loaded");
+	unsigned char backImage[64 * 64 * 4] = {};
+	Check(NativeRenderer_RenderSceneToRGBA(backImage, 64, 64, error, sizeof(error)) == 1,
+		"back-winding quad rendered offscreen");
+	const unsigned char* backCentre = &backImage[((32 * 64) + 32) * 4];
+	const bool backCulled = backCentre[0] >= 9 && backCentre[0] <= 17 &&
+		backCentre[1] >= 14 && backCentre[1] <= 22 &&
+		backCentre[2] >= 27 && backCentre[2] <= 35 && backCentre[3] == 255;
+	if (!backCulled)
+		printf("    (back centre %u,%u,%u,%u, expected the clear colour ~13,18,31,255)\n",
+			backCentre[0], backCentre[1], backCentre[2], backCentre[3]);
+	Check(backCulled, "back-winding quad is culled by the pinned back-face cull");
+
+	NativeRenderer_ClearContent();
+}
+
 static void TestTriangleDraw()
 {
 	IRenderDevice* device = (IRenderDevice*)NativeRenderer_GetDevice();
@@ -737,6 +808,7 @@ int main()
 	TestTriangleDraw();
 	TestTexturedQuad();
 	TestConvertedContentScene();
+	TestWindingCullPolicy();
 
 	NativeRenderer_Resize(640, 480);
 	Check(NativeRenderer_RenderClearAndPresent(0.3f, 0.1f, 0.2f, 1.0f, error, sizeof(error)) == 1,

@@ -68,6 +68,17 @@ bool AssetCatalog_GetContext(AssetCatalogContext* context);
 int AssetCatalog_RegisterModel(int modelIndex, const char* name,
 	AssetCatalogSource source, int lodParentModelIndex, int highDetailModelIndex);
 
+/* Same as AssetCatalog_RegisterModel but also records the model's byte span
+   (the loader's transient per-model size). `spanBytes` <= 0 means "not
+   captured". The span is provenance only and never changes identity, handle or
+   revision semantics. */
+int AssetCatalog_RegisterModelWithSpan(int modelIndex, const char* name,
+	AssetCatalogSource source, int lodParentModelIndex, int highDetailModelIndex, int spanBytes);
+
+/* Returns the recorded byte span of a live model record. A freed slot reports
+   false, so a stale span is never served. */
+bool AssetCatalog_GetModelSpan(int record, int* byteSize);
+
 int AssetCatalog_FindModel(int modelIndex);
 
 /* Marks a model slot's record as no longer live (a streamed slot was freed).
@@ -246,7 +257,9 @@ int AssetCatalog_EnumerateCarPalettes(int carRecord, int* out, int capacity);
 #define ASSET_CATALOG_MAX_PLACEMENTS 16384
 
 /* One decoded level placement. `modelNumber` is the CELL_OBJECT type (a model
-   slot index), `rotation` the packed yang. */
+   slot index), `rotation` the packed yang. `sourceObjectIndex` is the 14-bit
+   cell object index the placement was decoded from; it is provenance only and
+   is NOT part of the duplicate-identity key (region/model/position/rotation). */
 typedef struct AssetCatalogPlacement
 {
 	int region;
@@ -255,6 +268,7 @@ typedef struct AssetCatalogPlacement
 	int y;
 	int z;
 	int rotation;
+	int sourceObjectIndex;
 } AssetCatalogPlacement;
 
 typedef struct AssetCatalogInventoryFinding

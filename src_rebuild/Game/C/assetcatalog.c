@@ -32,6 +32,7 @@ struct ModelRecord
 	int modelIndex;
 	int lodParentModelIndex;
 	int highDetailModelIndex;
+	int spanBytes;
 	AssetCatalogSource source;
 	char name[ASSET_CATALOG_NAME_CAPACITY];
 };
@@ -97,6 +98,51 @@ void CopyName(char* destination, const char* source)
 	if (source == NULL)
 		source = "";
 	snprintf(destination, ASSET_CATALOG_NAME_CAPACITY, "%s", source);
+}
+
+void RemoveModelMaterials(int record);
+
+// Shared registration path. `spanBytes` <= 0 means the loader did not capture a
+// size; the span is provenance and never participates in identity or revision.
+int RegisterModelRecord(int modelIndex, const char* name, AssetCatalogSource source,
+	int lodParentModelIndex, int highDetailModelIndex, int spanBytes)
+{
+	if (!s_valid || modelIndex < 0)
+		return -1;
+
+	// Match any record for this slot, live or previously freed, so a streamed
+	// slot reuses its record and both registration and invalidation bump the
+	// revision that retained handles depend on.
+	for (int i = 0; i < s_modelCount; i++)
+	{
+		if (s_models[i].modelIndex == modelIndex)
+		{
+			RemoveModelMaterials(i);
+			s_models[i].used = true;
+			s_models[i].revision++;
+			s_models[i].lodParentModelIndex = lodParentModelIndex;
+			s_models[i].highDetailModelIndex = highDetailModelIndex;
+			s_models[i].spanBytes = spanBytes;
+			s_models[i].source = source;
+			CopyName(s_models[i].name, name);
+			return i;
+		}
+	}
+
+	if (s_modelCount >= kMaxModels)
+		return -1;
+
+	ModelRecord* record = &s_models[s_modelCount];
+	record->used = true;
+	record->revision = 1;
+	record->modelIndex = modelIndex;
+	record->lodParentModelIndex = lodParentModelIndex;
+	record->highDetailModelIndex = highDetailModelIndex;
+	record->spanBytes = spanBytes;
+	record->source = source;
+	CopyName(record->name, name);
+
+	return s_modelCount++;
 }
 
 bool ValidModelRecord(int record)
@@ -228,40 +274,24 @@ bool AssetCatalog_GetContext(AssetCatalogContext* context)
 int AssetCatalog_RegisterModel(int modelIndex, const char* name,
 	AssetCatalogSource source, int lodParentModelIndex, int highDetailModelIndex)
 {
-	if (!s_valid || modelIndex < 0)
-		return -1;
+	return RegisterModelRecord(modelIndex, name, source, lodParentModelIndex, highDetailModelIndex, 0);
+}
 
-	// Match any record for this slot, live or previously freed, so a streamed
-	// slot reuses its record and both registration and invalidation bump the
-	// revision that retained handles depend on.
-	for (int i = 0; i < s_modelCount; i++)
-	{
-		if (s_models[i].modelIndex == modelIndex)
-		{
-			RemoveModelMaterials(i);
-			s_models[i].used = true;
-			s_models[i].revision++;
-			s_models[i].lodParentModelIndex = lodParentModelIndex;
-			s_models[i].highDetailModelIndex = highDetailModelIndex;
-			s_models[i].source = source;
-			CopyName(s_models[i].name, name);
-			return i;
-		}
-	}
+int AssetCatalog_RegisterModelWithSpan(int modelIndex, const char* name,
+	AssetCatalogSource source, int lodParentModelIndex, int highDetailModelIndex, int spanBytes)
+{
+	return RegisterModelRecord(modelIndex, name, source, lodParentModelIndex, highDetailModelIndex, spanBytes);
+}
 
-	if (s_modelCount >= kMaxModels)
-		return -1;
+bool AssetCatalog_GetModelSpan(int record, int* byteSize)
+{
+	if (!ValidModelRecord(record))
+		return false;
 
-	ModelRecord* record = &s_models[s_modelCount];
-	record->used = true;
-	record->revision = 1;
-	record->modelIndex = modelIndex;
-	record->lodParentModelIndex = lodParentModelIndex;
-	record->highDetailModelIndex = highDetailModelIndex;
-	record->source = source;
-	CopyName(record->name, name);
+	if (byteSize)
+		*byteSize = s_models[record].spanBytes;
 
-	return s_modelCount++;
+	return true;
 }
 
 int AssetCatalog_FindModel(int modelIndex)

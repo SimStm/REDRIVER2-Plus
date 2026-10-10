@@ -257,9 +257,17 @@ int CreateScenePipeline(TEXTURE_FORMAT colorFormat, const char* name, IPipelineS
 	psoCI.GraphicsPipeline.RTVFormats[0] = colorFormat;
 	psoCI.GraphicsPipeline.DSVFormat = TEX_FORMAT_D32_FLOAT;
 	psoCI.GraphicsPipeline.PrimitiveTopology = PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-	// CULL_MODE_NONE: converted glTF winding is not normalized yet; the winding
-	// and backface policy is a later block.
-	psoCI.GraphicsPipeline.RasterizerDesc.CullMode = CULL_MODE_NONE;
+	// Winding policy (pinned by tests/SourceModelDecoderTests.cpp and asserted by
+	// tests/NativeRendererSmoke.cpp): the decoder emits world quads as
+	// (v0,v1,v3,v2) and fans them (0,1,2)+(0,2,3); for a front-facing face the
+	// first triangle (v0,v1,v3) has a positive signed area in the y-up NDC.
+	// Under Diligent's Vulkan D3D emulation (negative viewport height),
+	// FrontCounterClockwise = True is the setting that treats those positive-area
+	// (counter-clockwise in the y-up NDC) triangles as front-facing; CULL_MODE_BACK
+	// then removes the reversed back faces. CULL_MODE_NONE is not an accepted
+	// policy.
+	psoCI.GraphicsPipeline.RasterizerDesc.CullMode = CULL_MODE_BACK;
+	psoCI.GraphicsPipeline.RasterizerDesc.FrontCounterClockwise = True;
 	psoCI.GraphicsPipeline.DepthStencilDesc.DepthEnable = True;
 	psoCI.GraphicsPipeline.InputLayout.LayoutElements = elements;
 	psoCI.GraphicsPipeline.InputLayout.NumElements = 2;

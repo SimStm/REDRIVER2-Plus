@@ -639,6 +639,65 @@ static void TestTraversalAndMaterialLifetime()
 	CHECK(AssetCatalog_EnumerateModelTextures(b, NULL, 0) == 1);
 }
 
+static void TestModelSpanLifecycle()
+{
+	AssetCatalog_Reset();
+	AssetCatalog_BeginContext(0, 0, 0);
+
+	const int record = AssetCatalog_RegisterModelWithSpan(7, "ROAD", ASSET_CATALOG_SOURCE_DECLARED, -1, -1, 4096);
+	CHECK(record >= 0);
+
+	int span = -1;
+	CHECK(AssetCatalog_GetModelSpan(record, &span) && span == 4096);
+
+	// Registering without a span records "not captured" (0).
+	CHECK(AssetCatalog_RegisterModel(7, "ROAD", ASSET_CATALOG_SOURCE_DECLARED, -1, -1) == record);
+	CHECK(AssetCatalog_GetModelSpan(record, &span) && span == 0);
+
+	// The span is provenance, not identity: a re-registration with a new span
+	// keeps the record, bumps the revision and invalidates the retained handle.
+	CHECK(AssetCatalog_RegisterModelWithSpan(7, "ROAD", ASSET_CATALOG_SOURCE_DECLARED, -1, -1, 4096) == record);
+	AssetCatalogHandle handle = AssetCatalog_GetModelHandle(record);
+	CHECK(AssetCatalog_HandleValid(handle));
+	CHECK(AssetCatalog_RegisterModelWithSpan(7, "ROAD", ASSET_CATALOG_SOURCE_DECLARED, -1, -1, 512) == record);
+	CHECK(!AssetCatalog_HandleValid(handle));
+	CHECK(AssetCatalog_GetModelSpan(record, &span) && span == 512);
+	CHECK(AssetCatalog_HandleValid(AssetCatalog_GetModelHandle(record)));
+
+	// A freed slot serves no span; re-registering restores one.
+	CHECK(AssetCatalog_InvalidateModel(7));
+	CHECK(!AssetCatalog_GetModelSpan(record, &span));
+	CHECK(AssetCatalog_RegisterModelWithSpan(7, "ROAD", ASSET_CATALOG_SOURCE_DECLARED, -1, -1, 2048) == record);
+	CHECK(AssetCatalog_GetModelSpan(record, &span) && span == 2048);
+
+	// Bounds: an invalid record fails, a valid one tolerates a NULL output.
+	CHECK(!AssetCatalog_GetModelSpan(-1, &span));
+	CHECK(!AssetCatalog_GetModelSpan(record + 999, &span));
+	CHECK(AssetCatalog_GetModelSpan(record, NULL));
+}
+
+static void TestPlacementSourceObjectIndex()
+{
+	AssetCatalog_Reset();
+	AssetCatalog_BeginContext(0, 0, 0);
+	AssetCatalog_RegisterModel(10, "ROAD", ASSET_CATALOG_SOURCE_DECLARED, -1, -1);
+
+	// sourceObjectIndex is provenance and is NOT part of the duplicate key:
+	// two placements identical except for it are still one duplicate.
+	AssetCatalogPlacement placements[2];
+	memset(placements, 0, sizeof(placements));
+	placements[0].region = 0;
+	placements[0].modelNumber = 10;
+	placements[0].sourceObjectIndex = 100;
+	placements[1] = placements[0];
+	placements[1].sourceObjectIndex = 101;
+
+	AssetCatalogInventoryResult result;
+	CHECK(AssetCatalog_ReconcileInventory(placements, 2, NULL, &result) == ASSET_CATALOG_INVENTORY_OK);
+	CHECK(result.duplicatePlacements == 1 && result.uniquePlacements == 1);
+	CHECK(placements[0].sourceObjectIndex == 100 && placements[1].sourceObjectIndex == 101);
+}
+
 int main()
 {
 	TestLifetimeAndContext();
@@ -652,6 +711,8 @@ int main()
 	TestBoundsAreGraceful();
 	TestInventoryReconciliation();
 	TestTraversalAndMaterialLifetime();
+	TestModelSpanLifecycle();
+	TestPlacementSourceObjectIndex();
 
 	printf("%d checks, %d failures\n", g_checks, g_failures);
 	return g_failures == 0 ? 0 : 1;
