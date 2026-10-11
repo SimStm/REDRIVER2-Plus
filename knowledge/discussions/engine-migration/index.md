@@ -198,18 +198,18 @@ default-backend change, performance fix or migration-stage acceptance is authori
 by this recommendation. See [E03](../../engine-migration/stages/03-diligent-playable-slice.md)
 and [E07](../../engine-migration/stages/07-remove-psycross.md).
 
-## Native material follow-up (2026-10-10)
+## Native material follow-up (2026-10-10; updated 2026-10-11)
 
-Inspection at `34e104ed` identifies two distinct remaining E03 material contracts:
+Follow-up to the visibility checkpoint identified two distinct E03 material contracts:
 
-- `assetcatalog_game.c::LegacyComputeWorldColors` bakes normal-indexed building
-  colours at rotation zero, while `draw.c::PlotBuildingModel` and the subdivided
-  path use `r = (rot >> 3) * 4` and `f4colourTable[(r - th) & 31]`. The same native
-  resource is shared by differently rotated placements, with no per-instance
-  shading metadata/palette lookup. Geometry rotation alone cannot correct that
-  baked colour. This is source evidence of missing orientation semantics, not a
-  quantified contribution to full-image error. Correct this next with explicit
-  presentation metadata; preserve immutable shared geometry and gameplay state.
+- Building orientation shading is now implemented in the working tree. Normal-shaded
+  converted vertices preserve `_RED2_WORLD_SHADE`; each placement applies its original
+  yaw group to a live 32-entry palette, matching `draw.c::PlotBuildingModel` and the
+  subdivided path's `r = (rot >> 3) * 4`, `f4colourTable[(r - th) & 31]` lookup. Shared
+  geometry stays immutable, and decoded polygon corners do not alias shade metadata
+  between combo and normal-shaded primitives. Inspector, asymmetric RGB mapping and
+  native smoke tests pass. The mission log confirms scene submission, but a RenderDoc
+  capture and visual inspection remain pending; no full-image parity claim follows.
 - `texturebake.c::TextureBake_BakeModel` reads original CPU VRAM and embeds whole
   page/CLUT images. It does not resolve HD manifest pixels.
   `HdTextureOverrides.cpp::EnsureImageLoaded` couples PNG loading to
@@ -221,11 +221,11 @@ Inspection at `34e104ed` identifies two distinct remaining E03 material contract
   The inspected local developer setting has `hdTextureOverrides=0`; this does not
   establish HD overrides as the cause of the last original-texture differences.
 
-Recommendation: orientation-aware building shading before the next controlled
-world comparison; implement native override consumption as a separate coherent
-material block. Neither correction is implemented by this diagnostic record.
-Static coverage, player vehicle/on-foot and city expansion remain the adopted
-goal; no E03 or full-game acceptance follows from the visibility checkpoint.
+Recommendation: continue native HD override consumption as a separate coherent
+material block, then validate the next controlled world comparison. Remaining
+textures/materials, static coverage, player vehicle/on-foot and city expansion
+stay open; neither this correction nor the visibility checkpoint accepts E03 or
+full-game parity.
 
 ## Open implementation decisions
 
@@ -236,10 +236,14 @@ separate game/replay versioning. No unresolved choice authorizes a silent fallba
 
 ## History
 
+2026-10-11 follow-up: per-instance building shading was implemented with retained
+shade metadata, yaw palette lookup and RGB mapping regression coverage. Native
+mission log reached world draws; capture/visual inspection remains pending. The
+HD texture override contract remains separate and unresolved.
+
 2026-10-10 native material diagnosis: cell/event visibility was published as
 `34e104ed`; source inspection separated fixed-zero building shading from missing
-native HD override consumption. Recorded the next correction and its constraints;
-no new material renderer, runtime validation or stage acceptance is claimed.
+native HD override consumption and recorded their different constraints.
 
 2026-10-09 ODT-to-GLB spike follow-up: bounded external spike produced
 validator-clean GLBs (car clean/low, mini-level) from ODT exports of the local

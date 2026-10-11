@@ -1268,6 +1268,7 @@ static int NativeRenderer_DevRegionDrawSubmit(const float view[16])
 
 			const int pos[3] = { placement.x, placement.y, placement.z };
 			NativeInstance_ComposeTransform(pos, (unsigned int)placement.rotation, instance.transform);
+			instance.worldShadeOffset = ((unsigned int)placement.rotation >> 3) * 4;
 
 			instance.level = GameLevel;
 			instance.variant = (int)GetCityType();
@@ -1371,6 +1372,7 @@ static int NativeRenderer_DevDrawSubmit(const float view[16])
 
 		const int pos[3] = { placement.x, placement.y, placement.z };
 		NativeInstance_ComposeTransform(pos, (unsigned int)placement.rotation, instance.transform);
+		instance.worldShadeOffset = ((unsigned int)placement.rotation >> 3) * 4;
 
 		instance.level = GameLevel;
 		instance.variant = (int)GetCityType();
@@ -1806,6 +1808,9 @@ static void NativeRenderer_Frame()
 
 	NativeRenderer_SetClipPlanes(kNativeDrawClipNear, kNativeDrawClipFar);
 	NativeRenderer_SetCamera(view, NativeDrawScreenDistance());
+	unsigned char worldShadePalette[32 * 3];
+	AssetCatalogGame_GetWorldShadePalette(worldShadePalette);
+	NativeRenderer_SetWorldShadePalette(worldShadePalette);
 
 	// The live GTE screen offset (SetGeomOffset), so the native framing matches
 	// the legacy GTE screen mapping; the game's (160,128) sits 8 PSX lines below

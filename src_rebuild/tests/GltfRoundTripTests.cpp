@@ -784,6 +784,49 @@ static void TestColorRoundTrip()
 	CHECK(single.colors == primitive.colors);
 }
 
+static void TestWorldShadeRoundTrip()
+{
+	GltfMeshData source = MakeTriangle();
+	source.worldShadeIndices = { -1, 0, 31 };
+	char error[256];
+	CHECK(Gltf_WriteFile("world-shade.glb", source, error, sizeof(error)) == 0);
+	GltfMeshData single;
+	GltfMultiMeshData multi;
+	CHECK(Gltf_LoadFile("world-shade.glb", &single, error, sizeof(error)) == 0);
+	CHECK(single.worldShadeIndices == source.worldShadeIndices);
+	CHECK(Gltf_LoadFileMulti("world-shade.glb", &multi, error, sizeof(error)) == 0);
+	CHECK(multi.primitives.size() == 1 && multi.primitives[0].worldShadeIndices == source.worldShadeIndices);
+	CHECK(Gltf_WriteFile("world-shade-again.glb", single, error, sizeof(error)) == 0);
+	std::vector<unsigned char> first, second;
+	CHECK(ReadFileBytes("world-shade.glb", &first) == 1 && ReadFileBytes("world-shade-again.glb", &second) == 1);
+	CHECK(first == second);
+	source.worldShadeIndices = { 0, 1 };
+	CHECK(Gltf_WriteFile("invalid-shade.glb", source, error, sizeof(error)) != 0 && strstr(error, "count"));
+	const float invalidValues[] = { -2, 32, 1.5f };
+	for (int i = 0; i < 3; ++i)
+	{
+		source.worldShadeIndices = { 0, invalidValues[i], 31 };
+		CHECK(Gltf_WriteFile("invalid-shade.glb", source, error, sizeof(error)) != 0 && strstr(error, "index"));
+	}
+	// Reader rejection is independent of writer validation: construct malformed
+	// metadata directly, including wrong attribute type/count/value.
+	const char* json = "{\"asset\":{\"version\":\"2.0\"},\"buffers\":[{\"byteLength\":48}],"
+		"\"bufferViews\":[{\"buffer\":0,\"byteOffset\":0,\"byteLength\":36},{\"buffer\":0,\"byteOffset\":36,\"byteLength\":12}],"
+		"\"accessors\":[{\"bufferView\":0,\"componentType\":5126,\"count\":3,\"type\":\"VEC3\"},"
+		"{\"bufferView\":1,\"componentType\":5126,\"count\":3,\"type\":\"SCALAR\"}],"
+		"\"meshes\":[{\"primitives\":[{\"attributes\":{\"POSITION\":0,\"_RED2_WORLD_SHADE\":1}}]}]}";
+	std::vector<unsigned char> bin(48, 0);
+	const float badShade = 32;
+	memcpy(bin.data() + 36, &badShade, sizeof(badShade));
+	CHECK(WriteGlbFromJsonBin("malformed-shade.glb", json, bin) == 1);
+	CHECK(Gltf_LoadFileMulti("malformed-shade.glb", &multi, error, sizeof(error)) != 0 && multi.primitives.empty() && strstr(error, "shade"));
+	std::string wrongCount(json);
+	const size_t countAt = wrongCount.rfind("\"count\":3");
+	wrongCount.replace(countAt, 9, "\"count\":2");
+	CHECK(WriteGlbFromJsonBin("malformed-shade.glb", wrongCount.c_str(), bin) == 1);
+	CHECK(Gltf_LoadFileMulti("malformed-shade.glb", &multi, error, sizeof(error)) != 0 && multi.primitives.empty() && strstr(error, "count"));
+}
+
 int main()
 {
 	TestRoundTrip();
@@ -801,6 +844,7 @@ int main()
 	TestPngCorruptedChunkCrc();
 	TestMaterialExtensionTextureRejection();
 	TestColorRoundTrip();
+	TestWorldShadeRoundTrip();
 
 	printf("%d checks, %d failures\n", g_checks, g_failures);
 	return g_failures == 0 ? 0 : 1;

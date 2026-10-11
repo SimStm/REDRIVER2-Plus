@@ -18,6 +18,7 @@ struct WorldMeshConversionInput
 	std::vector<std::vector<unsigned char>> pixels;
 	std::vector<WorldConversionImage> images;
 	std::vector<unsigned char> legacyColors;
+	std::vector<float> worldShadeIndices; // explicit normal-shaded building metadata; -1 for other corners
 };
 
 struct WorldMeshConversionResult

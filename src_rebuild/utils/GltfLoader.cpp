@@ -1244,6 +1244,32 @@ bool LoadPrimitiveCore(const JsonValue& root, const std::vector<unsigned char>& 
 	}
 
 	const JsonValue* colorAccessor = attributes->Find("COLOR_0");
+	const JsonValue* shadeAccessor = attributes->Find("_RED2_WORLD_SHADE");
+	if (shadeAccessor)
+	{
+		int shadeCount = 0;
+		if (shadeAccessor->type != JsonValue::Number ||
+			!ReadAccessorFloats(root, bin, views, (int)shadeAccessor->number, 1,
+				out.worldShadeIndices, shadeCount, detail, sizeof(detail)))
+		{
+			snprintf(error, errorCapacity, "primitive %d has an unreadable _RED2_WORLD_SHADE accessor", primitiveIndex);
+			return false;
+		}
+		if (shadeCount != out.vertexCount)
+		{
+			snprintf(error, errorCapacity, "primitive %d has a world shade count that disagrees with POSITION", primitiveIndex);
+			return false;
+		}
+		for (int v = 0; v < shadeCount; ++v)
+		{
+			const float shade = out.worldShadeIndices[v];
+			if (!(shade >= -1.0f && shade <= 31.0f) || shade != (float)(int)shade)
+			{
+				snprintf(error, errorCapacity, "primitive %d has an invalid world shade index", primitiveIndex);
+				return false;
+			}
+		}
+	}
 	if (colorAccessor && colorAccessor->type == JsonValue::Number)
 	{
 		int colorCount = 0;
@@ -1375,6 +1401,7 @@ int Gltf_LoadFile(const char* path, GltfMeshData* out, char* error, int errorCap
 	out->normals.swap(core.normals);
 	out->uvs.swap(core.uvs);
 	out->colors.swap(core.colors);
+	out->worldShadeIndices.swap(core.worldShadeIndices);
 	out->indices.swap(core.indices);
 	for (int i = 0; i < 4; i++)
 		out->baseColorFactor[i] = core.baseColorFactor[i];

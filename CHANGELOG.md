@@ -10,6 +10,9 @@ where release policy permits it.
 
 ### Changed
 
+- Native normal-shaded building instances now use their original rotation bucket with the live
+  32-entry world palette; converted shade metadata survives GLB round trips and conversion hashing.
+  RGB channel order follows the legacy packed-colour to COLOR_0 mapping.
 - Native world visibility follows the original draw-distance/PVS/event-cell selection,
   preserving straddler memberships. The F9 draw-distance control is now enabled.
 - Native sector transitions retain the published scene and camera-dependent LOD
@@ -25,9 +28,15 @@ where release policy permits it.
   developer override keys retain the baseline, including the presentation cap.
 - Diligent material filtering follows the live bilinear setting for resident
   and newly converted resources, including native offscreen captures.
+
 - Move the developer graphics panel toggle to F9 and light-receptivity shortcut to F8.
 - Diligent startup now keeps only PsyCross's SDL window/CPU VRAM and compatibility
   services, without initializing its Vulkan or OpenGL renderer.
+
+### Fixed
+
+- MSVC inspector and native renderer smoke builds now write object files to isolated
+  per-suite/build directories, preventing collisions between same-named objects.
 
 - E03 block 2 item 4 camera convention: the native scene projection is +Z-forward
   with a [0,1] NDC depth range (`out[10]=F/(F-N)`, `out[11]=+1`,

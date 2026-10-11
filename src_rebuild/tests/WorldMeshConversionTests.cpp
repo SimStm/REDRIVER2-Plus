@@ -98,6 +98,22 @@ int main()
 		  "worker ownership preserves identity after caller destruction");
 
 	WorldMeshConversionInput invalid = MakeInput();
+	WorldMeshConversionInput shaded = MakeInput();
+	shaded.worldShadeIndices = { 0, 4, -1 };
+	WorldMeshConversionResult shadeA = {}, shadeB = {};
+	Check(WorldMeshConversion_Publish("world-cache", shaded, &shadeA, error, sizeof(error)) == ASSET_CONVERTER_OK,
+		"world shade metadata publishes");
+	Check(strcmp(shadeA.resourceKey, resultA.resourceKey) != 0,
+		"adding orientation metadata invalidates the old baked resource key");
+	Check(Gltf_LoadFileMulti(shadeA.asset.glbPath, &loaded, error, sizeof(error)) == 0 &&
+		loaded.primitives[0].worldShadeIndices == shaded.worldShadeIndices,
+		"owned metadata survives cache readback");
+	shaded.worldShadeIndices[0] = 31;
+	Check(WorldMeshConversion_Publish("world-cache", shaded, &shadeB, error, sizeof(error)) == ASSET_CONVERTER_OK &&
+		strcmp(shadeA.resourceKey, shadeB.resourceKey) != 0, "changed shade indices rebuild the resource");
+	shaded.worldShadeIndices.pop_back();
+	Check(WorldMeshConversion_Publish("world-cache", shaded, &shadeB, error, sizeof(error)) != ASSET_CONVERTER_OK,
+		"incomplete shade metadata rejects publication");
 	invalid.images[0].pixelIndex = 9;
 	Check(WorldMeshConversion_Publish("world-cache", invalid, &first, error, sizeof(error)) != ASSET_CONVERTER_OK &&
 			  error[0],

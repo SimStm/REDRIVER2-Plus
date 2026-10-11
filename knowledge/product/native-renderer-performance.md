@@ -38,6 +38,26 @@ far-plane distance. The native panel enables that control; unmigrated PGXP/legac
 lighting controls remain disabled. The transitional visibility bridge is described below.
 Native lighting remains deferred until geometry/material coverage is correct.
 
+Normal-shaded building GLBs retain `_RED2_WORLD_SHADE` per emitted vertex; the attribute is
+included in conversion hashes and verified on GLB read-back. The native shader combines each
+source shade bucket with the instance's original yaw bucket using `(yawBucket * 4 - shade) & 31`.
+The 32-entry RGB palette follows the same plane-colour pattern as `SetupPlaneColours` and updates
+from the current world ambience at presentation. Combo-shaded buildings, sprites and tile/path
+models keep their existing conversion-time colours. The palette producer preserves packed
+`0xRRGGBB` channel order when writing RGB8. This restores per-instance static building orientation
+shading; event-specific lighting overrides, PSX blend modes and full scene parity are not accepted.
+
+Inspector validation after this change passed all 18 suites; `WorldMeshBuilderTests` passed 358
+checks, including asymmetric RGB palette order. `NativeRendererSmoke` passed 1249 checks, covering
+all eight rotation buckets and two orientations sharing one converted resource. The native x64
+solution build passed. A Visual Studio native mission 1 launch reached world rendering: the log
+records level 0/variant 0, 6,740 placements, 160/160 resources registered, 233 submitted, 186
+drawn and zero unresolved resources. This confirms scene publication and submission, not visual
+shading correctness. RenderDoc could not attach to the running target, so a new capture and
+mission-level visual inspection remain pending. The failed RenderDoc attach passed process PID
+73980 where a target-control identifier is required; this was an invalid capture argument, not
+evidence of a renderer failure.
+
 The panel displays ImGui's measured FPS separately from the requested cap, plus CPU
 draw/flush/present phases, draw/cull counts and tick/drop counters. These are not GPU timings.
 `RED2_NATIVE_PANEL_OPEN=1` opens it at initialization for GPU capture without desktop input.

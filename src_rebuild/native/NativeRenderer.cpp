@@ -131,17 +131,21 @@ struct SceneVertex
 {
 	float x, y, z, u, v;
 	float r, g, b, a;
+	float worldShade = -1.0f;
 };
 
-// 24 floats / 96 bytes: MVP, the material base-colour factor and the legacy
-// vertex-colour scale. HLSL packs the float4x4 into the first 64 bytes and each
-// float4 into the next 16.
+// MVP, base colour, RGB scale / instance shade offset and the live 32-entry
+// world palette. Each field follows HLSL's 16-byte constant-buffer alignment.
 struct SceneConstants
 {
 	float mvp[16];
 	float baseColor[4];
 	float colorScale[4];
+	float worldShadePalette[32][4];
 };
+
+float g_worldShadePalette[32][4] = {};
+bool g_worldShadePaletteValid = false;
 
 // One drawable primitive: geometry, texture, bindings and its own base-colour
 // factor. A converted multi-primitive GLB yields one of these per primitive; the
@@ -470,7 +474,7 @@ int CreatePrimitiveShaderBindings(ScenePrimitive& primitive)
 
 int CreateScenePipeline(TEXTURE_FORMAT colorFormat, const char* name, IPipelineState** out)
 {
-	LayoutElement elements[3] = {};
+	LayoutElement elements[4] = {};
 	elements[0].InputIndex = 0;
 	elements[0].BufferSlot = 0;
 	elements[0].NumComponents = 3;
@@ -490,6 +494,11 @@ int CreateScenePipeline(TEXTURE_FORMAT colorFormat, const char* name, IPipelineS
 	elements[2].NumComponents = 4;
 	elements[2].ValueType = VT_FLOAT32;
 	elements[2].RelativeOffset = 5 * sizeof(float);
+	elements[3].InputIndex = 3;
+	elements[3].BufferSlot = 0;
+	elements[3].NumComponents = 1;
+	elements[3].ValueType = VT_FLOAT32;
+	elements[3].RelativeOffset = 9 * sizeof(float);
 
 	ShaderResourceVariableDesc variables[3] = {};
 	variables[0].Name = "Constants";
@@ -544,7 +553,7 @@ int CreateScenePipeline(TEXTURE_FORMAT colorFormat, const char* name, IPipelineS
 	blend.BlendEnable = False;
 
 	psoCI.GraphicsPipeline.InputLayout.LayoutElements = elements;
-	psoCI.GraphicsPipeline.InputLayout.NumElements = 3;
+	psoCI.GraphicsPipeline.InputLayout.NumElements = 4;
 	psoCI.pVS = g_scene.vertexShader;
 	psoCI.pPS = g_scene.pixelShader;
 	g_device->CreateGraphicsPipelineState(psoCI, out);
@@ -560,8 +569,8 @@ int EnsureScenePipelines()
 		return 1;
 
 	const char* vertexSource =
-		"cbuffer Constants { float4x4 MVP; float4 baseColor; float4 colorScale; };\n"
-		"struct VSIn  { float3 Pos : ATTRIB0; float2 UV : ATTRIB1; float4 Col : ATTRIB2; };\n"
+		"cbuffer Constants { float4x4 MVP; float4 baseColor; float4 colorScale; float4 worldShadePalette[32]; };\n"
+		"struct VSIn  { float3 Pos : ATTRIB0; float2 UV : ATTRIB1; float4 Col : ATTRIB2; float Shade : ATTRIB3; };\n"
 		"struct VSOut { float4 Pos : SV_POSITION; float2 UV : TEXCOORD0; float4 Col : COLOR0; };\n"
 		// The legacy vertex shader scales the normalised vertex colour by the
 		// per-primitive `bright` multiplier before interpolation (psx.vert:33-34,
@@ -570,7 +579,10 @@ int EnsureScenePipelines()
 		// modulation and the framebuffer clamp match the legacy.
 		"void main(in VSIn input, out VSOut output)\n"
 		"{ output.Pos = mul(MVP, float4(input.Pos, 1.0)); output.UV = input.UV;"
-		" output.Col = float4(input.Col.rgb * colorScale.rgb, input.Col.a); }\n";
+		" float3 col = input.Col.rgb;"
+		" if (input.Shade >= 0.0 && colorScale.w >= 0.0)"
+		" col = worldShadePalette[((int)colorScale.w - (int)input.Shade) & 31].rgb;"
+		" output.Col = float4(col * colorScale.rgb, input.Col.a); }\n";
 	// World primitives are opaque: a 0000h texel (alpha 0) is a cutout and is
 	// discarded (psx.frag:111), every other texel renders fully opaque (the
 	// STP bit is ignored for opaque draws, so a 128 texel shows its full RGB),
@@ -585,7 +597,7 @@ int EnsureScenePipelines()
 	// unset, the shader text is exactly the production one.
 	const SceneDiagnostics& diagnostics = GetSceneDiagnostics();
 	std::string pixelSource =
-		"cbuffer Constants { float4x4 MVP; float4 baseColor; float4 colorScale; };\n"
+		"cbuffer Constants { float4x4 MVP; float4 baseColor; float4 colorScale; float4 worldShadePalette[32]; };\n"
 		"Texture2D    gTexture;\n"
 		"SamplerState gSampler;\n"
 		"struct PSIn { float4 Pos : SV_POSITION; float2 UV : TEXCOORD0; float4 Col : COLOR0; };\n"
@@ -784,6 +796,7 @@ int CreateContentItem(const GltfMultiMeshData& mesh, SceneDrawItem& out,
 		for (size_t i = 0; i < vertexCount; ++i)
 		{
 			SceneVertex& vertex = vertices[i];
+			vertex.worldShade = source.worldShadeIndices.empty() ? -1.0f : source.worldShadeIndices[i];
 			vertex.x = source.positions[i * 3 + 0];
 			vertex.y = source.positions[i * 3 + 1];
 			vertex.z = source.positions[i * 3 + 2];
@@ -1018,7 +1031,7 @@ int EnsureOffscreenTargets(Uint32 width, Uint32 height)
 // constant buffer is written per call, so the caller must commit and draw
 // before the next Map/Discard (the per-primitive loops rely on this).
 int DrawPrimitive(const ScenePrimitive& primitive, IPipelineState* pipeline,
-	IShaderResourceBinding* srb, const float mvp[16])
+	IShaderResourceBinding* srb, const float mvp[16], int worldShadeOffset)
 {
 	++g_frameDrawCalls;
 	SceneConstants constants;
@@ -1028,6 +1041,8 @@ int DrawPrimitive(const ScenePrimitive& primitive, IPipelineState* pipeline,
 		constants.baseColor[i] = primitive.baseColor[i];
 	for (int i = 0; i < 4; ++i)
 		constants.colorScale[i] = primitive.colorScale;
+	constants.colorScale[3] = g_worldShadePaletteValid ? (float)worldShadeOffset : -1.0f;
+	memcpy(constants.worldShadePalette, g_worldShadePalette, sizeof(g_worldShadePalette));
 	// DISCARD allocates a fresh dynamic range. Previous draws keep their own
 	// constants without transfer commands or ending the Vulkan render pass.
 	void* mapped = nullptr;
@@ -1067,7 +1082,7 @@ int DrawPrimitive(const ScenePrimitive& primitive, IPipelineState* pipeline,
 // primitives actually issued, so the caller can tell a fully empty item from a
 // drawn one.
 int DrawItemPrimitives(const SceneDrawItem& item, IPipelineState* pipeline,
-	int offscreenTarget, const float mvp[16])
+	int offscreenTarget, const float mvp[16], int worldShadeOffset = 0)
 {
 	int drawn = 0;
 	for (size_t p = 0; p < item.primitives.size(); ++p)
@@ -1078,7 +1093,7 @@ int DrawItemPrimitives(const SceneDrawItem& item, IPipelineState* pipeline,
 			: primitive.srb.RawPtr();
 		if (!primitive.vertices || !srb)
 			continue;
-		if (!DrawPrimitive(primitive, pipeline, srb, mvp))
+		if (!DrawPrimitive(primitive, pipeline, srb, mvp, worldShadeOffset))
 			return -1;
 		++drawn;
 	}
@@ -1146,7 +1161,7 @@ int RenderSceneInto(ITextureView* renderTarget, ITextureView* depthView,
 
 			// `drawn` counts instances, not primitives: an instance that issues
 			// at least one primitive counts once, however many it has.
-			const int primitiveCount = DrawItemPrimitives(*item, pipeline, offscreenTarget, mvp);
+			const int primitiveCount = DrawItemPrimitives(*item, pipeline, offscreenTarget, mvp, g_instances[i].worldShadeOffset);
 			if (primitiveCount < 0)
 				return 0;
 			if (primitiveCount > 0)
@@ -1295,6 +1310,19 @@ int NativeRenderer_RenderClearAndPresent(float red, float green, float blue, flo
 	g_frameStats.culledInstances = 0;
 	g_frameStats.swapChainBuffers = g_swapChain->GetDesc().BufferCount;
 	return 1;
+}
+
+void NativeRenderer_SetWorldShadePalette(const unsigned char* rgb)
+{
+	g_worldShadePaletteValid = rgb != nullptr;
+	if (!rgb)
+		return;
+	for (int i = 0; i < 32; ++i)
+	{
+		for (int c = 0; c < 3; ++c)
+			g_worldShadePalette[i][c] = rgb[i * 3 + c] / 255.0f;
+		g_worldShadePalette[i][3] = 1.0f;
+	}
 }
 
 void NativeRenderer_SetCamera(const float view[16], float screenDistanceH)
@@ -1591,6 +1619,15 @@ int NativeRenderer_SetInstances(const NativeInstance* instances, int count,
 	}
 
 	for (int i = 0; i < count; ++i)
+	{
+		if (instances[i].worldShadeOffset < 0 || instances[i].worldShadeOffset > 28 ||
+			(instances[i].worldShadeOffset & 3))
+		{
+			SetError(error, errorCapacity, "invalid instance world shade offset");
+			return 0;
+		}
+	}
+	for (int i = 0; i < count; ++i)
 		g_instances[i] = instances[i];
 	g_instanceCount = count;
 
@@ -1725,6 +1762,7 @@ void NativeRenderer_Shutdown(void)
 	g_factory = nullptr;
 	g_active = 0;
 	g_bilinearFiltering = 0;
+	g_worldShadePaletteValid = false;
 }
 
 #endif // _WIN32

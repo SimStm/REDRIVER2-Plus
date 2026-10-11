@@ -69,9 +69,12 @@ Native draw distance uses preserved cell/list aliases and DrawMap's approved cel
 F9 control enabled, tests 15/0 (18 suites pass). Tick 30 selects 155/233 instances at
 441/1800 with identical camera; GPU captures 308/461 draws, zero messages. Replay through
 tick 2128 dropped zero ticks; sector swaps retained 108/38 frames, zero empty frames.
-Published cell visibility as `34e104ed`. Next: correct per-instance building shading (current
-bake uses rotation zero), then remaining materials/models, prefetch and player vehicle/on-foot.
-Independent native PVS/streaming, split-screen and interactive F9/input/display remain open.
+Published cell visibility as `34e104ed`. Orientation-aware building shading passes all 18
+inspector suites (WorldMeshBuilder 358/0), native smoke 1249/0 and both x64 solution builds. VS
+mission 1 reached level 0 (6740 placements, 160/160 resources, 186 draws). RenderDoc was given
+the process PID instead of a target identifier; capture and visual inspection remain pending.
+Next: remaining models, prefetch, vehicle/on-foot, PVS/streaming, split-screen and F9/input/display;
+full scene parity remains open.
 
 - Fixed dynamic constant updates (Map/Discard), wired configured VSync and added
   conservative AABB culling against the exact homogeneous MVP. Local mission 1 baseline
@@ -86,8 +89,6 @@ Independent native PVS/streaming, split-screen and interactive F9/input/display 
   Log confirms no PsyCross GPU, 160/160 resources, 6740 placements and zero conversion
   failures. Existing missing CD-image warnings remain. Ignored performance logs live
   under `build_e00/native-performance/`; `RED2_NATIVE_PERF=1` is opt-in.
-- Inspector runner passed all 16 suites, including 41 camera/culling checks; native
-  renderer smoke passed 1200 checks. Presentation timing runner passed NTSC/PAL suites.
 - RenderDoc1.41 logs register one Vulkan surface. MCP attach/trigger needed a persistent
   local Python TargetControl connection pumping ReceiveMessage to finish capture/copy.
   Native capture: one colour/depth pass, 5300 indexed draws, 28828 triangles, empty log.
@@ -98,8 +99,8 @@ Independent native PVS/streaming, split-screen and interactive F9/input/display 
   exported. These different-tick images are not a parity comparison. The earlier Window 1 label did not prove two SDL windows; overlay unverified. Computer-control access to
   REDRIVER2_native was rejected by automatic approval review; use supported GPU/log paths.
 - Release_dev|x64 compatibility build and -opengl mission 1 launch passed; log confirms
-  OpenGL 3.3.0. Native smoke after UNORM change again passed 1200 checks. Both debug
-  sessions were stopped. Native diagnostic env is local/generated, not committed.
+  OpenGL 3.3.0. Native smoke passed 1200 checks; sessions stopped and local diagnostics
+  are not committed.
 Prior bounded parity evidence (preserved; not full acceptance):
 
 - World pipeline: `CULL_NONE`, opaque alpha / `0000h` discard, LEQUAL; legacy world colours
@@ -246,10 +247,9 @@ rendering. Use Serena for symbols, Visual Studio `Release_dev_native` for native
 `Release_dev` with `-opengl` for the legacy reference, logs and RenderDoc for GPU evidence.
 No full-stage acceptance or wholesale engine removal is implied.
 
-Official GitHub API checked again on 2026-10-10: latest published release `7.4-rc2`,
-2022-02-04; tag `8.0` resolves directly to commit `b2d8857426f815007486def9bd23f9a6007a2c64`.
-No published 8.0 release date is established. `git diff --check` passed for the checkpoint;
-existing validation above is retained as historical evidence, not rerun in this publication.
+Official [OpenDriver2 releases](https://github.com/OpenDriver2/REDRIVER2/releases) page checked
+2026-10-11: current baseline is release `8.0`, published 2026-07-02 at commit `b2d8857`.
+The 2026-10-10 API lookup below was stale; the changelog comparison baseline is `8.0...HEAD`.
 
 ## Previous task: effect timing and replay trajectory (committed as 036dfc34)
 
@@ -314,12 +314,9 @@ under `src_rebuild/build/native-renderer-r03/` do not travel with Git.
 
 ## Documentation boundary
 
-Upstream release metadata limitation: the librarian's official API check found latest
-published release `7.4-rc2` (2022-02-04). Tag `8.0` exists at
-`b2d8857426f815007486def9bd23f9a6007a2c64` (commit 2026-06-26), but a published `8.0`
-release/date 2026-07-02 is not supported by that check. This conflicts with existing
-baseline prose; historical CHANGELOG/AGENTS were not changed. The parent is adding only
-Unreleased entries and must not claim an unsupported release date.
+The previous metadata discrepancy is resolved by the official release page: release `8.0`
+at `b2d8857` was published 2026-07-02. Earlier API-limitation prose above is retained only
+as historical context; the current changelog baseline is `8.0...HEAD`.
 
 The [umbrella](roadmap/planned/engine-migration.md), [stages](engine-migration/index.md)
 and [validation](engine-migration/validation.md) own execution. PopcornFX is optional E08

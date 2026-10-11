@@ -33,6 +33,8 @@ tags: [okf, rules]
   fork submodule, generate with Premake, and build in `src_rebuild/build`.
 - [Regenerate build files after source additions](generated-build-files.md):
   generated IDE projects do not discover newly added source files on their own.
+- [Isolate MSVC object files in test runners](msvc-test-object-isolation.md):
+  route `/Fo` output to per-suite/build directories to avoid object-name collisions.
 - [Track project PsyCross changes in the fork](psycross-fork.md): commit
   submodule changes to the project fork and bump the parent gitlink.
 - [Maintain roadmap records](roadmap-lifecycle.md): planned features remain

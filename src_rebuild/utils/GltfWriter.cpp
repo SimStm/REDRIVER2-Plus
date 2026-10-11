@@ -198,11 +198,13 @@ struct PrimitivePlan
 	bool hasNormals;
 	bool hasUvs;
 	bool hasColors;
+	bool hasWorldShade;
 	bool hasIndices;
 	const float* positions;
 	const float* normals;
 	const float* uvs;
 	const unsigned char* colors;
+	const float* worldShade;
 	const unsigned int* indices;
 	size_t indexCount;
 	float baseColorFactor[4];
@@ -249,6 +251,25 @@ bool PlanPrimitive(const GltfPrimitiveData& primitive, size_t index, PrimitivePl
 		}
 		plan->hasColors = true;
 		plan->colors = primitive.colors.data();
+	}
+	plan->hasWorldShade = !primitive.worldShadeIndices.empty();
+	plan->worldShade = plan->hasWorldShade ? primitive.worldShadeIndices.data() : NULL;
+	if (plan->hasWorldShade)
+	{
+		if (primitive.worldShadeIndices.size() != (size_t)vertexCount)
+		{
+			snprintf(error, errorCapacity, "primitive %u has a world shade count that disagrees with POSITION", (unsigned)index);
+			return false;
+		}
+		for (int v = 0; v < vertexCount; ++v)
+		{
+			const float shade = plan->worldShade[v];
+			if (!(shade >= -1.0f && shade <= 31.0f) || shade != (float)(int)shade)
+			{
+				snprintf(error, errorCapacity, "primitive %u has an invalid world shade index", (unsigned)index);
+				return false;
+			}
+		}
 	}
 	plan->hasIndices = !primitive.indices.empty();
 	plan->indices = plan->hasIndices ? primitive.indices.data() : NULL;
@@ -368,6 +389,7 @@ int Gltf_WriteFileMulti(const char* path, const GltfMultiMeshData& mesh, char* e
 		int normal;
 		int uv;
 		int color;
+		int worldShade;
 		int index;
 		int image;
 	};
@@ -410,6 +432,14 @@ int Gltf_WriteFileMulti(const char* path, const GltfMultiMeshData& mesh, char* e
 			viewLengths.push_back((int)bin.size() - viewOffsets.back());
 		}
 
+		view.worldShade = -1;
+		if (plan.hasWorldShade)
+		{
+			view.worldShade = (int)viewOffsets.size();
+			viewOffsets.push_back((int)bin.size());
+			AppendFloats(bin, plan.worldShade, (size_t)plan.vertexCount);
+			viewLengths.push_back((int)bin.size() - viewOffsets.back());
+		}
 		view.index = -1;
 		if (plan.hasIndices)
 		{
@@ -450,6 +480,7 @@ int Gltf_WriteFileMulti(const char* path, const GltfMultiMeshData& mesh, char* e
 		int normal;
 		int uv;
 		int color;
+		int worldShade;
 		int index;
 	};
 	std::vector<PrimitiveAccessors> primitiveAccessors(plans.size());
@@ -462,6 +493,7 @@ int Gltf_WriteFileMulti(const char* path, const GltfMultiMeshData& mesh, char* e
 		accessor.normal = plan.hasNormals ? nextAccessor++ : -1;
 		accessor.uv = plan.hasUvs ? nextAccessor++ : -1;
 		accessor.color = plan.hasColors ? nextAccessor++ : -1;
+		accessor.worldShade = plan.hasWorldShade ? nextAccessor++ : -1;
 		accessor.index = plan.hasIndices ? nextAccessor++ : -1;
 	}
 
@@ -487,6 +519,7 @@ int Gltf_WriteFileMulti(const char* path, const GltfMultiMeshData& mesh, char* e
 		if (plan.hasNormals) { json += ",\"NORMAL\":"; json += std::to_string(accessor.normal); }
 		if (plan.hasUvs) { json += ",\"TEXCOORD_0\":"; json += std::to_string(accessor.uv); }
 		if (plan.hasColors) { json += ",\"COLOR_0\":"; json += std::to_string(accessor.color); }
+		if (plan.hasWorldShade) { json += ",\"_RED2_WORLD_SHADE\":"; json += std::to_string(accessor.worldShade); }
 		json += "}";
 		if (plan.hasIndices) { json += ",\"indices\":"; json += std::to_string(accessor.index); }
 		json += ",\"material\":";
@@ -570,6 +603,8 @@ int Gltf_WriteFileMulti(const char* path, const GltfMultiMeshData& mesh, char* e
 			json += ",{\"bufferView\":" + std::to_string(view.uv) + ",\"componentType\":5126,\"count\":" + std::to_string(plan.vertexCount) + ",\"type\":\"VEC2\"}";
 		if (plan.hasColors)
 			json += ",{\"bufferView\":" + std::to_string(view.color) + ",\"componentType\":5121,\"count\":" + std::to_string(plan.vertexCount) + ",\"type\":\"VEC4\",\"normalized\":true}";
+		if (plan.hasWorldShade)
+			json += ",{\"bufferView\":" + std::to_string(view.worldShade) + ",\"componentType\":5126,\"count\":" + std::to_string(plan.vertexCount) + ",\"type\":\"SCALAR\"}";
 		if (plan.hasIndices)
 			json += ",{\"bufferView\":" + std::to_string(view.index) + ",\"componentType\":5125,\"count\":" + std::to_string(plan.indexCount) + ",\"type\":\"SCALAR\"}";
 	}
@@ -645,6 +680,7 @@ int Gltf_WriteFile(const char* path, const GltfMeshData& mesh, char* error, int 
 	primitive.normals = mesh.normals;
 	primitive.uvs = mesh.uvs;
 	primitive.colors = mesh.colors;
+	primitive.worldShadeIndices = mesh.worldShadeIndices;
 	primitive.indices = mesh.indices;
 	for (int i = 0; i < 4; i++)
 		primitive.baseColorFactor[i] = mesh.baseColorFactor[i];

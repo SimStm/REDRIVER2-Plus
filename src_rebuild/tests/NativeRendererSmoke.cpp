@@ -849,6 +849,7 @@ static void MakeInstance(NativeInstance& instance, const char* key,
 	instance.sourceObjectIndex = sourceObjectIndex;
 	instance.modelSlot = modelSlot;
 	instance.modelRevision = modelRevision;
+	instance.worldShadeOffset = (yang >> 3) * 4;
 }
 
 // A top-down game-style camera at (0, height, 0) looking down -Y: world +X maps
@@ -2113,6 +2114,96 @@ static void TestVertexColorModulation()
 	NativeRenderer_ClearContent();
 }
 
+static void TestWorldShadeOrientation()
+{
+	NativeRenderer_ClearContent();
+	NativeRenderer_ClearInstances();
+	NativeRenderer_ClearResources();
+	const float identity[16] = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
+	NativeRenderer_SetCamera(identity, kSmokeScreenDistance);
+	NativeRenderer_SetClipPlanes(0.02f, 300.0f);
+	GltfMultiMeshData mesh;
+	GltfPrimitiveData primitive;
+	primitive.positions = { -.5f, -.5f, 0, .5f, -.5f, 0, .5f, .5f, 0, -.5f, .5f, 0 };
+	primitive.uvs = { 0, 0, 1, 0, 1, 1, 0, 1 };
+	primitive.indices = { 0, 1, 2, 0, 2, 3 };
+	primitive.colors.assign(16, 64);
+	for (int i = 0; i < 4; ++i) primitive.colors[i * 4 + 3] = 255;
+	primitive.worldShadeIndices.assign(4, 29);
+	primitive.imageRgba = { 255, 255, 255, 255 };
+	primitive.imageWidth = primitive.imageHeight = 1;
+	mesh.primitives.push_back(primitive);
+	char error[256];
+	Check(Gltf_WriteFileMulti("world-shade.glb", mesh, error, sizeof(error)) == 0,
+		"orientation fixture written with explicit world shade metadata");
+	Check(NativeRenderer_RegisterResource("world-shade", "world-shade.glb", error, sizeof(error)) == 1,
+		"orientation fixture registered once as shared geometry");
+	unsigned char palette[32 * 3];
+	for (int i = 0; i < 32 * 3; ++i) palette[i] = (unsigned char)(32 + (i / 3) * 2);
+	NativeRenderer_SetWorldShadePalette(palette);
+	NativeInstance instance = {};
+	snprintf(instance.resourceKey, sizeof(instance.resourceKey), "world-shade");
+	memcpy(instance.transform, identity, sizeof(identity));
+	instance.transform[14] = 5;
+	unsigned char image[64 * 64 * 4];
+	const int centre = (32 * 64 + 32) * 4;
+	for (int rotation = 0; rotation < 8; ++rotation)
+	{
+		instance.worldShadeOffset = rotation * 4;
+		Check(NativeRenderer_SetInstances(&instance, 1, error, sizeof(error)) == 1 &&
+			NativeRenderer_RenderSceneToRGBA(image, 64, 64, error, sizeof(error)) == 1,
+			"normal-shaded instance rendered for each original rotation group");
+		const int expected = 2 * (32 + ((rotation * 4 - 29) & 31) * 2);
+		Check(abs((int)image[centre] - expected) <= 2 && image[centre] == image[centre + 1] &&
+			image[centre] == image[centre + 2] && image[centre + 3] == 255,
+			"GPU palette lookup includes instance rotation and wraps the source normal index");
+	}
+	NativeInstance pair[2] = { instance, instance };
+	pair[0].transform[12] = -1; pair[0].worldShadeOffset = 0;
+	pair[1].transform[12] = 1; pair[1].worldShadeOffset = 16;
+	Check(NativeRenderer_SetInstances(pair, 2, error, sizeof(error)) == 1 &&
+		NativeRenderer_RenderSceneToRGBA(image, 64, 64, error, sizeof(error)) == 1,
+		"two differently oriented instances share one resource in the same frame");
+	const int left = (32 * 64 + 22) * 4, right = (32 * 64 + 42) * 4;
+	Check(abs((int)image[left] - 76) <= 2 && abs((int)image[right] - 140) <= 2,
+		"shared geometry keeps independent instance shading in the same frame");
+	instance.worldShadeOffset = 0;
+	Check(NativeRenderer_SetInstances(&instance, 1, error, sizeof(error)) == 1, "restore one shaded instance");
+	palette[3 * 3] = 100; palette[3 * 3 + 1] = 20; palette[3 * 3 + 2] = 10;
+	NativeRenderer_SetWorldShadePalette(palette);
+	memset(palette, 0, sizeof(palette)); // the API must own its copy
+	Check(NativeRenderer_RenderSceneToRGBA(image, 64, 64, error, sizeof(error)) == 1 &&
+		abs((int)image[centre] - 200) <= 2 && abs((int)image[centre + 1] - 40) <= 2 &&
+		abs((int)image[centre + 2] - 20) <= 2, "live palette copied without rebuilding geometry or retaining caller bytes");
+	instance.worldShadeOffset = 32;
+	Check(!NativeRenderer_SetInstances(&instance, 1, error, sizeof(error)) && strstr(error, "shade"),
+		"invalid instance shade offset rejected explicitly");
+	Check(NativeRenderer_RenderSceneToRGBA(image, 64, 64, error, sizeof(error)) == 1 &&
+		abs((int)image[centre] - 200) <= 2, "rejected instance update preserves the valid published scene");
+	NativeRenderer_SetWorldShadePalette(NULL);
+	Check(NativeRenderer_RenderSceneToRGBA(image, 64, 64, error, sizeof(error)) == 1 &&
+		abs((int)image[centre] - 128) <= 2, "disabled palette restores the baked vertex colour");
+	// Metadata-free and explicitly disabled corners must ignore a live palette.
+	for (int variant = 0; variant < 2; ++variant)
+	{
+		mesh.primitives[0].worldShadeIndices.assign(variant ? 4 : 0, -1);
+		Check(Gltf_WriteFileMulti("world-shade-other.glb", mesh, error, sizeof(error)) == 0 &&
+			NativeRenderer_RegisterResource("world-shade-other", "world-shade-other.glb", error, sizeof(error)) == 1,
+			"baked-only material registered with absent or disabled metadata");
+		snprintf(instance.resourceKey, sizeof(instance.resourceKey), "world-shade-other");
+		instance.worldShadeOffset = 0;
+		NativeRenderer_SetWorldShadePalette(palette);
+		Check(NativeRenderer_SetInstances(&instance, 1, error, sizeof(error)) == 1 &&
+			NativeRenderer_RenderSceneToRGBA(image, 64, 64, error, sizeof(error)) == 1 &&
+			abs((int)image[centre] - 128) <= 2, "palette cannot change metadata-free or disabled vertex colours");
+		NativeRenderer_ClearInstances();
+		NativeRenderer_UnregisterResource("world-shade-other");
+	}
+	NativeRenderer_SetWorldShadePalette(NULL);
+	NativeRenderer_ClearInstances();
+	NativeRenderer_ClearResources();
+}
+
 static void TestTriangleDraw()
 {
 	IRenderDevice* device = (IRenderDevice*)NativeRenderer_GetDevice();
@@ -2182,6 +2273,7 @@ int main()
 	TestVerticalConvention();
 	TestScreenOffset();
 	TestVertexColorModulation();
+	TestWorldShadeOrientation();
 
 	NativeRenderer_Resize(640, 480);
 	Check(NativeRenderer_RenderClearAndPresent(0.3f, 0.1f, 0.2f, 1.0f, error, sizeof(error)) == 1,

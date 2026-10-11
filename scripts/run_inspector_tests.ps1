@@ -73,7 +73,10 @@ function Invoke-Suite
 	)
 
 	$executable = Join-Path $buildDirectory "$Name.exe"
+	$runDirectory = Join-Path $workingRoot $Name
+	New-Item -ItemType Directory -Path $runDirectory | Out-Null
 	$arguments = @('/nologo', '/TP', '/EHsc', '/std:c++14', '/O2', '/Gy', '/I', 'PsyCross\include')
+	$arguments += ('/Fo"' + $runDirectory + '/"')
 	foreach ($include in $ExtraIncludes) { $arguments += @('/I', $include) }
 	$arguments += $Sources
 	$arguments += @("/Fe:$executable")
@@ -96,9 +99,6 @@ function Invoke-Suite
 		$compileOutput | ForEach-Object { Write-Host $_ }
 		throw "$Name failed to compile (exit $compileCode)."
 	}
-
-	$runDirectory = Join-Path $workingRoot $Name
-	New-Item -ItemType Directory -Path $runDirectory | Out-Null
 
 	Push-Location $runDirectory
 	try

@@ -68,6 +68,9 @@ New-Item -ItemType Directory -Path $workingRoot -Force | Out-Null
 $executable = Join-Path $workingRoot 'NativeRendererSmoke.exe'
 
 $arguments = @('/nologo', '/std:c++17', '/EHsc', '/O2', '/Gy', '/MD', '/DPLATFORM_WIN32=1', '/I', 'native')
+$objectDirectory = Join-Path $workingRoot 'obj'
+New-Item -ItemType Directory -Path $objectDirectory -Force | Out-Null
+$arguments += ('/Fo"' + $objectDirectory + '/"')
 foreach ($include in $includeDirs) { $arguments += @('/I', $include) }
 $arguments += @('tests\NativeRendererSmoke.cpp', 'native\NativeRenderer.cpp', 'utils\GltfLoader.cpp', 'utils\GltfWriter.cpp', 'utils\NativeInstanceTransform.cpp', 'utils\NativeCameraView.cpp')
 $arguments += @("/Fe:$executable")

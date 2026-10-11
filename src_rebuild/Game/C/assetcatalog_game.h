@@ -204,6 +204,10 @@ int AssetCatalogGame_GetDrawPlacements(AssetCatalogGameDrawPlacement* out, int c
    NULL/0 queries the count. Insufficient capacity returns -1, never truncates. */
 int AssetCatalogGame_GetRegionCellReferences(NativeWorldCellReference* out, int capacity);
 
+/* Read-only presentation palette: 32 RGB entries used by normal-shaded buildings.
+   Captures current original ambient/weather; no gameplay or GPU writes. */
+void AssetCatalogGame_GetWorldShadePalette(unsigned char rgb[32 * 3]);
+
 /* Bounded full-region placement store. It is sized to the native renderer's
    instance bound (NATIVE_MAX_INSTANCES); the bridge asserts the relation so a
    change to either limit fails loudly instead of truncating silently. Reaching

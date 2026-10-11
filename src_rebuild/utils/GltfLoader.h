@@ -37,6 +37,7 @@ struct GltfMeshData
 	std::vector<float> normals;				// 3 floats per vertex (may be empty)
 	std::vector<float> uvs;					// 2 floats per vertex (may be empty)
 	std::vector<unsigned char> colors;		// RGBA8, 4 bytes per vertex (may be empty)
+	std::vector<float> worldShadeIndices; // _RED2_WORLD_SHADE: -1 disabled, otherwise integer 0..31
 	std::vector<unsigned int> indices;		// triangle list (may be empty -> non-indexed)
 
 	std::vector<unsigned char> baseColorRGBA;	// width*height*4, may be empty
@@ -99,6 +100,7 @@ struct GltfPrimitiveData
 	std::vector<float> normals;				// 3 floats per vertex (may be empty)
 	std::vector<float> uvs;					// 2 floats per vertex (may be empty)
 	std::vector<unsigned char> colors;		// RGBA8, 4 bytes per vertex (may be empty)
+	std::vector<float> worldShadeIndices; // _RED2_WORLD_SHADE: -1 disabled, otherwise integer 0..31
 	std::vector<unsigned int> indices;		// triangle list (may be empty -> non-indexed)
 
 	std::vector<unsigned char> imageRgba;	// RGBA8 row-major, width*height*4, may be empty

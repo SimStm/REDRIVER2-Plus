@@ -9,6 +9,7 @@
 // Build and run instructions are in tests/README.md.
 
 #include "../utils/WorldMeshBuilder.h"
+#include "../utils/WorldShadePalette.h"
 #include "../utils/GltfWriter.h"
 #include "../utils/GltfLoader.h"
 #include "../utils/AssetConverter.h"
@@ -884,8 +885,46 @@ static void TestDecodedCyclicQuadCoverage()
 	}
 }
 
+static void TestWorldShadeMetadata()
+{
+	SourceMesh source = MakePlainQuad();
+	const float shades[4] = { 0, 4, 31, -1 };
+	GltfMultiMeshData mesh;
+	WorldMeshBuilderResult result;
+	char error[256];
+	CHECK(WorldMeshBuilder_BuildMulti(source, &mesh, &result, error, sizeof(error),
+		NULL, 0, NULL, 0, shades, 4) == WORLD_MESH_ERROR_NONE);
+	CHECK(mesh.primitives.size() == 1);
+	if (!mesh.primitives.empty())
+		CHECK(mesh.primitives[0].worldShadeIndices == std::vector<float>({0, 4, 31, 0, 31, -1}));
+	CHECK(WorldMeshBuilder_BuildMulti(source, &mesh, &result, error, sizeof(error),
+		NULL, 0, NULL, 0, shades, 3) == WORLD_MESH_ERROR_ATTRIBUTE_SIZE && mesh.primitives.empty());
+	CHECK(WorldMeshBuilder_BuildMulti(source, &mesh, &result, error, sizeof(error),
+		NULL, 0, NULL, 0, NULL, 4) == WORLD_MESH_ERROR_ATTRIBUTE_SIZE && mesh.primitives.empty());
+	const float invalid[4] = { 0, 32, 31, -1 };
+	CHECK(WorldMeshBuilder_BuildMulti(source, &mesh, &result, error, sizeof(error),
+		NULL, 0, NULL, 0, invalid, 4) == WORLD_MESH_ERROR_ATTRIBUTE_SIZE && mesh.primitives.empty());
+}
+
+static void TestWorldShadePaletteRgbOrder()
+{
+	const unsigned int planes[8] = {
+		0x00123456, 0x006789AB, 0x00CDEF01, 0x00234567,
+		0x0089ABCD, 0x00FEDCBA, 0x00456789, 0x00ABCDEF
+	};
+	unsigned char palette[32 * 3] = {};
+	WorldShadePalette_WriteRgb(planes, palette);
+	CHECK(palette[0] == 0x12 && palette[1] == 0x34 && palette[2] == 0x56);
+	CHECK(palette[3] == 0x12 && palette[4] == 0x34 && palette[5] == 0x56);
+	CHECK(palette[6] == 0xFE && palette[7] == 0xDC && palette[8] == 0xBA);
+	CHECK(palette[9] == 0x12 && palette[10] == 0x34 && palette[11] == 0x56);
+	CHECK(palette[12] == 0x67 && palette[13] == 0x89 && palette[14] == 0xAB);
+}
+
 int main()
 {
+	TestWorldShadeMetadata();
+	TestWorldShadePaletteRgbOrder();
 	TestFlatNormals();
 	TestFlatNormalOfVerticalTriangle();
 	TestBaseColor();

@@ -7,7 +7,7 @@ tags: [okf, status]
 
 # Current status
 
-> Updated: 2026-10-10.
+> Updated: 2026-10-11.
 > Source of truth for implemented surfaces on the current branch; verify source/Git.
 > [RECENT_CONTEXT](RECENT_CONTEXT.md) records the next task and session handoff.
 
@@ -127,8 +127,8 @@ accepted.
   F9 draw distance is enabled with the original cell-count/PVS/event meaning. Selection
   tests 15/0, all 18 suites passed. At tick 30, 441/1800 selects 155/233 instances with
   the same camera; GPU captures 308/461 draws, zero messages. Independent native selection,
-  split-screen and full event-mode coverage remain open. The next material correction is
-  per-instance building shading: the current bake fixes rotation at zero; source drawing does not.
+  split-screen and full event-mode coverage remain open. Building shading now retains per-vertex
+  legacy buckets and applies each instance's original yaw group; full visual parity remains open.
 - Native performance follow-up (2026-10-10): dynamic constants use Map/Discard, window
   Present honors configured VSync, and conservative homogeneous AABB culling removes
   invisible instance draws. Opt-in `RED2_NATIVE_PERF=1` records CPU phases, draw/cull counts
@@ -167,11 +167,11 @@ accepted.
   resident VRAM at prepare, deduplicates page/CLUT images (64 images / 16 MiB), and keys baked
   pixels. Native sampling is RGBA8_UNORM NEAREST/CLAMP, raw UVs scaled once by 1/256, with a
   white untextured texel. Later-resident pages and full streaming remain outside this snapshot.
-- Uncommitted parity corrections: world draws use `CULL_NONE`, opaque alpha with `0000h`
-  discard, and LEQUAL depth. Legacy world shading is baked into COLOR_0, with scale 2 in the
-  shader; shading bytes participate in conversion hashes. This supersedes the earlier universal
-  straight-alpha world blend and mean-face-colour description; dynamic/per-frame lighting and
-  PSX additive/subtractive modes are not accepted by this bounded bake.
+- Working-tree native world shading correction: world draws use `CULL_NONE`, opaque alpha with `0000h`
+  discard, and LEQUAL depth. Normal-shaded building corners retain `_RED2_WORLD_SHADE` in GLBs
+  and cache hashes; each instance applies its legacy yaw bucket to the live 32-entry RGB palette.
+  Combo/tile/sprite content retains its baked path. Palette bytes match the packed-colour RGB
+  order; PSX additive/subtractive modes and complete scene parity remain open.
 - Region capacities are now 1024 resources / 8192 placements, with explicit truncation and
   failed-resource diagnostics. Camera projection consumes live GTE `scr_z`/`ofx`/`ofy` rather
   than a fixed FOV. The observed scenario prepares six distinct LOD and four tile high-detail
@@ -334,9 +334,9 @@ govern support.
 
 ## Knowledge and validation state
 
-English documentation separates planned intent, product behavior, completion records and dated change evidence.
-[Migration validation](engine-migration/validation.md) requires deterministic mechanics, conversion inventories
-and targeted native resources/pixels/audio, with actual budgets and platform scope.
+English documentation separates intent, product behavior, completion records and dated evidence. MSVC inspector
+and native smoke runners isolate object files by suite/build. [Migration validation](engine-migration/validation.md)
+requires deterministic mechanics, conversion inventories and targeted native resource/pixel/audio evidence.
 
 The planning-only validation is recorded in
 [its change record](changes/2026-10-08/engine-migration-plan/index.md). Subsequent E00-E04 and complementary fixes

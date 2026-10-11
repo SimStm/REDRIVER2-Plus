@@ -274,7 +274,8 @@ int WorldMeshBuilder_Build(const SourceMesh& source, GltfMeshData* out,
 int WorldMeshBuilder_BuildMulti(const SourceMesh& source, GltfMultiMeshData* out,
 	WorldMeshBuilderResult* result, char* error, int capacity,
 	const WorldSubmeshImage* images, int imageCount,
-	const unsigned char* vertexColorsRgb, size_t vertexColorBytes)
+	const unsigned char* vertexColorsRgb, size_t vertexColorBytes,
+	const float* worldShadeIndices, size_t worldShadeCount)
 {
 	if (error && capacity > 0)
 		error[0] = '\0';
@@ -297,6 +298,19 @@ int WorldMeshBuilder_BuildMulti(const SourceMesh& source, GltfMultiMeshData* out
 			"the source position array is not a whole number of vertices");
 
 	const int vertexCount = (int)(source.positions.size() / 3);
+	if (worldShadeIndices || worldShadeCount)
+	{
+		if (!worldShadeIndices || worldShadeCount != (size_t)vertexCount)
+			return (int)Fail(result, error, capacity, WORLD_MESH_ERROR_ATTRIBUTE_SIZE,
+				"world shade count does not match the vertex count");
+		for (size_t v = 0; v < worldShadeCount; ++v)
+		{
+			const float shade = worldShadeIndices[v];
+			if (!(shade >= -1.0f && shade <= 31.0f) || shade != (float)(int)shade)
+				return (int)Fail(result, error, capacity, WORLD_MESH_ERROR_ATTRIBUTE_SIZE,
+					"invalid world shade index");
+		}
+	}
 
 	// UVs are required per vertex in this pipeline; colours are either absent or
 	// one global RGB array with per-submesh presence flags.
@@ -433,6 +447,8 @@ int WorldMeshBuilder_BuildMulti(const SourceMesh& source, GltfMultiMeshData* out
 			for (int corner = 0; corner < 3; ++corner)
 			{
 				const unsigned int vertex = corners[corner];
+				if (worldShadeIndices)
+					primitive.worldShadeIndices.push_back(worldShadeIndices[vertex]);
 				primitive.positions.push_back(source.positions[(size_t)vertex * 3 + 0]);
 				primitive.positions.push_back(source.positions[(size_t)vertex * 3 + 1]);
 				primitive.positions.push_back(source.positions[(size_t)vertex * 3 + 2]);

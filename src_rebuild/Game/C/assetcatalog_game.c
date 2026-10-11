@@ -27,6 +27,8 @@
 #include <vector>
 
 #ifdef _WIN32
+
+#include "../../utils/WorldShadePalette.h"
 #include <direct.h>
 #include <stdarg.h>
 #include <future>
@@ -1115,6 +1117,16 @@ static void LegacyWriteRgb(std::vector<unsigned char>& out, unsigned int vertex,
 	out[(size_t)vertex * 3 + 2] = (unsigned char)(colour & 0xFF);
 }
 
+// Copies the source's live legacy palette to RGB bytes for the native renderer.
+void AssetCatalogGame_GetWorldShadePalette(unsigned char rgb[32 * 3])
+{
+	if (!rgb)
+		return;
+	u_int planes[8];
+	LegacyComputePlaneColours(LegacyAmbient(), planes);
+	WorldShadePalette_WriteRgb(planes, rgb);
+}
+
 // Builds one legacy-shaded RGB triple per source vertex. Returns false when the
 // model is a sprite (it keeps the historical base-colour-factor behaviour) or
 // when the decode carried no shading metadata, so the caller passes no override.
@@ -1186,9 +1198,36 @@ static bool LegacyComputeWorldColors(const SourceMesh& source, const MODEL* mode
 	return true;
 }
 
-// Converts one resident model slot and registers its published resource. The
-// caller owns the request gating; this is the shared core of the
-// `-convertmodel` flag and the `-drawmodel` preparation.
+// Presentation metadata only; the original normal bucket remains immutable.
+static void CaptureWorldShadeIndices(const SourceMesh& source, const MODEL* model,
+	std::vector<float>& out)
+{
+	const bool normalShadedBuilding = !(model->shape_flags &
+		(SHAPE_FLAG_SPRITE | SHAPE_FLAG_WATER | SHAPE_FLAG_TILE)) &&
+		!(model->flags2 & (MODEL_FLAG_PATH | MODEL_FLAG_GRASS));
+	if (normalShadedBuilding && source.shadeIndices.size() == source.positions.size() / 3)
+	{
+		out.assign(source.shadeIndices.size(), -1.0f);
+		bool hasNormalShade = false;
+		for (size_t s = 0; s < source.submeshes.size(); ++s)
+		{
+			const SourceSubmesh& submesh = source.submeshes[s];
+			if (LegacyClassUsesCombo(submesh.primitiveClass))
+				continue;
+			for (unsigned int k = submesh.firstIndex; k < submesh.firstIndex + submesh.indexCount; ++k)
+			{
+				const unsigned int vertex = source.indices[k];
+				out[vertex] = (float)source.shadeIndices[vertex];
+				hasNormalShade = true;
+			}
+		}
+		if (!hasNormalShade)
+			out.clear();
+	}
+}
+
+// Converts one resident model slot and registers its resource. The caller owns
+// request gating; this is shared by `-convertmodel` and `-drawmodel` preparation.
 static bool ConvertModelSlot(int slot, char* status, int statusCapacity)
 {
 	s_conversionPending = false;
@@ -1322,6 +1361,7 @@ static bool ConvertModelSlot(int slot, char* status, int statusCapacity)
 	TextureBake_BakeModel(source, &bake);
 	std::shared_ptr<WorldMeshConversionInput> input(new WorldMeshConversionInput);
 	LegacyComputeWorldColors(source, model, input->legacyColors);
+	CaptureWorldShadeIndices(source, model, input->worldShadeIndices);
 	input->source = std::move(source);
 	for (size_t i = 0; i < bake.images.size(); ++i)
 	{
@@ -2375,6 +2415,12 @@ int AssetCatalogGame_UpdateRegionDraw(char* status, int statusCapacity)
 
 #else // !_WIN32
 
+void AssetCatalogGame_GetWorldShadePalette(unsigned char rgb[32 * 3])
+{
+	if (rgb)
+		memset(rgb, 0, 32 * 3);
+}
+
 bool AssetCatalogGame_ReconcileLevel(char* status, int statusCapacity)
 {
 	if (status != NULL && statusCapacity > 0)
@@ -2693,6 +2739,12 @@ int AssetCatalogGame_GetRegionCellReferences(NativeWorldCellReference* out, int 
 	(void)out;
 	(void)capacity;
 	return 0;
+}
+
+void AssetCatalogGame_GetWorldShadePalette(unsigned char rgb[32 * 3])
+{
+	if (rgb)
+		memset(rgb, 0, 32 * 3);
 }
 
 bool AssetCatalogGame_GetRegionDrawPlacement(int index, AssetCatalogGameDrawPlacement* out)

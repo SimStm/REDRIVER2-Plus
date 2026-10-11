@@ -128,6 +128,16 @@ static int PublishMultiMesh(const char* cacheDirectory, const ConversionCacheKey
 		return ASSET_CONVERTER_ERR_VERIFY;
 	}
 
+	for (size_t p = 0; p < mesh.primitives.size(); ++p)
+	{
+		if (verified.primitives[p].worldShadeIndices != mesh.primitives[p].worldShadeIndices)
+		{
+			remove(temporary);
+			if (error && errorCapacity > 0)
+				snprintf(error, errorCapacity, "the converted GLB lost world shading metadata");
+			return ASSET_CONVERTER_ERR_VERIFY;
+		}
+	}
 	if (!ReadWholeFileBytes(temporary, bytes))
 	{
 		remove(temporary);
@@ -195,13 +205,24 @@ unsigned long long OptionsHash(const WorldMeshConversionInput& input)
 		}
 		imageHash = stream.value;
 	}
-	if (input.legacyColors.empty())
-		return imageHash;
-	HashStream stream;
-	stream.byte(0xA5);
-	stream.number(imageHash, 8);
-	stream.bytes(input.legacyColors.data(), input.legacyColors.size());
-	return stream.value;
+	if (!input.legacyColors.empty())
+	{
+		HashStream stream;
+		stream.byte(0xA5);
+		stream.number(imageHash, 8);
+		stream.bytes(input.legacyColors.data(), input.legacyColors.size());
+		imageHash = stream.value;
+	}
+	if (!input.worldShadeIndices.empty())
+	{
+		HashStream stream;
+		stream.byte(0xB6); // versioned meaning: explicit per-corner world shade indices
+		stream.number(imageHash, 8);
+		for (size_t v = 0; v < input.worldShadeIndices.size(); ++v)
+			stream.byte((unsigned char)((int)input.worldShadeIndices[v] + 1));
+		imageHash = stream.value;
+	}
+	return imageHash;
 }
 
 std::mutex s_publishMutex;
@@ -271,7 +292,9 @@ int WorldMeshConversion_Publish(const char* cacheDirectory, const WorldMeshConve
 	if (WorldMeshBuilder_BuildMulti(input.source, &mesh, &out->built, error, errorCapacity,
 									images.empty() ? NULL : images.data(), (int)images.size(),
 									input.legacyColors.empty() ? NULL : input.legacyColors.data(),
-									input.legacyColors.size()) != WORLD_MESH_ERROR_NONE)
+									input.legacyColors.size(),
+									input.worldShadeIndices.empty() ? NULL : input.worldShadeIndices.data(),
+									input.worldShadeIndices.size()) != WORLD_MESH_ERROR_NONE)
 		return ASSET_CONVERTER_ERR_ARGUMENT;
 	out->sourceHash = HashSourceMesh(input.source);
 	ConversionCacheKey key;

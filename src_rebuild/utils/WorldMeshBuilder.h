@@ -162,7 +162,8 @@ int WorldMeshBuilder_Build(const SourceMesh& source, GltfMeshData* out,
 int WorldMeshBuilder_BuildMulti(const SourceMesh& source, GltfMultiMeshData* out,
 	WorldMeshBuilderResult* result, char* error, int capacity,
 	const WorldSubmeshImage* images = NULL, int imageCount = 0,
-	const unsigned char* vertexColorsRgb = NULL, size_t vertexColorBytes = 0);
+	const unsigned char* vertexColorsRgb = NULL, size_t vertexColorBytes = 0,
+	const float* worldShadeIndices = NULL, size_t worldShadeCount = 0);
 
 /* Human-readable name of a build error code. */
 const char* WorldMeshBuilder_ErrorName(WorldMeshBuilderError error);

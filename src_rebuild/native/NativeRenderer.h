@@ -126,8 +126,9 @@
 /* One instance submission. `resourceKey` is the canonical text key of a
    registered resource (Game/C/conversioncache.h FormatKey). `transform` is the
    column-major world matrix (utils/NativeInstanceTransform.h composes the game
-   Translate * RotY placement). The integer fields are diagnostics only: the
-   renderer is game-agnostic and never interprets them. */
+   Translate * RotY placement). The resource/cell identity integers are
+   diagnostics; `worldShadeOffset` is presentation data used by the shader to
+   select the placement's legacy world-shading orientation. */
 typedef struct NativeInstance
 {
 	char resourceKey[NATIVE_RESOURCE_KEY_CAPACITY];
@@ -137,6 +138,7 @@ typedef struct NativeInstance
 	int sourceObjectIndex;
 	int modelSlot;
 	int modelRevision;
+	int worldShadeOffset; // presentation-only: 0,4,...,28; indexes _RED2_WORLD_SHADE palette
 } NativeInstance;
 
 #ifdef __cplusplus
@@ -165,6 +167,10 @@ typedef struct NativeFrameStats
 	unsigned int swapChainBuffers;
 } NativeFrameStats;
 void NativeRenderer_GetFrameStats(NativeFrameStats* stats);
+
+/* Copies the 32-entry RGB8 original-world shading palette. NULL disables the
+   lookup and restores baked COLOR_0. Metadata-free content never uses it. */
+void NativeRenderer_SetWorldShadePalette(const unsigned char* rgb);
 
 /* Presentation only; applied by the next window Present (default enabled). */
 void NativeRenderer_SetVSync(int enabled);
