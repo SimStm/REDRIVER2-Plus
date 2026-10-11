@@ -1719,22 +1719,24 @@ bool Cars_GetNativeSourceIdentity(int carId, NativeCarSourceIdentity* out)
 	out->model = model; out->palette = car.ap.palette;
 	out->revision = s_nativeCarModelRevision[model];
 	out->cleanModel = gCarCleanModelPtr[model];
+	out->lowModel = gCarLowModelPtr[model];
 	return true;
 }
 
-bool Cars_CaptureNativeBody(int carId, WorldMeshConversionInput* out, char* error, int capacity)
+bool Cars_CaptureNativeBody(int carId, bool lowDetail, NativeCarBodyCapture* out, char* error, int capacity)
 {
 	NativeCarSourceIdentity identity = {};
 	if (!out || !Cars_GetNativeSourceIdentity(carId, &identity))
 	{
-		if (out) *out = WorldMeshConversionInput();
+		if (out) *out = NativeCarBodyCapture();
 		if (error && capacity > 0) snprintf(error, capacity, "original car body is not resident");
 		return false;
 	}
-	*out = WorldMeshConversionInput();
-	const MODEL* clean = identity.cleanModel;
-	const CAR_MODEL& model = NewCarModel[identity.model];
-	if (clean->num_vertices <= 0 || clean->num_vertices > MAX_DENTING_VERTS ||
+	*out = NativeCarBodyCapture();
+	out->lowDetail = lowDetail;
+	const MODEL* clean = lowDetail ? identity.lowModel : identity.cleanModel;
+	const CAR_MODEL& model = lowDetail ? NewLowCarModel[identity.model] : NewCarModel[identity.model];
+	if (!clean || clean->num_vertices <= 0 || clean->num_vertices > MAX_DENTING_VERTS ||
 		model.numFT3 < 0 || model.numGT3 < 0 || model.numB3 < 0 ||
 		model.numFT3 > 1024 || model.numGT3 > 1024 || model.numB3 > 1024 ||
 		model.numFT3 + model.numGT3 + model.numB3 > 1024 ||
@@ -1766,6 +1768,14 @@ bool Cars_CaptureNativeBody(int carId, WorldMeshConversionInput* out, char* erro
 			triangle.textured = list != 2;
 			if (triangle.textured)
 			{
+				const int damageCapacity = lowDetail ? MAX_DENTING_LOD_UVS : MAX_DENTING_UVS;
+				if (polygon.originalindex < 0 || polygon.originalindex >= damageCapacity)
+				{
+					if (error && capacity > 0) snprintf(error, capacity, "original car damage polygon index is invalid");
+					return false;
+				}
+				triangle.originalIndex = (unsigned)polygon.originalindex;
+				triangle.paletteClut = list == 1;
 				triangle.tpage = (unsigned short)((unsigned int)polygon.tpage_uv1 >> 16);
 				triangle.clut = (unsigned short)((unsigned int)polygon.clut_uv0 >> 16);
 				if (list == 1)
@@ -1791,7 +1801,60 @@ bool Cars_CaptureNativeBody(int carId, WorldMeshConversionInput* out, char* erro
 	}
 	std::vector<unsigned short> vram(1024u * 512u);
 	GR_ReadVRAM(vram.data(), 0, 0, 1024, 512);
-	return NativeCarMesh_Capture(positions, triangles, vram, out, error, capacity);
+	return NativeCarMesh_Capture(positions, triangles, vram, &out->conversion, error, capacity, &out->bindings);
+}
+
+bool Cars_GetNativeBodyLowDetail(int carId, bool* lowDetail)
+{
+	NativeCarSourceIdentity identity = {};
+	if (!lowDetail || !Cars_GetNativeSourceIdentity(carId, &identity)) return false;
+	const CAR_DATA& car = car_data[carId];
+	int position[3] = { car.hd.where.t[0], car.hd.where.t[1], car.hd.where.t[2] };
+	VisualSnapshot_GetPosition(carId, VisualSnapshot_GetAlpha(), position);
+	VECTOR relative = { position[0] - camera_position.vx, -position[1] - camera_position.vy,
+		position[2] - camera_position.vz, 0 };
+	// Desktop implementation only reads inv_camera_matrix and the local vector.
+	Apply_Inv_CameraMatrix(&relative);
+	*lowDetail = NativeCarMesh_SelectLowDetail(relative.vz, CAR_LOD_SWITCH_DISTANCE,
+		gForceLowDetailCars != 0, car.controlType == CONTROL_TYPE_PLAYER);
+	return true;
+}
+
+bool Cars_CaptureNativeDamage(int carId, const NativeCarBodyCapture& capture,
+	std::vector<float>* xyz, std::vector<float>* uvs, char* error, int capacity)
+{
+	NativeCarSourceIdentity identity = {};
+	if (!Cars_GetNativeSourceIdentity(carId, &identity))
+	{
+		if (xyz) xyz->clear();
+		if (uvs) uvs->clear();
+		if (error && capacity > 0) snprintf(error, capacity, "original per-car damage source is not resident");
+		return false;
+	}
+	const MODEL* source = capture.lowDetail ? identity.lowModel : identity.cleanModel;
+	const int damageSlot = car_data[carId].id;
+	if (damageSlot < 0 || damageSlot >= MAX_CARS || !source || source->num_vertices <= 0 || source->num_vertices > MAX_DENTING_VERTS)
+	{
+		if (xyz) xyz->clear();
+		if (uvs) uvs->clear();
+		if (error && capacity > 0) snprintf(error, capacity, "original per-car damage vertex inventory is invalid");
+		return false;
+	}
+	const SVECTOR* vertices = capture.lowDetail ? GET_MODEL_DATA(SVECTOR, const_cast<MODEL*>(source), vertices) : gTempCarVertDump[damageSlot];
+	std::vector<float> positions;
+	positions.reserve((size_t)source->num_vertices * 3);
+	for (int v = 0; v < source->num_vertices; ++v)
+	{
+		positions.push_back((float)vertices[v].vx);
+		positions.push_back((float)vertices[v].vy);
+		positions.push_back((float)vertices[v].vz);
+	}
+	const int count = capture.lowDetail ? MAX_DENTING_LOD_UVS : MAX_DENTING_UVS;
+	const DENTUVS* bytes = capture.lowDetail ? gTempLDCarUVDump[damageSlot] : gTempHDCarUVDump[damageSlot];
+	std::vector<unsigned char> damage;
+	damage.reserve(count);
+	for (int p = 0; p < count; ++p) damage.push_back((unsigned char)bytes[p].u3);
+	return NativeCarMesh_ExpandDamage(capture, positions, damage, xyz, uvs, error, capacity);
 }
 
 bool Cars_GetNativeTransform(int carId, float out[16])

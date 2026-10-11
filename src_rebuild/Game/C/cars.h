@@ -1,6 +1,10 @@
 #ifndef CARS_H
 #define CARS_H
 
+#if defined(_WIN32) && !defined(PSX)
+#include <vector>
+#endif
+
 
 #define CAR_INDEX(cp)  (int)(cp-car_data)
 
@@ -49,10 +53,14 @@ char* LoadCarModelFromFile(char* dest, int modelNumber, int type);
 #ifdef _WIN32
 struct WorldMeshConversionInput;
 struct NativeCarSourceIdentity;
+struct NativeCarBodyCapture;
 struct NativeWheelSourceIdentity;
 struct NativeWheelCapture;
 bool Cars_GetNativeSourceIdentity(int carId, NativeCarSourceIdentity* out);
-bool Cars_CaptureNativeBody(int carId, WorldMeshConversionInput* out, char* error, int capacity);
+bool Cars_CaptureNativeBody(int carId, bool lowDetail, NativeCarBodyCapture* out, char* error, int capacity);
+bool Cars_GetNativeBodyLowDetail(int carId, bool* lowDetail);
+bool Cars_CaptureNativeDamage(int carId, const NativeCarBodyCapture& capture,
+	std::vector<float>* xyz, std::vector<float>* uvs, char* error, int capacity);
 bool Cars_GetNativeTransform(int carId, float out[16]);
 bool Cars_GetNativeWheelSource(int carId, int wheelSlot, NativeWheelSourceIdentity* out);
 bool Cars_CaptureNativeWheel(int carId, int wheelSlot, NativeWheelCapture* out, char* error, int capacity);

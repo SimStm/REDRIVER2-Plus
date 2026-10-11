@@ -17,7 +17,7 @@ source identity coverage; it does not resolve every unknown material classificat
 - All 20 inspector suites passed, including the production-linked PL10/PL11 texture-key
   regression, `NativeCarMeshTests` and `NativePedMeshTests`. `NativeRendererSmoke` passed 1,274
   checks with zero failures. Isolated x64 `Release_dev_native` and reference `Release_dev` builds
-  succeeded with the existing LNK4098 warning.
+  succeeded. The separate reference OpenGL startup reached asset loading and was stopped cleanly.
 - Chicago mission 50 launched with `-mission 50 -drawregion -nointro -nofmv`. Logs showed the
   player car (`playerCar=0`) and 14/14 cars and 56/56 wheels ready/submitted. The world reported
   193 resources and 8,890 placements. At capture the HUD showed 12 active pedestrians, 2 ready,
@@ -34,9 +34,10 @@ source identity coverage; it does not resolve every unknown material classificat
   `.vcxproj.user` profile match pre-run SHA-256 values.
 
 This is bounded Chicago TAD evidence, not full city or engine-migration acceptance. Complete
-pedestrian coverage, damage, story missions, on-foot views, additional cities and scene parity remain open.
+pedestrian coverage, damage, story missions, on-foot views, full city/streamed-route coverage and
+scene parity remain open.
 
-## Follow-up: dynamic wheels, pedestrian submission, and diagnostic HUD
+## Follow-up: dynamic wheels, pedestrians, damage updates, and diagnostic HUD
 
 The text-only `RED2_NATIVE_VISUAL_DEBUG=1` HUD runs on the existing overlay independently of F9
 and does not capture input. Wheel positions update from current actor transforms; source snapshots
@@ -49,6 +50,26 @@ data is converted off-thread, then dynamic XYZ/UV is updated before shared insta
 It is bounded to 28 actor slots, 24 components each, and 4,096 expanded corners. Legacy animation
 ownership and interpolation remain outside the native system.
 
-Focused CPU/GPU tests and both x64 builds passed as detailed above. The corrected mission 50 capture
-shows player-car identity and a submitted civilian, with limited counts and image evidence. Full
-pedestrian coverage, player input, damage, lighting and broader city coverage remain outstanding.
+Per-car, per-LOD bodies now update expanded vertex positions and packed UVs from the original dent
+arrays before the shared scene submission. Owned corner bindings preserve polygon identity; cold
+conversion builds bounded page/CLUT atlases and stable frames update dynamic XYZ/UV. Focused tests
+cover packet carry, LOD choice, point/bilinear atlas edges, bounds and atomic rejection. The original
+car damage event was not triggered during Chicago or Havana capture, so visible damage is not yet
+verified. Legacy car-body lighting remains open.
+
+The corrected mission 50 capture shows player-car identity and a submitted civilian, with limited
+counts and image evidence. The source-supported alternate TAD sample is mission 52 (`-mission 52`):
+the first `-level 1 -mission 50` attempt loaded city 0 because mission 50's header replaces the
+requested level. Mission 52 reported level 1 and 430 models / 452 textures; its RenderDoc PNG shows
+Havana streets, buildings and vehicles. This is an additional bounded city sample, not complete
+Havana or streamed-route coverage.
+
+The latest validation passed all 21 inspector suites and 1,285 GPU-smoke checks; isolated native and
+reference x64 builds succeeded. The first MSBuild attempt failed MSB8052; final commands used
+v145/v180 CLI overrides. Chicago damage-run capture `native-car-damage-chicago-20261011.rdc`
+replayed 703 draws; Havana mission 52 capture `native-car-damage-havana52-20261011.rdc` replayed
+959. Both had zero RenderDoc debug messages, and neither emitted a damage-change event.
+
+The user reports entering the car and moving successfully (2026-10-11), but did not specify backend
+or confirm controlled Tanner visibility on foot. Full pedestrian coverage, player-exit/on-foot proof,
+visual damage, lighting and broader city coverage remain outstanding.

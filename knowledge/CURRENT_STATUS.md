@@ -13,7 +13,7 @@ tags: [okf, status]
 
 ## Branch and adopted plan
 
-`feat/new-engine` checkpoint `035aded0` is published; native progress is documented below.
+`feat/new-engine` checkpoint `2db149f9` is published; native progress is documented below.
 No migration-stage acceptance follows from publication. Serena selects the C++ language
 server; generated state and proprietary assets/SDKs are not included.
 
@@ -168,21 +168,21 @@ accepted.
   pixels. Native sampling is RGBA8_UNORM NEAREST/CLAMP, raw UVs scaled once by 1/256, with a
   white untextured texel. Later-resident pages and full streaming remain outside this snapshot.
 - Native scene corrections: world draws use `CULL_NONE`, `0000h` alpha discard and LEQUAL depth;
-  building shade metadata selects the live RGB palette by original yaw. `texture.c` links declared
-  PL10/11 texture keys through the shared helper. Mission 50 Chicago TAD now submits the player car,
-  dynamic wheels, and a bounded sample of original pedestrian meshes; damage, lighting and full
-  pedestrian/city coverage remain open.
+  building shade metadata selects the live RGB palette by original yaw; `texture.c` links PL10/11
+  keys through the shared helper. TAD50 Chicago and TAD52 Havana show original regions and sampled
+  actors (14 cars/56 wheels Chicago; 12/48 Havana). Damage positions/packed UVs are implemented,
+  but no damaged car was captured. City/pedestrian coverage and lighting remain open.
 - Region capacities are 1024 resources / 16384 placements with truncation/failure diagnostics;
   projection uses live GTE `scr_z`/`ofx`/`ofy` and bounded LOD/tile-HD key selection.
 - Opt-in `RED2_NATIVE_VISUAL_DEBUG=1` draws text on the existing overlay, independent of F9 and
   input capture. Mission 50 showed 14/14 cars, 56/56 wheels, and HUD counters for pedestrians;
   one `CIVILIAN` was submitted at capture and four reached ready over the session. Wheel uploads
   use a 4096-vertex cap; source mismatch retries and black quads/cache colors are preserved.
-  Selected counts are CPU-side. Pedestrian control, complete pedestrian/city coverage, damage,
-  lighting and parity remain open. Full inspector/GPU tests and both x64 builds passed; reference
-  OpenGL startup ran. [Details](product/native-renderer-performance.md); local profiles/INIs are unchanged.
-  Ped capture preserves legacy CPU pose and `head_pos`; owned components convert off-thread,
-  dynamic XYZ/UV update before combined publish (28 slots, 24 parts, 4096 corners). Animation stays legacy.
+  Selected counts are CPU-side; pedestrian control, full coverage, visible damage, lighting and
+  parity remain open. Full tests and both x64 builds passed; OpenGL startup passed earlier. See
+  [details](product/native-renderer-performance.md); local profiles/INIs are unchanged. Ped
+  captures preserve legacy CPU pose/`head_pos`; owned components convert off-thread, dynamic XYZ/UV
+  update before shared publication (28 slots, 24 parts, 4096 corners); animation stays legacy.
 - Existing magenta/cutout probes are diagnostics only. Earlier quad comparisons reduced
   clear-background pixels from 102440 to 1733; these bounded captures do not establish parity.
 - Source-proven quad correction: cyclic raw A,B,C,D remains stored A,B,D,C with unchanged

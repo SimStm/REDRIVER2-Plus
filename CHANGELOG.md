@@ -11,9 +11,10 @@ where release policy permits it.
 ### Added
 
 - Native region drawing submits resident original car bodies, dynamically positioned wheels, and
-  sampled native pedestrian meshes. A Chicago mission 50 capture showed the submitted player car,
-  56 wheel instances and a civilian pedestrian; player input, all pedestrians, damage, lighting
-  and complete scene coverage remain unverified or incomplete.
+  sampled native pedestrian meshes. Native car bodies now update per-car dent positions and packed
+  texture coordinates through bounded dynamic resources. Chicago mission 50 and Havana mission 52
+  captures show separate original city scenes; visual damage, player input, all pedestrians,
+  lighting and complete scene coverage remain unverified or incomplete.
 - Added the default-off `RED2_NATIVE_VISUAL_DEBUG=1` text HUD on the existing overlay. It reports
   world, car, wheel and pedestrian lifecycle counters; it does not capture input or establish
   final GPU visibility.

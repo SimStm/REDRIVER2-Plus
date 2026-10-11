@@ -123,18 +123,18 @@ none hidden/waiting/failed/missing, plus 200/200 world resources and 8,876 place
 failed, unresolved or truncated placements. RenderDoc 1.41 capture `native-car-pose-20261011.rdc`
 replayed 1,036 draws/6,706 triangles with zero debug messages. The inspected PNG shows the player
 body, traffic, road and buildings. Steady samples at ticks 2,481–2,903 reported 30/31 ticks and
-zero drops, excluding capture/debug pauses. This was Take A Drive, not a story-mission run. Wheels,
-damage, pedestrians and on-foot/story views remain unvalidated or incomplete; this is not parity.
+zero drops, excluding capture/debug pauses. This was Take A Drive, not a story-mission run. Later
+wheel, pedestrian and damage follow-ups are recorded below; this capture is not a parity claim.
 
 The source catalog extracts texture set/index keys from declared polygon types 10 and 11 through
 the same helper used by production classification; a focused `AssetCatalogTests` case covers those
 links, not every unknown source material. Focused `NativeCarMeshTests` passed and all 19 inspector
-suites passed. `NativeRendererSmoke` passed 1249/0 during the earlier shading milestone. After the
-final diagnostic-latch change, isolated x64 `Release_dev_native` and reference `Release_dev` builds
-passed. OpenGL startup was not run because the Visual Studio configuration MCP call hung. Probe
-profile and INI files were restored byte-for-byte, verified against backups.
+suites passed. `NativeRendererSmoke` passed 1249 checks with zero failures at that milestone. After
+the diagnostic-latch change, isolated native and reference x64 builds passed. OpenGL startup was
+not run because the Visual Studio configuration MCP call hung. The probe profile and INIs were
+restored byte-for-byte from their backups.
 
-## Dynamic wheels, pedestrian meshes, and diagnostic HUD (2026-10-11)
+## Dynamic wheels, pedestrians, car damage, and diagnostic HUD (2026-10-11)
 
 Wheel preparation uses owned CPU snapshots; workers do not dereference live `MODEL` data. Source
 generation/revision changes invalidate stale work, and consumed tasks return to Waiting when their
@@ -147,10 +147,22 @@ in source cache identity. World, cars, wheels and pedestrians share one instance
 
 Pedestrian capture preserves the legacy CPU pose evaluation and `head_pos`. It copies owned model
 components and sprite poses; conversion templates use zero XYZ and canonical UVs. Workers convert
-owned templates, then the main thread updates dynamic XYZ/UV before publication. Capacity is
-28 actor slots (plus 28 retired keys), 24 components per actor and 4,096 expanded corners.
-The native path has no PsyCross GPU
-fallback. Legacy animation ownership/interpolation remains unchanged and is not yet a native system.
+owned templates, then the main thread updates dynamic XYZ/UV before publication. Capacity is 28 actor
+slots (+28 retired keys), 24 components each and 4,096 expanded corners, with no PsyCross GPU
+fallback. Legacy animation ownership/interpolation remains unchanged and is not a native system.
+
+### Dynamic original car damage
+
+Per-car, per-LOD GPU bodies update expanded corner positions and packed UVs from the original dent
+arrays before the shared instance submission. Owned bindings preserve source polygon order; cold
+conversion builds page/CLUT atlases bounded to 16 MiB, while stable frames update dynamic XYZ/UV only. CPU
+tests cover packed carry, LOD choice, point/bilinear atlas edges, bounds and atomic rejection. GPU
+smoke exercises the renderer's dynamic-vertex API, not car-damage pixels. The latest validation
+passed all 21 inspector suites and 1,285 GPU-smoke checks; native and reference x64 builds passed.
+Chicago capture `native-car-damage-chicago-20261011.rdc` replayed 703 draws; Havana mission 52
+capture `native-car-damage-havana52-20261011.rdc` replayed 959. Both had zero debug messages and no
+damage-change record, so visual damage remains unverified; body lighting is open. The profile hash
+was `004E53AAC096DABC2EADD2F0E0C24CC98B795AFA84DE7059CA02340CE5E906E8`.
 
 Static hook audit covers all four original pedestrian types: Tanner and OTHER_MODEL use skeletal
 models, OTHER_SPRITE uses billboards with the loaded head model, and CIVILIAN uses civilian
@@ -177,14 +189,10 @@ reported 30 ticks and zero drops; loading recorded five catch-up ticks dropped i
 observed rates were about 172-178 FPS. The capture is ignored local evidence at
 `build_e00/native-performance/native-ped-chicago-tad50-20261011.rdc` and `.png`.
 
-The fresh inspector runner passed all 20 suites, including `NativeCarMeshTests` and
-`NativePedMeshTests`; `NativeRendererSmoke` passed 1,274 checks with zero failures. Isolated
-`Release_dev_native|x64` and `Release_dev|x64` builds succeeded with the existing LNK4098 warning.
-The separate reference OpenGL startup reached asset loading and was stopped cleanly. Game sessions
-were stopped; `config.ini`, `developer_graphics.ini`, and the corrected `.vcxproj.user` profile
-match their pre-run hashes. These bounded checks do not establish migration-stage or full-game
-acceptance. Damage, lighting/material correctness, full pedestrian coverage, other cities and
-complete scene parity remain open.
+These Chicago pedestrian measurements are one bounded sample. The car-damage validation above
+reports the current 21-suite/GPU results and both x64 builds. Neither sample establishes
+full-game acceptance. Visible damage, lighting/material correctness, full pedestrian and city
+coverage, streamed transitions and complete scene parity remain open.
 
 ## Bounded local evidence (2026-10-10)
 

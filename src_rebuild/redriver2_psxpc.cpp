@@ -57,6 +57,7 @@
 #include <future>
 #include <chrono>
 #include <memory>
+#include <string>
 #include <direct.h>
 #include "utils/NativeCarMesh.h"
 #include "utils/NativeCarScene.h"
@@ -615,19 +616,29 @@ static unsigned int s_nativeDrawGeneration = 0;
 // Actor keys have an independent namespace and lifetime from world publications.
 // One owned CPU snapshot is converted at a time; normal frames only poll it.
 static const int kNativeCarResources = 128;
+// Two LODs per active car plus the prior publication and one async capture.
+static_assert(MAX_CARS * 4 + 1 <= kNativeCarResources, "native body publication reserve is too small");
 enum class NativeCarResourceState { Empty, Waiting, Converting, Ready, Failed };
 struct NativeCarResource
 {
 	NativeCarSourceIdentity identity = {};
+	int carId = -1;
+	bool lowDetail = false;
+	std::shared_ptr<const NativeCarBodyCapture> capture;
+	bool registered = false;
+	std::string glbPath, assetKey;
+	int triangleCount = 0;
 	NativeCarResourceState state = NativeCarResourceState::Empty;
 	bool seen = false;
 	bool poseReported = false;
+	bool damageReported = false;
 	float center[3] = {};
 	char key[NATIVE_RESOURCE_KEY_CAPACITY] = {};
 };
 struct NativeCarConversionResult
 {
 	WorldMeshConversionResult converted = {};
+	std::shared_ptr<const NativeCarBodyCapture> poseTemplate;
 	int code = ASSET_CONVERTER_ERR_ARGUMENT;
 	char error[256] = {};
 };
@@ -685,7 +696,7 @@ static void NativeRenderer_ResetCarResources()
 {
 	for (int i = 0; i < kNativeCarResources; ++i)
 	{
-		if (s_nativeCarResources[i].state == NativeCarResourceState::Ready)
+		if (s_nativeCarResources[i].registered)
 			NativeRenderer_UnregisterResource(s_nativeCarResources[i].key);
 		s_nativeCarResources[i] = NativeCarResource();
 	}
@@ -702,31 +713,35 @@ static void NativeRenderer_PollCarConversion()
 	NativeCarResource& resource = s_nativeCarResources[s_nativeCarTaskSlot];
 	if (resource.state != NativeCarResourceState::Converting ||
 		!NativeCarMesh_IsCurrentPublication(resource.identity, s_nativeCarTaskIdentity, s_nativeCarGeneration, s_nativeCarTaskGeneration)) return;
-	bool sourceStillActive = false;
-	for (int carId = 0; carId < MAX_CARS; ++carId)
-	{
-		NativeCarSourceIdentity current = {};
-		if (Cars_GetNativeSourceIdentity(carId, &current) && NativeCarMesh_SameSource(current, resource.identity))
-			{ sourceStillActive = true; break; }
-	}
-	if (!sourceStillActive) { resource = NativeCarResource(); return; }
+	NativeCarSourceIdentity current = {};
+	if (!Cars_GetNativeSourceIdentity(resource.carId, &current) || !NativeCarMesh_SameSource(current, resource.identity))
+		{ resource = NativeCarResource(); return; }
 	char error[256] = {};
-	if (result.code == ASSET_CONVERTER_OK)
+	if (result.code == ASSET_CONVERTER_OK && result.poseTemplate)
 	{
-		snprintf(resource.key, sizeof(resource.key), "vehicle:%u:%d:%d:%u:%s", s_nativeCarGeneration,
-			resource.identity.model, resource.identity.palette, resource.identity.revision, result.converted.resourceKey);
-		if (NativeRenderer_RegisterResource(resource.key, result.converted.asset.glbPath, error, sizeof(error)))
+		resource.glbPath = result.converted.asset.glbPath;
+		resource.assetKey = result.converted.resourceKey;
+		resource.triangleCount = result.converted.built.triangleCount;
+		snprintf(resource.key, sizeof(resource.key), "vehicle:%u:%d:%d:%d:%d:%u:%s", s_nativeCarGeneration,
+			resource.carId, resource.lowDetail ? 1 : 0, resource.identity.model, resource.identity.palette,
+			resource.identity.revision, result.converted.resourceKey);
+		if (NativeRenderer_RegisterDynamicResource(resource.key, result.converted.asset.glbPath, error, sizeof(error)))
 		{
+			// Pixels belong only to the bounded cold conversion; stable frames need
+			// the immutable corner map/count, not a retained VRAM/page snapshot.
+			resource.capture = result.poseTemplate;
 			resource.state = NativeCarResourceState::Ready;
-			PsyX_Log_Info("native vehicle: original body ready model=%d palette=%d revision=%u triangles=%d key=%s; wheels/damage/lighting pending\n",
-				resource.identity.model, resource.identity.palette, resource.identity.revision,
+			resource.registered = true;
+			PsyX_Log_Info("native vehicle: original dynamic body ready car=%d lod=%d model=%d palette=%d revision=%u triangles=%d key=%s; lighting pending\n",
+				resource.carId, resource.lowDetail ? 1 : 0, resource.identity.model, resource.identity.palette, resource.identity.revision,
 				result.converted.built.triangleCount, resource.key);
 			return;
 		}
 	}
 	resource.state = NativeCarResourceState::Failed;
+	resource.capture.reset();
 	PsyX_Log_Warning("native vehicle: body unavailable model=%d palette=%d: %s\n",
-		resource.identity.model, resource.identity.palette, result.code == ASSET_CONVERTER_OK ? error : result.error);
+		resource.identity.model, resource.identity.palette, result.code == ASSET_CONVERTER_OK && result.poseTemplate ? error : result.error);
 }
 
 static void NativeRenderer_StartCarConversion(int carId, int slot)
@@ -734,9 +749,36 @@ static void NativeRenderer_StartCarConversion(int carId, int slot)
 	NativeCarResource& resource = s_nativeCarResources[slot];
 	try
 	{
-		std::shared_ptr<WorldMeshConversionInput> snapshot(new WorldMeshConversionInput);
+		// Private GPU bodies share the immutable original template and cache file.
+		// A second car with this source does not reread VRAM or reconvert pixels.
+		for (int i = 0; i < kNativeCarResources; ++i)
+		{
+			const NativeCarResource& existing = s_nativeCarResources[i];
+			if (i == slot || existing.state != NativeCarResourceState::Ready || existing.lowDetail != resource.lowDetail ||
+				!NativeCarMesh_SameSource(existing.identity, resource.identity)) continue;
+			resource.capture = existing.capture;
+			resource.glbPath = existing.glbPath; resource.assetKey = existing.assetKey;
+			resource.triangleCount = existing.triangleCount;
+			memcpy(resource.center, existing.center, sizeof(resource.center));
+			snprintf(resource.key, sizeof(resource.key), "vehicle:%u:%d:%d:%d:%d:%u:%s", s_nativeCarGeneration,
+				carId, resource.lowDetail ? 1 : 0, resource.identity.model, resource.identity.palette,
+				resource.identity.revision, resource.assetKey.c_str());
+			char error[256] = {};
+			if (!NativeRenderer_RegisterDynamicResource(resource.key, resource.glbPath.c_str(), error, sizeof(error)))
+			{
+				resource.state = NativeCarResourceState::Failed;
+				PsyX_Log_Warning("native vehicle: private body registration failed car=%d lod=%d: %s\n", carId, resource.lowDetail ? 1 : 0, error);
+				return;
+			}
+			resource.registered = true;
+			resource.state = NativeCarResourceState::Ready;
+			PsyX_Log_Info("native vehicle: original dynamic body reused car=%d lod=%d model=%d palette=%d triangles=%d key=%s\n",
+				carId, resource.lowDetail ? 1 : 0, resource.identity.model, resource.identity.palette, resource.triangleCount, resource.key);
+			return;
+		}
+		std::shared_ptr<NativeCarBodyCapture> snapshot(new NativeCarBodyCapture);
 		char error[256] = {};
-		if (!Cars_CaptureNativeBody(carId, snapshot.get(), error, sizeof(error)))
+		if (!Cars_CaptureNativeBody(carId, resource.lowDetail, snapshot.get(), error, sizeof(error)))
 		{
 			resource.state = NativeCarResourceState::Failed;
 			PsyX_Log_Warning("native vehicle: original body capture failed car=%d model=%d: %s\n", carId, resource.identity.model, error);
@@ -744,21 +786,34 @@ static void NativeRenderer_StartCarConversion(int carId, int slot)
 		}
 		for (int axis = 0; axis < 3; ++axis)
 		{
-			float minimum = snapshot->source.positions[axis], maximum = minimum;
-			for (size_t v = axis; v < snapshot->source.positions.size(); v += 3)
+			float minimum = snapshot->conversion.source.positions[axis], maximum = minimum;
+			for (size_t v = axis; v < snapshot->conversion.source.positions.size(); v += 3)
 			{
-				if (snapshot->source.positions[v] < minimum) minimum = snapshot->source.positions[v];
-				if (snapshot->source.positions[v] > maximum) maximum = snapshot->source.positions[v];
+				if (snapshot->conversion.source.positions[v] < minimum) minimum = snapshot->conversion.source.positions[v];
+				if (snapshot->conversion.source.positions[v] > maximum) maximum = snapshot->conversion.source.positions[v];
 			}
 			resource.center[axis] = (minimum + maximum) * 0.5f;
 		}
 		_mkdir("native_cache");
-		const std::shared_ptr<const WorldMeshConversionInput> input = snapshot;
+		const std::shared_ptr<const NativeCarBodyCapture> input = snapshot;
+		resource.capture = input;
 		s_nativeCarTask = std::async(std::launch::async, [input]() {
 			NativeCarConversionResult result;
-			try { result.code = WorldMeshConversion_Publish("native_cache", *input, &result.converted, result.error, sizeof(result.error)); }
-			catch (const std::exception& error) { snprintf(result.error, sizeof(result.error), "%s", error.what()); }
-			catch (...) { snprintf(result.error, sizeof(result.error), "unknown original car conversion exception"); }
+			try
+			{
+				result.code = WorldMeshConversion_Publish("native_cache", input->conversion, &result.converted, result.error, sizeof(result.error));
+				if (result.code == ASSET_CONVERTER_OK)
+				{
+					std::shared_ptr<NativeCarBodyCapture> poseTemplate(new NativeCarBodyCapture);
+					poseTemplate->lowDetail = input->lowDetail;
+					poseTemplate->bindings = input->bindings;
+					poseTemplate->conversion.source.positions = input->conversion.source.positions;
+					poseTemplate->conversion.source.uvs = input->conversion.source.uvs;
+					result.poseTemplate = poseTemplate;
+				}
+			}
+			catch (const std::exception& error) { result.code = ASSET_CONVERTER_ERR_ARGUMENT; snprintf(result.error, sizeof(result.error), "%s", error.what()); }
+			catch (...) { result.code = ASSET_CONVERTER_ERR_ARGUMENT; snprintf(result.error, sizeof(result.error), "unknown original car conversion exception"); }
 			return result;
 		});
 		s_nativeCarTaskIdentity = resource.identity;
@@ -770,11 +825,13 @@ static void NativeRenderer_StartCarConversion(int carId, int slot)
 	catch (const std::exception& error)
 	{
 		resource.state = NativeCarResourceState::Failed;
+		resource.capture.reset();
 		PsyX_Log_Warning("native vehicle: capture/task launch failed: %s\n", error.what());
 	}
 	catch (...)
 	{
 		resource.state = NativeCarResourceState::Failed;
+		resource.capture.reset();
 		PsyX_Log_Warning("native vehicle: unknown capture/task launch exception\n");
 	}
 }
@@ -818,17 +875,27 @@ static int NativeRenderer_AppendCars(int count, const float view[16])
 			continue;
 		}
 		s_nativeCarMissing[carId] = false;
+		bool lowDetail = false;
+		if (!Cars_GetNativeBodyLowDetail(carId, &lowDetail)) { ++s_nativeCarFrameCounts.poseFailed; continue; }
+		// Keep both already-captured tiers resident while this car/source exists.
+		// Camera LOD oscillation therefore never reconverts geometry or textures.
+		for (int i = 0; i < kNativeCarResources; ++i)
+			if (s_nativeCarResources[i].carId == carId &&
+				NativeCarMesh_SameSource(s_nativeCarResources[i].identity, identity)) s_nativeCarResources[i].seen = true;
 		int slot = -1, empty = -1;
 		for (int i = 0; i < kNativeCarResources; ++i)
 		{
 			if (s_nativeCarResources[i].state == NativeCarResourceState::Empty) { if (empty < 0) empty = i; }
-			else if (NativeCarMesh_SameSource(s_nativeCarResources[i].identity, identity)) { slot = i; break; }
+			else if (s_nativeCarResources[i].carId == carId && s_nativeCarResources[i].lowDetail == lowDetail &&
+				NativeCarMesh_SameSource(s_nativeCarResources[i].identity, identity)) { slot = i; break; }
 		}
 		if (slot < 0)
 		{
 			if (empty < 0) { PsyX_Log_Warning("native vehicle: source residency capacity reached\n"); return -1; }
 			slot = empty;
 			s_nativeCarResources[slot].identity = identity;
+			s_nativeCarResources[slot].carId = carId;
+			s_nativeCarResources[slot].lowDetail = lowDetail;
 			s_nativeCarResources[slot].state = NativeCarResourceState::Waiting;
 		}
 		NativeCarResource& resource = s_nativeCarResources[slot];
@@ -849,6 +916,38 @@ static int NativeRenderer_AppendCars(int count, const float view[16])
 		NativeRenderer_ReportCarPose(carId, resource, instance.transform, view, hidden);
 		if (!NativeWheelScene_Append(carId, hidden, instance, s_nativeCombinedInstances, &count)) return -1;
 		if (hidden) { ++s_nativeCarFrameCounts.hidden; continue; }
+		std::vector<float> xyz, uvs;
+		char damageError[256] = {};
+		if (!resource.capture || !Cars_CaptureNativeDamage(carId, *resource.capture, &xyz, &uvs, damageError, sizeof(damageError)) ||
+			!NativeRenderer_UpdateResourceVertices(resource.key, xyz.data(), uvs.data(), (int)(xyz.size() / 3), damageError, sizeof(damageError)))
+		{
+			resource.state = NativeCarResourceState::Failed;
+			// Frame rejection clears old instances; GPU ownership retires afterwards.
+			++s_nativeCarFrameCounts.failed;
+			PsyX_Log_Warning("native vehicle: original damage update failed car=%d lod=%d: %s\n", carId, lowDetail ? 1 : 0,
+				resource.capture ? damageError : "missing owned original body capture");
+			return -1;
+		}
+		if (NativeRenderer_PerformanceEnabled() && !resource.damageReported)
+		{
+			int changedPositions = 0, changedUvs = 0;
+			for (size_t i = 0; i < xyz.size(); ++i)
+				if (xyz[i] != resource.capture->conversion.source.positions[i]) ++changedPositions;
+			for (size_t i = 0; i < uvs.size(); ++i)
+				if (uvs[i] != resource.capture->conversion.source.uvs[i]) ++changedUvs;
+			if (changedPositions || changedUvs)
+			{
+				FILE* log = fopen("native_performance.log", "a");
+				if (log)
+				{
+					fprintf(log, "native-car-damage key=%s car=%d damageSlot=%d lod=%d model=%d palette=%d revision=%u generation=%u totalDamage=%d expandedVertices=%u changedXYZ=%d changedUV=%d\n",
+						resource.key, carId, car_data[carId].id, lowDetail ? 1 : 0, identity.model, identity.palette, identity.revision,
+						generation, car_data[carId].totalDamage, (unsigned)(xyz.size() / 3), changedPositions, changedUvs);
+					fclose(log);
+					resource.damageReported = true;
+				}
+			}
+		}
 		snprintf(instance.resourceKey, sizeof(instance.resourceKey), "%s", resource.key);
 		instance.sourceObjectIndex = carId; instance.modelSlot = identity.model;
 		instance.modelRevision = (int)identity.revision;
@@ -865,8 +964,14 @@ static void NativeRenderer_RetireCarResources()
 	for (int i = 0; i < kNativeCarResources; ++i)
 	{
 		NativeCarResource& resource = s_nativeCarResources[i];
+		if (resource.registered && resource.state == NativeCarResourceState::Failed)
+		{
+			NativeRenderer_UnregisterResource(resource.key);
+			resource.registered = false;
+			resource.key[0] = 0;
+		}
 		if (resource.state == NativeCarResourceState::Empty || resource.seen) continue;
-		if (resource.state == NativeCarResourceState::Ready) NativeRenderer_UnregisterResource(resource.key);
+		if (resource.registered) NativeRenderer_UnregisterResource(resource.key);
 		resource = NativeCarResource();
 	}
 }
@@ -1717,6 +1822,7 @@ static int NativeRenderer_SubmitGameScene(const float view[16])
 		PsyX_Log_Warning("native scene submission failed: %s\n", count < 0 ? "actor presentation failed; see preceding diagnostic" : error);
 		NativeRenderer_ClearInstances();
 		s_nativeCarFrameCounts.submitted = 0;
+		if (appendActors) NativeRenderer_RetireCarResources();
 		NativeWheelScene_RejectFrame();
 		NativePedScene_RejectFrame();
 		NativeRenderer_PublishSceneDebug(false, true);
