@@ -10,8 +10,8 @@ tags: [okf, engine, diligent, rendering, shading]
 Converted normal-shaded building vertices now preserve their legacy shade bucket
 in `_RED2_WORLD_SHADE`. The native instance carries its original yaw group, and
 the shader selects the corresponding live plane-colour entry for each vertex.
-Combo-shaded buildings, sprites and tile/path resources keep their existing
-baked colour path. This is a bounded static-world correction, not E03 parity
+Combo-shaded buildings and tile/path resources keep their existing baked colour
+path. Sprite lighting has a separate bounded correction below. This is not E03 parity
 acceptance.
 
 The palette order follows `draw.c`'s 32-entry `f4colourTable` pattern and the
@@ -46,6 +46,22 @@ attribute survives publication.
   no new capture was produced and mission-level visual inspection remains pending.
 - MSVC test-runner object output is isolated per inspector suite and smoke build
   through `/Fo` directories, avoiding collisions between same-named objects.
+
+## Follow-up: native sprite lighting
+
+Sprite resources now carry per-instance lighting mode through ordinary, LOD and high-detail
+placements. The native bridge computes the original camera-light level for camera-lit sprites;
+lit sprites and yaw bucket 63 use neutral 128. Sprite conversion captures neutral vertex RGB
+because the original sprite draw path ignores its stored face tint. Texture alpha/STP and texture
+identity remain intact.
+
+The 21-suite inspector run passed, `NativeRendererSmoke` passed 1285 checks / 0 failures, and
+isolated x64 `Release_dev_native` and `Release_dev` builds succeeded. Chicago TAD50 was captured
+with RenderDoc 1.41: replay reports 656 draws and zero debug messages; the HUD reported 193
+resources, 8,890 placements, 523 selected instances, 14 submitted cars, 56 submitted wheels,
+and 1 submitted pedestrian. Perf samples showed 30/31 ticks and zero drops. The PNG shows the
+current native scene but there is no matched OpenGL screenshot for sprite-parity comparison.
+Other material classes and full lighting parity remain open.
 
 No discussion or roadmap decision changed. The migration roadmap remains in
 progress, and full scene, event-specific lighting and PSX blend parity remain

@@ -850,6 +850,8 @@ static void MakeInstance(NativeInstance& instance, const char* key,
 	instance.modelSlot = modelSlot;
 	instance.modelRevision = modelRevision;
 	instance.worldShadeOffset = (yang >> 3) * 4;
+	instance.worldSpriteShadeMode = 0;
+	instance.worldSpriteLightLevel = 0;
 }
 
 // A top-down game-style camera at (0, height, 0) looking down -Y: world +X maps
@@ -981,6 +983,40 @@ static bool RedBoundingBox(const unsigned char* image, int width, int height,
 		}
 	}
 	return found;
+}
+
+static void TestWorldSpriteShade()
+{
+	char error[256] = {};
+	NativeRenderer_ClearInstances(); NativeRenderer_ClearResources();
+	GltfPrimitiveData primitive;
+	primitive.positions = {-1500,-1500,0,1500,-1500,0,1500,1500,0,-1500,1500,0};
+	primitive.uvs.assign(8,64); primitive.indices = {0,1,2,0,2,3}; primitive.vertexCount = 4; primitive.triangleCount = 2;
+	primitive.colors.assign(16,128); for (int v = 0; v < 4; ++v) primitive.colors[v*4+3] = 255;
+	primitive.imageRgba = {0,80,0,128}; primitive.imageWidth = primitive.imageHeight = 1;
+	GltfMultiMeshData mesh; mesh.primitives.push_back(primitive);
+	Check(Gltf_WriteFileMulti("world-sprite-shade.glb",mesh,error,sizeof(error)) == 0,"sprite neutral textured fixture written");
+	Check(NativeRenderer_RegisterResource("world-sprite-shade","world-sprite-shade.glb",error,sizeof(error)) == 1,"sprite neutral textured resource registered");
+	const float view[16] = {1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1};
+	NativeRenderer_SetCamera(view,kSmokeScreenDistance); NativeRenderer_SetClipPlanes(100,125000);
+	NativeInstance instance; const float position[3] = {0,0,10000}; MakeInstance(instance,"world-sprite-shade",position,0,0,0,0,0,0);
+	unsigned char ordinary[64*64*4] = {}, shaded[64*64*4] = {}, neutral[64*64*4] = {};
+	Check(NativeRenderer_SetInstances(&instance,1,error,sizeof(error)) == 1 && NativeRenderer_RenderSceneToRGBA(ordinary,64,64,error,sizeof(error)) == 1,"ordinary instance of same material rendered");
+	const size_t center = (32*64+32)*4;
+	Check(ordinary[center+1] >= 79 && ordinary[center+1] <= 82 && ordinary[center] == 0,"ordinary neutral color retains textured factor two");
+	instance.worldSpriteShadeMode = 1; instance.worldSpriteLightLevel = 64;
+	Check(NativeRenderer_SetInstances(&instance,1,error,sizeof(error)) == 1 && NativeRenderer_RenderSceneToRGBA(shaded,64,64,error,sizeof(error)) == 1,"camera-lit sprite rendered");
+	Check(shaded[center+1] >= 39 && shaded[center+1] <= 42 && shaded[center] == 0 && shaded[center+3] == 255,"sprite light byte applies once and STP remains opaque");
+	instance.worldSpriteLightLevel = 96;
+	Check(NativeRenderer_SetInstances(&instance,1,error,sizeof(error)) == 1 && NativeRenderer_RenderSceneToRGBA(shaded,64,64,error,sizeof(error)) == 1 && shaded[center+1] >= 59 && shaded[center+1] <= 62,"live sprite light changes without resource conversion");
+	instance.worldSpriteShadeMode = 2; instance.worldSpriteLightLevel = 17;
+	Check(NativeRenderer_SetInstances(&instance,1,error,sizeof(error)) == 1 && NativeRenderer_RenderSceneToRGBA(neutral,64,64,error,sizeof(error)) == 1 && !memcmp(neutral,ordinary,sizeof(neutral)),"lit/yaw63 mode preserves original fixed128 independently of camera light");
+	instance.worldSpriteShadeMode = 3;
+	Check(NativeRenderer_SetInstances(&instance,1,error,sizeof(error)) == 0 && error[0],"invalid sprite mode rejected before publication");
+	instance.worldSpriteShadeMode = 1; instance.worldSpriteLightLevel = 256;
+	Check(NativeRenderer_SetInstances(&instance,1,error,sizeof(error)) == 0 && error[0],"out-of-byte-range sprite scalar rejected before publication");
+	Check(NativeRenderer_RenderSceneToRGBA(shaded,64,64,error,sizeof(error)) == 1 && !memcmp(shaded,neutral,sizeof(neutral)),"failed sprite metadata publication preserves previous instances");
+	NativeRenderer_ClearInstances(); NativeRenderer_ClearResources();
 }
 
 static void TestDynamicResourceUvs()
@@ -2345,6 +2381,7 @@ int main()
 	TestInstanceScreenRegions();
 	TestDynamicResourcePositions();
 	TestDynamicResourceUvs();
+	TestWorldSpriteShade();
 	TestMultiPrimitiveResource();
 	TestTexturedMultiPrimitiveResource();
 	TestWorldOpacity();

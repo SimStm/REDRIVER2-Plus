@@ -159,6 +159,9 @@ typedef struct AssetCatalogGameDrawPlacement
 	unsigned int lodModelRevision;
 	int highDetailModelSlot;	/* near-tile high-detail sibling slot, or -1 */
 	unsigned int highDetailModelRevision;
+	int worldSpriteShadeMode; /* immutable original sprite/lit/yaw classification */
+	int lodWorldSpriteShadeMode; /* follows the published LOD resource's flags */
+	int highDetailWorldSpriteShadeMode;
 } AssetCatalogGameDrawPlacement;
 
 /* True when the developer `-drawmodel <slot> [count]` flag requested a bounded
@@ -207,6 +210,10 @@ int AssetCatalogGame_GetRegionCellReferences(NativeWorldCellReference* out, int 
 /* Read-only presentation palette: 32 RGB entries used by normal-shaded buildings.
    Captures current original ambient/weather; no gameplay or GPU writes. */
 void AssetCatalogGame_GetWorldShadePalette(unsigned char rgb[32 * 3]);
+#ifdef _WIN32
+/* Current presentation-only DrawSprites light byte; does not mutate GTE/game state. */
+unsigned char AssetCatalogGame_GetWorldSpriteLightLevel(void);
+#endif
 
 /* Bounded full-region placement store. It is sized to the native renderer's
    instance bound (NATIVE_MAX_INSTANCES); the bridge asserts the relation so a

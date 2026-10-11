@@ -42,8 +42,8 @@ Normal-shaded building GLBs retain `_RED2_WORLD_SHADE` per emitted vertex; the a
 included in conversion hashes and verified on GLB read-back. The native shader combines each
 source shade bucket with the instance's original yaw bucket using `(yawBucket * 4 - shade) & 31`.
 The 32-entry RGB palette follows the same plane-colour pattern as `SetupPlaneColours` and updates
-from the current world ambience at presentation. Combo-shaded buildings, sprites and tile/path
-models keep their existing conversion-time colours. The palette producer preserves packed
+from the current world ambience at presentation. Combo-shaded buildings and tile/path models keep
+their existing conversion-time colours. The palette producer preserves packed
 `0xRRGGBB` channel order when writing RGB8. This restores per-instance static building orientation
 shading; event-specific lighting overrides, PSX blend modes and full scene parity are not accepted.
 
@@ -90,6 +90,28 @@ display-encoded original texels/prelit colours. The previous default sRGB target
 applied an extra encoding to that output. Future PBR lighting needs an explicit
 linear-workflow policy rather than reusing these prelit values as linear energy.
 
+## Native world sprite lighting (2026-10-11)
+
+The source bridge records which world resources are sprites and whether legacy `DrawSprites`
+uses camera lighting or neutral 128. Camera-lit sprite instances reproduce the original
+fixed-point light-level calculation from camera forward, source direction, city, day/night,
+weather and ambient state. Lit sprites and rotation bucket 63 use neutral 128. Sprite captures
+write neutral vertex RGB rather than the stored face tint, which the original draw path ignores;
+source alpha/STP data and opaque cutout behavior are unchanged. LOD and high-detail variants carry
+their own classification. Converted textures/resources remain shared; shade selection is per
+instance.
+
+`WorldSpriteShadeTests` cover original light arithmetic, neutral capture and retained texture
+alpha. `NativeRendererSmoke` covers live camera-light changes, fixed-128 behavior, STP opacity and
+invalid metadata rejection. The fresh inspector runner passed 21 suites and the GPU smoke passed
+1285 checks/0 failures. Native and OpenGL x64 builds succeeded. Chicago TAD50 RenderDoc capture
+`native-world-sprite-tad50-20261011.rdc` replayed 656 draws with zero debug messages. Its PNG
+shows Chicago foliage under the corrected renderer; no OpenGL reference PNG was captured in this
+round, so the image does not establish a backend A/B or full legacy visual parity. The HUD reported
+193 resources, 8,890 placements, 523 CPU-selected instances, 14 cars and 56 wheels submitted, and
+one pedestrian submitted at capture. Perf windows recorded 30/31 ticks and zero drops. Other
+world materials, event lighting, full city coverage and all-pedestrian visual coverage remain open.
+
 ## Resident original car bodies and texture identity (2026-10-11)
 
 Car preparation owns a CPU snapshot; its worker does not dereference live `MODEL` data. Model
@@ -129,6 +151,14 @@ owned templates, then the main thread updates dynamic XYZ/UV before publication.
 28 actor slots (plus 28 retired keys), 24 components per actor and 4,096 expanded corners.
 The native path has no PsyCross GPU
 fallback. Legacy animation ownership/interpolation remains unchanged and is not yet a native system.
+
+Static hook audit covers all four original pedestrian types: Tanner and OTHER_MODEL use skeletal
+models, OTHER_SPRITE uses billboards with the loaded head model, and CIVILIAN uses civilian
+billboards with that head model. Selection follows the original camera/frustum draw route;
+first-person hides the local model actor. This audit is not runtime acceptance of each type.
+No existing CLI option starts a controlled Tanner on foot; normal vehicle exit calls
+`ActivatePlayerPedestrian`. A normal input route or suitable original replay remains necessary
+to verify player exit, on-foot control, and re-entry without forcing gameplay state.
 
 `RED2_NATIVE_VISUAL_DEBUG=1` enables a text-only HUD on the existing overlay independently of F9;
 it captures no input. It reports world, car, wheel and pedestrian lifecycle counts. "Selected" is

@@ -34,6 +34,7 @@
 #include "utils/DeveloperVkFixture.h"
 #include "utils/NativeCameraView.h"
 #include "utils/NativeInstanceTransform.h"
+#include "utils/WorldSpriteShade.h"
 #include "utils/DeterministicBaseline.h"
 #include "utils/HdTextureOverrides.h"
 #include "utils/InputService.h"
@@ -1315,6 +1316,9 @@ static int NativeRenderer_SelectRegionDrawInstances(void)
 	for (int i = 0; i < count; ++i)
 	{
 		NativeInstance& instance = s_regionDrawInstances[i];
+		const AssetCatalogGameDrawPlacement& placement = s_regionDrawPlacements[i];
+		instance.worldSpriteShadeMode = s_regionDrawHighDetailSelected[i] ? placement.highDetailWorldSpriteShadeMode :
+			(s_regionDrawLodSelected[i] ? placement.lodWorldSpriteShadeMode : placement.worldSpriteShadeMode);
 		const char* key = s_regionDrawHighDetailSelected[i]
 			? s_regionDrawHighDetailKeys[i]
 			: (s_regionDrawLodSelected[i] ? s_regionDrawLodKeys[i] : s_regionDrawDetailKeys[i]);
@@ -1529,6 +1533,7 @@ static int NativeRenderer_DevRegionDrawSubmit(const float view[16])
 			const int pos[3] = { placement.x, placement.y, placement.z };
 			NativeInstance_ComposeTransform(pos, (unsigned int)placement.rotation, instance.transform);
 			instance.worldShadeOffset = ((unsigned int)placement.rotation >> 3) * 4;
+			instance.worldSpriteShadeMode = placement.worldSpriteShadeMode;
 
 			instance.level = GameLevel;
 			instance.variant = (int)GetCityType();
@@ -1633,6 +1638,7 @@ static int NativeRenderer_DevDrawSubmit(const float view[16])
 		const int pos[3] = { placement.x, placement.y, placement.z };
 		NativeInstance_ComposeTransform(pos, (unsigned int)placement.rotation, instance.transform);
 		instance.worldShadeOffset = ((unsigned int)placement.rotation >> 3) * 4;
+		instance.worldSpriteShadeMode = placement.worldSpriteShadeMode;
 
 		instance.level = GameLevel;
 		instance.variant = (int)GetCityType();
@@ -1694,6 +1700,11 @@ static int NativeRenderer_SubmitGameScene(const float view[16])
 		NativeCarScene_PrepareWorld(s_regionDrawVisibleInstances, worldCount, worldPublicationValid,
 			MAX_CARS * 5 + NATIVE_PED_SLOTS, s_nativeCombinedInstances, NATIVE_MAX_INSTANCES, &s_nativePreparedWorldCount);
 	int count = s_nativePreparedWorldCount;
+	// Refresh only the final copied world prefix, even when visibility/LOD is
+	// cached. Scalar changes never rebuild or mutate immutable resource data.
+	const int spriteLight = AssetCatalogGame_GetWorldSpriteLightLevel();
+	for (int i = 0; i < count; ++i)
+		if (s_nativeCombinedInstances[i].worldSpriteShadeMode == WORLD_SPRITE_SHADE_CAMERA) s_nativeCombinedInstances[i].worldSpriteLightLevel = spriteLight;
 	if (AssetCatalogGame_RegionDrawRequested() && worldPublicationValid && !appendActors) count = -1;
 	if (appendActors) count = NativeRenderer_AppendCars(count, view);
 	if (appendActors && count >= 0)

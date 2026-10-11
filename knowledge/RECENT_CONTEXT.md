@@ -22,7 +22,7 @@ Preserve Driver 2 simulation/math/mission/cutscene/replay/regional semantics;
 fixed ticks independent of presentation FPS and CPU speed.
 
 **Current step: native Chicago world, vehicle, and bounded pedestrian rendering; no stage is accepted.**
-Checkpoint `d373476c` is published. Original textures and full city coverage remain required;
+Checkpoint `035aded0` is published. Original textures and full city coverage remain required;
 HD/mods await functional original-city coverage, and later GLB/glTF edit/reimport remains desired
 with undefined contracts. Player/on-foot control, all pedestrian classes, damage, and lighting
 remain open. The end goal still includes complete world, vehicles, Tanner, and all pedestrians.
@@ -66,18 +66,26 @@ original-city coverage, and later GLB/glTF edit/reimport is desired with contrac
   OpenGL 3.3.0. Native smoke passed 1200 checks; sessions stopped and local diagnostics
   are not committed.
 
-2026-10-11 wheel/pedestrian/HUD validation: the fresh inspector runner passed all 20 suites and
-`NativeRendererSmoke` passed 1274 checks; native and reference x64 builds succeeded. Mission 50
-Chicago TAD (`-mission 50 -drawregion -nointro -nofmv`) rendered the player car (`playerCar=0`),
-14/14 cars and 56/56 wheels. The overlay showed 193 world resources, 8890 placements, 523 CPU-
-selected instances, and at capture 12 active pedestrians / 2 ready / 1 submitted / 1 waiting / 0
-failed. Four original `CIVILIAN` meshes reached ready over the session; RenderDoc replay had 719
-draws and zero debug messages, and the inspected PNG shows a civilian at the sidewalk. Steady
-windows recorded 30 ticks and zero drops; startup loading recorded five catch-up drops in total.
-The separate `-mission 1` story capture loaded `CUT1.R`; its visible type-0 actor had pad -2 and
-does not prove player control or Tanner on foot. Reference OpenGL `Release_dev` startup completed.
-All game PIDs were stopped. `config.ini`, `developer_graphics.ini`, and the corrected user profile
-match their pre-run SHA-256 values. Captures/logs are ignored under `build_e00/native-performance/`.
+2026-10-11 sprite-shading follow-up: fresh inspector runner passed all 21 suites, including
+`WorldSpriteShadeTests`; native smoke passed 1285 checks / 0 failures. Sequential x64
+`Release_dev_native` and `Release_dev` builds passed. A Chicago mission 50 TAD session launched
+under RenderDoc 1.41 with `RED2_NATIVE_VISUAL_DEBUG=1` and `RED2_NATIVE_PERF=1`. Capture HUD:
+world ready, generation 1, 193 resources, 8890 placements, 523 selected; 14/14 cars submitted;
+56/56 wheels ready/submitted; 11 pedestrians active, 1 ready/submitted, 0 waiting/failed.
+Replay had 656 draws and zero debug messages. Inspected PNG shows varied Chicago foliage and the
+existing player car; it is not an A/B OpenGL parity comparison. Perf windows were about 114-120
+FPS with 30/31 ticks and zero drops. No game process remains; profile and both INI hashes match
+pre-run values. Logs, capture and PNG are ignored under `build_e00/native-performance/`.
+The prior bounded pedestrian sample and story `CUT1.R` (`pad=-2`, not controlled Tanner) remain
+in [the car-body evidence record](changes/2026-10-11/native-original-car-bodies/index.md).
+The first MSBuild attempt failed because its resolved `v170` C++ targets were absent;
+`vswhere -all -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64`
+identified VS18 Community. Builds passed with
+`C:\Program Files\Microsoft Visual Studio\18\Community\MSBuild\Current\Bin\MSBuild.exe`
+on `build_jointcheck/REDRIVER2.sln` (`/p:Configuration=Release_dev_native` then
+`Release_dev`, `/p:Platform=x64`). Premake's generated profile was restored from this run's fresh
+pre-generation copy (SHA-256 `004E53AAC096DABC2EADD2F0E0C24CC98B795AFA84DE7059CA02340CE5E906E8`);
+both x64 debug working directories remain `..\bin\Release_dev`.
 Prior bounded parity evidence (preserved; not full acceptance):
 
 - World pipeline: `CULL_NONE`, opaque alpha / `0000h` discard, LEQUAL; legacy world colours

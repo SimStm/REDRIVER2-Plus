@@ -139,6 +139,8 @@ typedef struct NativeInstance
 	int modelSlot;
 	int modelRevision;
 	int worldShadeOffset; // presentation-only: 0,4,...,28; indexes _RED2_WORLD_SHADE palette
+	int worldSpriteShadeMode; // WorldSpriteShadeMode; zero preserves ordinary instances
+	int worldSpriteLightLevel; // original light byte, inclusive 0..255
 } NativeInstance;
 
 #ifdef __cplusplus

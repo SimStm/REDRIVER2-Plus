@@ -29,6 +29,9 @@
 #ifdef _WIN32
 
 #include "../../utils/WorldShadePalette.h"
+#include "../../utils/WorldSpriteShade.h"
+#include "camera.h"
+#include "main.h"
 #include <direct.h>
 #include <stdarg.h>
 #include <future>
@@ -1127,17 +1130,41 @@ void AssetCatalogGame_GetWorldShadePalette(unsigned char rgb[32 * 3])
 	WorldShadePalette_WriteRgb(planes, rgb);
 }
 
-// Builds one legacy-shaded RGB triple per source vertex. Returns false when the
-// model is a sprite (it keeps the historical base-colour-factor behaviour) or
-// when the decode carried no shading metadata, so the caller passes no override.
+unsigned char AssetCatalogGame_GetWorldSpriteLightLevel(void)
+{
+	const SVECTOR* light = gTimeOfDay == TIME_NIGHT ? night_vectors : day_vectors;
+	// Loaded game cities are 0..3, the same precondition as original DrawSprites.
+	if (GameLevel < 0 || GameLevel >= 4)
+	{
+		static int reported = INT_MIN;
+		if (reported != GameLevel) { printWarning("AssetCatalog: sprite light unavailable for invalid city %d; neutral128 used\n", GameLevel); reported = GameLevel; }
+		return 128;
+	}
+	const short direction[3] = { light[GameLevel].vx, light[GameLevel].vy, light[GameLevel].vz };
+	return WorldSpriteShade_LightLevel(camera_matrix.m[2], direction, GameLevel,
+		gTimeOfDay == TIME_DAY, gTimeOfDay == TIME_NIGHT,
+		gTimeOfDay == TIME_DAWN || gTimeOfDay == TIME_DUSK, gWeather, NightAmbient);
+}
+
+static int CaptureWorldSpriteShadeMode(int modelSlot, unsigned rotation)
+{
+	const MODEL* model = modelpointers[modelSlot];
+	return WorldSpriteShade_Mode(model && (model->shape_flags & SHAPE_FLAG_SPRITE), rotation,
+		(litSprites[modelSlot >> 5] & (1u << (modelSlot & 31))) != 0);
+}
+
+// Sprites use neutral owned colours plus a live per-instance original light byte.
+// Other world classes retain their existing legacy palette/ambient capture.
 static bool LegacyComputeWorldColors(const SourceMesh& source, const MODEL* model,
 	std::vector<unsigned char>& out)
 {
 	const size_t vertexCount = source.positions.size() / 3;
-	if (vertexCount == 0 || source.shadeIndices.size() != vertexCount)
+	if (vertexCount == 0)
 		return false;
 
-	if ((model->shape_flags & SHAPE_FLAG_SPRITE) != 0)
+	if (WorldSpriteShade_CaptureNeutral((model->shape_flags & SHAPE_FLAG_SPRITE) != 0, vertexCount, out))
+		return true;
+	if (source.shadeIndices.size() != vertexCount)
 		return false;
 
 	const bool tile = ((model->shape_flags & (SHAPE_FLAG_WATER | SHAPE_FLAG_TILE)) != 0) ||
@@ -1561,10 +1588,13 @@ int AssetCatalogGame_CollectDrawPlacements(int modelSlot, int maxPlacements,
 		placement.sourceObjectIndex = walk.placements[i].sourceObjectIndex;
 		placement.modelSlot = modelSlot;
 		placement.modelRevision = handle.revision;
+		placement.worldSpriteShadeMode = CaptureWorldSpriteShadeMode(modelSlot, (unsigned)placement.rotation);
 		placement.lodModelSlot = -1;	// the bounded dev draw keeps one model slot
 		placement.lodModelRevision = 0;
 		placement.highDetailModelSlot = -1;
 		placement.highDetailModelRevision = 0;
+		placement.lodWorldSpriteShadeMode = WORLD_SPRITE_SHADE_NONE;
+		placement.highDetailWorldSpriteShadeMode = WORLD_SPRITE_SHADE_NONE;
 	}
 
 	s_drawPlacementCount = copied;
@@ -2252,10 +2282,13 @@ static bool PrepareResidentRegionDraw(char* status, int statusCapacity)
 		placement.sourceObjectIndex = source.sourceObjectIndex;
 		placement.modelSlot = source.modelNumber;
 		placement.modelRevision = revision;
+		placement.worldSpriteShadeMode = CaptureWorldSpriteShadeMode(source.modelNumber, (unsigned)source.rotation);
 		placement.lodModelSlot = lodSlot;
 		placement.lodModelRevision = lodRevision;
+		placement.lodWorldSpriteShadeMode = lodSlot >= 0 ? CaptureWorldSpriteShadeMode(lodSlot, (unsigned)source.rotation) : WORLD_SPRITE_SHADE_NONE;
 		placement.highDetailModelSlot = highDetailSlot;
 		placement.highDetailModelRevision = highDetailRevision;
+		placement.highDetailWorldSpriteShadeMode = highDetailSlot >= 0 ? CaptureWorldSpriteShadeMode(highDetailSlot, (unsigned)source.rotation) : WORLD_SPRITE_SHADE_NONE;
 	}
 
 	// The walker's own object bound is a placement truncation too: placements

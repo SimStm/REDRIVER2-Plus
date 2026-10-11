@@ -327,3 +327,9 @@ recorded five dropped catch-up ticks total; steady windows recorded 30 ticks wit
 drops. This is bounded evidence, not complete pedestrian/city coverage, player input, lighting,
 damage or E03 acceptance. A separate story launch loaded `CUT1.R` and showed a cutscene type-0
 actor (`pad=-2`), not controlled Tanner on foot. See the [native actor change record](../../changes/2026-10-11/native-original-car-bodies/index.md).
+
+2026-10-11 sprite follow-up: original `DrawSprites` ignores stored face RGB and supplies a live
+light byte or fixed 128. Native conversion now stores neutral colours; per-instance light metadata
+follows the selected LOD resource and updates without rebuilding geometry. Original city/night
+arithmetic is preserved rather than redesigned. CPU 21 suites, GPU 1285/0 and both builds passed;
+Chicago capture confirms bounded rendering, not OpenGL pixel parity or full-city acceptance.

@@ -23,6 +23,8 @@ where release policy permits it.
 - Native normal-shaded building instances now use their original rotation bucket with the live
   32-entry world palette; converted shade metadata survives GLB round trips and conversion hashing.
   RGB channel order follows the legacy packed-colour to COLOR_0 mapping.
+- Native world sprites now use the original camera-light calculation or neutral 128 for lit sprites
+  and rotation bucket 63. Texture alpha/STP behavior remains unchanged; broader lighting parity is open.
 - Native world visibility follows the original draw-distance/PVS/event-cell selection,
   preserving straddler memberships. The F9 draw-distance control is now enabled.
 - Native sector transitions retain the published scene and camera-dependent LOD

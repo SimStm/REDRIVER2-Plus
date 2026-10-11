@@ -1,4 +1,5 @@
 #include "NativeRenderer.h"
+#include "../utils/WorldSpriteShade.h"
 
 #ifdef _WIN32
 
@@ -1043,7 +1044,7 @@ int EnsureOffscreenTargets(Uint32 width, Uint32 height)
 // constant buffer is written per call, so the caller must commit and draw
 // before the next Map/Discard (the per-primitive loops rely on this).
 int DrawPrimitive(const ScenePrimitive& primitive, IPipelineState* pipeline,
-	IShaderResourceBinding* srb, const float mvp[16], int worldShadeOffset)
+	IShaderResourceBinding* srb, const float mvp[16], int worldShadeOffset, int spriteLightLevel)
 {
 	++g_frameDrawCalls;
 	SceneConstants constants;
@@ -1053,6 +1054,8 @@ int DrawPrimitive(const ScenePrimitive& primitive, IPipelineState* pipeline,
 		constants.baseColor[i] = primitive.baseColor[i];
 	for (int i = 0; i < 4; ++i)
 		constants.colorScale[i] = primitive.colorScale;
+	if (spriteLightLevel >= 0)
+		for (int i = 0; i < 3; ++i) constants.colorScale[i] *= spriteLightLevel / 128.0f;
 	constants.colorScale[3] = g_worldShadePaletteValid ? (float)worldShadeOffset : -1.0f;
 	memcpy(constants.worldShadePalette, g_worldShadePalette, sizeof(g_worldShadePalette));
 	// DISCARD allocates a fresh dynamic range. Previous draws keep their own
@@ -1094,7 +1097,7 @@ int DrawPrimitive(const ScenePrimitive& primitive, IPipelineState* pipeline,
 // primitives actually issued, so the caller can tell a fully empty item from a
 // drawn one.
 int DrawItemPrimitives(const SceneDrawItem& item, IPipelineState* pipeline,
-	int offscreenTarget, const float mvp[16], int worldShadeOffset = 0)
+	int offscreenTarget, const float mvp[16], int worldShadeOffset = 0, int spriteLightLevel = -1)
 {
 	int drawn = 0;
 	for (size_t p = 0; p < item.primitives.size(); ++p)
@@ -1105,7 +1108,7 @@ int DrawItemPrimitives(const SceneDrawItem& item, IPipelineState* pipeline,
 			: primitive.srb.RawPtr();
 		if (!primitive.vertices || !srb)
 			continue;
-		if (!DrawPrimitive(primitive, pipeline, srb, mvp, worldShadeOffset))
+		if (!DrawPrimitive(primitive, pipeline, srb, mvp, worldShadeOffset, spriteLightLevel))
 			return -1;
 		++drawn;
 	}
@@ -1173,7 +1176,10 @@ int RenderSceneInto(ITextureView* renderTarget, ITextureView* depthView,
 
 			// `drawn` counts instances, not primitives: an instance that issues
 			// at least one primitive counts once, however many it has.
-			const int primitiveCount = DrawItemPrimitives(*item, pipeline, offscreenTarget, mvp, g_instances[i].worldShadeOffset);
+			const NativeInstance& instance = g_instances[i];
+			const int spriteLight = instance.worldSpriteShadeMode == WORLD_SPRITE_SHADE_NEUTRAL ? 128 :
+				(instance.worldSpriteShadeMode == WORLD_SPRITE_SHADE_CAMERA ? instance.worldSpriteLightLevel : -1);
+			const int primitiveCount = DrawItemPrimitives(*item, pipeline, offscreenTarget, mvp, instance.worldShadeOffset, spriteLight);
 			if (primitiveCount < 0)
 				return 0;
 			if (primitiveCount > 0)
@@ -1701,6 +1707,12 @@ int NativeRenderer_SetInstances(const NativeInstance* instances, int count,
 
 	for (int i = 0; i < count; ++i)
 	{
+		if (instances[i].worldSpriteShadeMode < WORLD_SPRITE_SHADE_NONE || instances[i].worldSpriteShadeMode > WORLD_SPRITE_SHADE_NEUTRAL ||
+			instances[i].worldSpriteLightLevel < 0 || instances[i].worldSpriteLightLevel > 255)
+		{
+			SetError(error, errorCapacity, "invalid instance world sprite shade mode/light byte");
+			return 0;
+		}
 		if (instances[i].worldShadeOffset < 0 || instances[i].worldShadeOffset > 28 ||
 			(instances[i].worldShadeOffset & 3))
 		{
