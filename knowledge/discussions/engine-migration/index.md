@@ -221,11 +221,33 @@ Follow-up to the visibility checkpoint identified two distinct E03 material cont
   The inspected local developer setting has `hdTextureOverrides=0`; this does not
   establish HD overrides as the cause of the last original-texture differences.
 
-Recommendation: continue native HD override consumption as a separate coherent
-material block, then validate the next controlled world comparison. Remaining
-textures/materials, static coverage, player vehicle/on-foot and city expansion
-stay open; neither this correction nor the visibility checkpoint accepts E03 or
-full-game parity.
+User decision (2026-10-11): defer HD texture overrides and mods until the original-
+asset first slice has functional static-world coverage, including Chicago. The
+desired later authoring route is export to GLB/glTF, edit externally, then validate
+and reimport. Its data contract, validation rules and safe reimport behavior are
+undefined and unimplemented; this is not an authorization to start that work.
+
+For the next original-only world investigation, the Gate 4A Chicago inventory
+reports 6740 unique placements, 227 region straddlers, 150 referenced model slots,
+13 referenced textures and 114 models without a catalog material link, explicitly
+classified as unknown. It reports no missing model references; the unknown material
+classification is not evidence that runtime textures are absent. `assetcatalog_game.c`
+defines the inspected world primitive allowlist, `SourceModelDecoder.cpp` decodes
+supported textured/flat polygon classes into submeshes, and `texturebake.c` maps each
+submesh's texture set/id through `texture_pages`/`texture_cluts` to original CPU VRAM.
+Recommended bounded task: trace material identity and original page/CLUT resolution
+for the referenced static Chicago model slots, then fix and measure the most common
+confirmed unresolved original-material class. Keep the four eligible Chicago day
+barrels as the bounded fixture; report resolved/unresolved counts and named causes.
+Do not infer a defect from the 114 unknown links alone. This task is separate from
+the player car and pedestrian analyses.
+
+Remaining original textures/materials, static coverage, player vehicle/on-foot and
+city expansion stay open. Neither shading correction nor the visibility checkpoint
+accepts E03, original-texture correctness or full-game parity.
+
+History (2026-10-11): user deferred HD/mod consumption pending functional original
+world coverage and named external GLB/glTF edit/reimport as a later desired path.
 
 ## Open implementation decisions
 

@@ -3,7 +3,7 @@ type: Roadmap
 title: Engine migration with preserved Driver 2 simulation
 status: planned
 created: 2026-10-08
-updated: 2026-10-08
+updated: 2026-10-11
 tags: [okf, roadmap, engine, timing, assets, diligent, fmod, popcornfx]
 ---
 
@@ -97,6 +97,13 @@ at a driveable converted region early. Define and pass each block's essential
 contracts before its dependents, without requiring explanation of every legacy
 pixel or implementing unrelated optional features first. Preparation may overlap
 when independent, but partial delivery must remain labeled and bounded.
+
+For E03, prioritize an original-asset functional first slice: configuration and
+F9 diagnostics, static world coverage including Chicago, then player vehicle and
+on-foot pedestrian behavior, while preserving regional simulation ticks. HD
+texture overrides/mods are deferred until that original-asset coverage works.
+External GLB/glTF edit and validated reimport is a desired later workflow; its
+contracts are undefined and it is not part of the current implementation scope.
 
 ## Non-goals and later extensions
 

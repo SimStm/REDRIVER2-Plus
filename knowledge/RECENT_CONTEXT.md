@@ -7,7 +7,7 @@ tags: [okf, status, agents]
 
 # Recent engineering context
 
-> Updated: 2026-10-10.
+> Updated: 2026-10-11.
 > Read the handoff first: native GPU duplication removed; performance improved; full parity remains open.
 > Older task narratives are condensed; their change records
 > hold the detail.
@@ -28,9 +28,12 @@ performance first, tick/audio cadence, remaining world textures/models/shaders, 
 vehicles and other objects. Lighting conversion is deferred until geometry/materials are
 correct. No stage is accepted by this checkpoint.
 
-Current goal continues configuration/diagnostics + native F9, then static world/city
-coverage and player vehicle/on-foot pedestrian. Configuration now reads `[render]
-presentationFps` before developer overrides; absent developer keys preserve baseline.
+Current goal continues configuration/diagnostics + native F9, then original static
+world/city coverage and player vehicle/on-foot pedestrian, preserving regional ticks.
+HD texture overrides/mods are deferred until the original-asset first slice works.
+External GLB/glTF editing with validated reimport is a desired later route; its
+contracts remain undefined. Existing `[render] presentationFps` baseline inheritance
+is implemented; this does not establish HD/mod precedence or texture correctness.
 Native F9 GPU adapter is built and captured over mission 1 (2214 indexed draws, zero
 replay messages); legacy texture handles are explicitly unsupported, old PGXP/light
 controls disabled. Bilinear sampler replacement requires Diligent's

@@ -86,14 +86,12 @@ accepted.
   the new suite set (AssetPackageTests 39, ConversionCacheTests 38, GltfRoundTripTests 28, AssetConverterTests 28,
   AssetPipelineTests 25, SoundAssetTests 32); earlier InspectorExportTests 107 / AssetCatalogTests 145 are
   superseded below.
-- Chicago inventory (2026-10-09): Gate 4A attempt 2 approved a scoped diagnostic; the final fresh report scans all
-  four eligible Chicago day barrels (6740 unique placements, 227 straddlers, no overlaps or missing model refs,
-  114 unknown material classifications; 0 errors/480 warnings, 64 displayed/truncated). This is a source-union
-  diagnostic, not conversion or world acceptance. Corrected traversal includes terminal objects marked `0x8000`
-  (the initial 6078-count report is superseded); the fresh report was copied to
-  `src_rebuild/build_e04_gate4/logs/chicago_inventory_final.txt`. Other cities, variants and dynamic/streamed
-  categories remain open; complete package loading remains unaccepted. See
-  [inventory evidence](engine-migration/e02/chicago-inventory.md).
+- Chicago inventory (2026-10-09): Gate 4A attempt 2 approved a scoped diagnostic; the fresh report scans all four
+  eligible Chicago day barrels (6740 unique placements, 227 straddlers, no overlaps or missing model refs,
+  114 unknown material classifications; 0 errors/480 warnings, 64 displayed/truncated). Unknown links do not
+  prove runtime textures are absent. This source-union diagnostic is not conversion/world acceptance; corrected
+  traversal includes terminal `0x8000` objects (superseding the initial 6078 count). Other cities/variants and
+  dynamic/streamed package loading remain open; see [evidence](engine-migration/e02/chicago-inventory.md) and `src_rebuild/build_e04_gate4/logs/chicago_inventory_final.txt`.
 
 ## Engine migration E03 (in progress; parity not accepted)
 
@@ -112,7 +110,9 @@ accepted.
   old keys retire after instance replacement. Replay transitions retained 99/35 frames,
   zero empty loading frames; GPU smoke 1220/0, capture 5897 draws/zero messages. Initial
   loading/bounded staging overflow still clears. Prefetch and actors remain open.
-  This bridge does not read CD-thread buffers.
+  This bridge does not read CD-thread buffers. User direction defers HD texture overrides/mods until the original
+  asset first slice has functional static-world coverage including Chicago; external GLB/glTF edit/reimport is a
+  desired later workflow with undefined contracts. Neither direction is implemented by this status update.
 - Native settings/F9 block (2026-10-10): config.ini `[render] presentationFps` is read
   before selective developer overrides; missing FPS preserves the baseline. Diligent
   samplers follow live bilinear filtering for resident/new resources. The native F9
