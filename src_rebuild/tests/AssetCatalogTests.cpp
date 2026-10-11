@@ -5,6 +5,7 @@
 // isolation. Build and run instructions are in tests/README.md.
 
 #include "../Game/C/assetcatalog.h"
+#include "../Game/C/modeltexturelink.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -155,6 +156,40 @@ static void TestTextureDedupAndMaterials()
 
 	// Enumerating into a small buffer reports the true count.
 	CHECK(AssetCatalog_EnumerateModelTextures(roadA, NULL, 0) == 2);
+}
+
+static void TestSourcePolygonTextureKeys()
+{
+	AssetCatalog_Reset();
+	AssetCatalog_BeginContext(0, 0, 0);
+	const int model = AssetCatalog_RegisterModel(42, "PLMODEL", ASSET_CATALOG_SOURCE_DECLARED, -1, -1);
+	CHECK(model >= 0);
+
+	int textureSet = -1;
+	int textureId = -1;
+	const unsigned char plTriangle[] = { 10, 7, 19 };
+	const unsigned char plQuad[] = { 11, 4, 23 };
+	const unsigned char legacyTextured[] = { 5, 2, 9 };
+	const unsigned char untextured[] = { 9, 8, 12 };
+
+	CHECK(ModelTextureLink_GetTextureKey(plTriangle, &textureSet, &textureId));
+	CHECK(textureSet == 7 && textureId == 19);
+	int texture = AssetCatalog_RegisterTexture("pl_triangle", textureSet, textureId,
+		textureSet, ASSET_CATALOG_SOURCE_DECLARED);
+	CHECK(texture >= 0 && AssetCatalog_AddModelTexture(model, texture));
+	CHECK(ModelTextureLink_GetTextureKey(plQuad, &textureSet, &textureId));
+	CHECK(textureSet == 4 && textureId == 23);
+	texture = AssetCatalog_RegisterTexture("pl_quad", textureSet, textureId,
+		textureSet, ASSET_CATALOG_SOURCE_DECLARED);
+	CHECK(texture >= 0 && AssetCatalog_AddModelTexture(model, texture));
+	CHECK(ModelTextureLink_GetTextureKey(legacyTextured, &textureSet, &textureId));
+	CHECK(textureSet == 2 && textureId == 9);
+	CHECK(!ModelTextureLink_GetTextureKey(untextured, &textureSet, &textureId));
+	CHECK(!ModelTextureLink_GetTextureKey(NULL, &textureSet, &textureId));
+	CHECK(!ModelTextureLink_GetTextureKey(plTriangle, NULL, &textureId));
+	CHECK(AssetCatalog_EnumerateModelTextures(model, NULL, 0) == 2);
+	CHECK(AssetCatalog_FindTexture("pl_triangle", 7, 19) >= 0);
+	CHECK(AssetCatalog_FindTexture("pl_quad", 4, 23) >= 0);
 }
 
 static void TestSlotInvalidation()
@@ -704,6 +739,7 @@ int main()
 	TestModelIdentityAndInstances();
 	TestSlotInvalidation();
 	TestTextureDedupAndMaterials();
+	TestSourcePolygonTextureKeys();
 	TestComponentIdentity();
 	TestSelectionAnchors();
 	TestCarsAndPalettes();

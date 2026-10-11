@@ -53,10 +53,9 @@ all eight rotation buckets and two orientations sharing one converted resource. 
 solution build passed. A Visual Studio native mission 1 launch reached world rendering: the log
 records level 0/variant 0, 6,740 placements, 160/160 resources registered, 233 submitted, 186
 drawn and zero unresolved resources. This confirms scene publication and submission, not visual
-shading correctness. RenderDoc could not attach to the running target, so a new capture and
-mission-level visual inspection remain pending. The failed RenderDoc attach passed process PID
-73980 where a target-control identifier is required; this was an invalid capture argument, not
-evidence of a renderer failure.
+shading correctness. The failed RenderDoc attach passed process PID `73980` where a target-control
+identifier is required; this was an invalid capture argument, not evidence of a renderer failure.
+A later controlled capture and original-car result are recorded below.
 
 The panel displays ImGui's measured FPS separately from the requested cap, plus CPU
 draw/flush/present phases, draw/cull counts and tick/drop counters. These are not GPU timings.
@@ -90,6 +89,28 @@ The window target explicitly uses RGBA8_UNORM, matching the offscreen target and
 display-encoded original texels/prelit colours. The previous default sRGB target
 applied an extra encoding to that output. Future PBR lighting needs an explicit
 linear-workflow policy rather than reusing these prelit values as linear energy.
+
+## Resident original car bodies and texture identity (2026-10-11)
+
+Car preparation owns a CPU snapshot; its worker does not dereference live `MODEL` data. Model
+generation/revision changes invalidate stale preparations. World and actor instances are submitted
+through one `SetInstances` call. The car pose applies full rotation and COG offset to the clean
+body mesh; captured original body vertices retain neutral lighting. Chicago Take A Drive
+(`-nointro -nofmv -mission 1 -drawregion`) logs showed 14/14 active bodies ready and submitted,
+none hidden/waiting/failed/missing, plus 200/200 world resources and 8,876 placements with zero
+failed, unresolved or truncated placements. RenderDoc 1.41 capture `native-car-pose-20261011.rdc`
+replayed 1,036 draws/6,706 triangles with zero debug messages. The inspected PNG shows the player
+body, traffic, road and buildings. Steady samples at ticks 2,481–2,903 reported 30/31 ticks and
+zero drops, excluding capture/debug pauses. This was Take A Drive, not a story-mission run. Wheels,
+damage, pedestrians and on-foot/story views remain unvalidated or incomplete; this is not parity.
+
+The source catalog extracts texture set/index keys from declared polygon types 10 and 11 through
+the same helper used by production classification; a focused `AssetCatalogTests` case covers those
+links, not every unknown source material. Focused `NativeCarMeshTests` passed and all 19 inspector
+suites passed. `NativeRendererSmoke` passed 1249/0 during the earlier shading milestone. After the
+final diagnostic-latch change, isolated x64 `Release_dev_native` and reference `Release_dev` builds
+passed. OpenGL startup was not run because the Visual Studio configuration MCP call hung. Probe
+profile and INI files were restored byte-for-byte, verified against backups.
 
 ## Bounded local evidence (2026-10-10)
 

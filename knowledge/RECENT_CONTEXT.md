@@ -72,12 +72,12 @@ Native draw distance uses preserved cell/list aliases and DrawMap's approved cel
 F9 control enabled, tests 15/0 (18 suites pass). Tick 30 selects 155/233 instances at
 441/1800 with identical camera; GPU captures 308/461 draws, zero messages. Replay through
 tick 2128 dropped zero ticks; sector swaps retained 108/38 frames, zero empty frames.
-Published cell visibility as `34e104ed`. Orientation-aware building shading passes all 18
-inspector suites (WorldMeshBuilder 358/0), native smoke 1249/0 and both x64 solution builds. VS
-mission 1 reached level 0 (6740 placements, 160/160 resources, 186 draws). RenderDoc was given
-the process PID instead of a target identifier; capture and visual inspection remain pending.
-Next: remaining models, prefetch, vehicle/on-foot, PVS/streaming, split-screen and F9/input/display;
-full scene parity remains open.
+Published cell visibility as `34e104ed`. Orientation shading passed 18 suites and native smoke
+1249/0. All 19 inspector suites passed; PL10/11 links use the shared production helper. Both x64
+builds passed. Chicago TAD RenderDoc replay: 1036 draws, 6706 triangles, zero messages; player
+body, traffic, road and buildings visible. Logs: 14/14 bodies ready/submitted; world 200/200
+resources, 8876 placements, zero failed/unresolved/truncated. Focused car tests passed. OpenGL
+startup was not run after the VS configuration MCP hung; all four profile/INI hashes match backups. Wheels, damage, pedestrians, more cities and full parity remain open.
 
 - Fixed dynamic constant updates (Map/Discard), wired configured VSync and added
   conservative AABB culling against the exact homogeneous MVP. Local mission 1 baseline

@@ -46,6 +46,13 @@ extern void DrawCar(CAR_DATA *cp, int view); // 0x000210B8
 #ifndef PSX
 // [A] loads car model from file
 char* LoadCarModelFromFile(char* dest, int modelNumber, int type);
+#ifdef _WIN32
+struct WorldMeshConversionInput;
+struct NativeCarSourceIdentity;
+bool Cars_GetNativeSourceIdentity(int carId, NativeCarSourceIdentity* out);
+bool Cars_CaptureNativeBody(int carId, WorldMeshConversionInput* out, char* error, int capacity);
+bool Cars_GetNativeTransform(int carId, float out[16]);
+#endif
 bool Cars_ExportInspectorModel(int carId, const char* modId, char* status, int statusCapacity);
 bool Cars_ConvertInspectorModel(int carId, const char* modId, char* status, int statusCapacity);
 #endif

@@ -6,9 +6,9 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-# Builds and runs the two standalone suites that cover the asset catalog and the
-# inspector export path. They need no game assets and no GL context, so they are
-# the fastest verification available for changes in those areas.
+# Builds and runs the standalone asset, conversion and inspector suites. They
+# need no game assets and no GL context, so they are the fastest verification
+# available for changes in those areas.
 #
 # InspectorExportTests is not idempotent: it mutates the working directory and
 # reports leftover state as failures when re-run in the same place. Every run
@@ -161,6 +161,8 @@ try
 	Invoke-Suite -Name 'ModelPtypeProbeTests' -Sources @('tests\ModelPtypeProbeTests.cpp', 'Game\C\modelptypeprobe.c') `
 		-ExtraIncludes @() -LinkLibraries @()
 	Invoke-Suite -Name 'TextureDecodeTests' -Sources @('tests\TextureDecodeTests.cpp', 'utils\TextureDecode.cpp') `
+		-ExtraIncludes @() -LinkLibraries @()
+	Invoke-Suite -Name 'NativeCarMeshTests' -Sources @('tests\NativeCarMeshTests.cpp', 'utils\NativeCarMesh.cpp', 'utils\TextureDecode.cpp') `
 		-ExtraIncludes @() -LinkLibraries @()
 	Invoke-Suite -Name 'AssetPipelineTests' -Sources @('tests\AssetPipelineTests.cpp', 'utils\AssetConverter.cpp', 'utils\GltfLoader.cpp', 'utils\GltfWriter.cpp', 'Game\C\conversioncache.c', 'Game\C\assetpackage.c') `
 		-ExtraIncludes @() -LinkLibraries @('windowscodecs.lib', 'ole32.lib')

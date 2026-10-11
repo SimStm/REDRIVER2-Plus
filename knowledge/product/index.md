@@ -9,6 +9,8 @@ tags: [okf, product]
 
 - [Tick-owned desktop effects](tick-owned-effects.md): effect timing,
   interpolation and the current replay validation boundary.
+- [Native renderer performance and window ownership](native-renderer-performance.md): native scene,
+  settings, capture and bounded original-car rendering evidence.
 
 Add a focused document here when a product surface needs configuration,
 operational context, or compatibility notes that are broader than a code

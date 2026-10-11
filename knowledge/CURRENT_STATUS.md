@@ -167,11 +167,10 @@ accepted.
   resident VRAM at prepare, deduplicates page/CLUT images (64 images / 16 MiB), and keys baked
   pixels. Native sampling is RGBA8_UNORM NEAREST/CLAMP, raw UVs scaled once by 1/256, with a
   white untextured texel. Later-resident pages and full streaming remain outside this snapshot.
-- Working-tree native world shading correction: world draws use `CULL_NONE`, opaque alpha with `0000h`
-  discard, and LEQUAL depth. Normal-shaded building corners retain `_RED2_WORLD_SHADE` in GLBs
-  and cache hashes; each instance applies its legacy yaw bucket to the live 32-entry RGB palette.
-  Combo/tile/sprite content retains its baked path. Palette bytes match the packed-colour RGB
-  order; PSX additive/subtractive modes and complete scene parity remain open.
+- Native scene corrections: world draws use `CULL_NONE`, `0000h` alpha discard and LEQUAL depth;
+  building shade metadata selects the live RGB palette by original yaw. `texture.c` links declared
+  PL10/11 texture keys through the shared helper. Chicago TAD showed 14/14 clean original car bodies
+  ready/submitted; wheels, damage, lighting, pedestrians and full scene parity remain open.
 - Region capacities are now 1024 resources / 8192 placements, with explicit truncation and
   failed-resource diagnostics. Camera projection consumes live GTE `scr_z`/`ofx`/`ofy` rather
   than a fixed FOV. The observed scenario prepares six distinct LOD and four tile high-detail

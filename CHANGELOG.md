@@ -8,6 +8,11 @@ where release policy permits it.
 
 ## [Unreleased]
 
+### Added
+
+- Native region drawing can submit resident original car body meshes with live per-car transforms;
+  wheel, damage and pedestrian rendering remain incomplete.
+
 ### Changed
 
 - Native normal-shaded building instances now use their original rotation bucket with the live
@@ -34,6 +39,9 @@ where release policy permits it.
   services, without initializing its Vulkan or OpenGL renderer.
 
 ### Fixed
+
+- Source asset catalog texture identity now includes declared PL10/PL11 polygon links through the
+  same production key extractor.
 
 - MSVC inspector and native renderer smoke builds now write object files to isolated
   per-suite/build directories, preventing collisions between same-named objects.

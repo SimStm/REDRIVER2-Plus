@@ -30,6 +30,11 @@
 #include "../../utils/InspectorExport.h"
 #include "../../utils/CarMeshSerializer.h"
 #ifdef _WIN32
+#include "../../utils/NativeCarMesh.h"
+#include "PsyX/PsyX_render.h"
+static unsigned int s_nativeCarModelRevision[MAX_CAR_RESIDENT_MODELS] = {};
+#endif
+#ifdef _WIN32
 #include <windows.h>
 #ifdef LoadImage
 #undef LoadImage
@@ -1078,6 +1083,10 @@ MODEL* GetCarModel(char* src, char** dest, int KeepNormals)
 // [D] [T] [A]
 void buildNewCarFromModel(int index, int detail, char* polySrc, MODEL* model)
 {
+#if defined(_WIN32) && !defined(PSX)
+	if (index >= 0 && index < MAX_CAR_RESIDENT_MODELS) ++s_nativeCarModelRevision[index];
+#endif
+
 	int newNumPolys;
 	int i, pass;
 	ushort clut;
@@ -1694,6 +1703,111 @@ bool Cars_ConvertInspectorModel(int carId, const char* modId, char* status, int 
 		result.glbPath, result.converted ? "converted" : "reused", result.contentHash);
 	return true;
 #endif
+}
+#endif
+
+#if defined(_WIN32) && !defined(PSX)
+bool Cars_GetNativeSourceIdentity(int carId, NativeCarSourceIdentity* out)
+{
+	if (!out || carId < 0 || carId >= MAX_CARS) return false;
+	const CAR_DATA& car = car_data[carId];
+	const int model = car.ap.model;
+	if (car.controlType == CONTROL_TYPE_NONE || car.controlType == CONTROL_TYPE_CAMERACOLLIDER ||
+		model < 0 || model >= MAX_CAR_RESIDENT_MODELS || !car.ap.carCos ||
+		!gCarCleanModelPtr[model] || car.ap.palette >= 6) return false;
+	out->model = model; out->palette = car.ap.palette;
+	out->revision = s_nativeCarModelRevision[model];
+	out->cleanModel = gCarCleanModelPtr[model];
+	return true;
+}
+
+bool Cars_CaptureNativeBody(int carId, WorldMeshConversionInput* out, char* error, int capacity)
+{
+	NativeCarSourceIdentity identity = {};
+	if (!out || !Cars_GetNativeSourceIdentity(carId, &identity))
+	{
+		if (out) *out = WorldMeshConversionInput();
+		if (error && capacity > 0) snprintf(error, capacity, "original car body is not resident");
+		return false;
+	}
+	*out = WorldMeshConversionInput();
+	const MODEL* clean = identity.cleanModel;
+	const CAR_MODEL& model = NewCarModel[identity.model];
+	if (clean->num_vertices <= 0 || clean->num_vertices > MAX_DENTING_VERTS ||
+		model.numFT3 < 0 || model.numGT3 < 0 || model.numB3 < 0 ||
+		model.numFT3 > 1024 || model.numGT3 > 1024 || model.numB3 > 1024 ||
+		model.numFT3 + model.numGT3 + model.numB3 > 1024 ||
+		(model.numFT3 && !model.pFT3) || (model.numGT3 && !model.pGT3) || (model.numB3 && !model.pB3))
+	{
+		if (error && capacity > 0) snprintf(error, capacity, "original car body inventory is invalid");
+		return false;
+	}
+	// The legacy relocation getter takes MODEL*, but capture only reads it.
+	const SVECTOR* vertices = GET_MODEL_DATA(SVECTOR, const_cast<MODEL*>(clean), vertices);
+	std::vector<float> positions;
+	positions.reserve((size_t)clean->num_vertices * 3);
+	for (int v = 0; v < clean->num_vertices; ++v)
+	{
+		positions.push_back((float)vertices[v].vx);
+		positions.push_back((float)vertices[v].vy);
+		positions.push_back((float)vertices[v].vz);
+	}
+	std::vector<NativeCarTriangle> triangles;
+	const CAR_POLY* lists[3] = { model.pFT3, model.pGT3, model.pB3 };
+	const int counts[3] = { model.numFT3, model.numGT3, model.numB3 };
+	for (int list = 0; list < 3; ++list)
+	{
+		for (int p = 0; p < counts[list]; ++p)
+		{
+			const CAR_POLY& polygon = lists[list][p];
+			NativeCarTriangle triangle = {};
+			for (int c = 0; c < 3; ++c) triangle.vertices[c] = ((unsigned int)polygon.vindices >> (c * 8)) & 255;
+			triangle.textured = list != 2;
+			if (triangle.textured)
+			{
+				triangle.tpage = (unsigned short)((unsigned int)polygon.tpage_uv1 >> 16);
+				triangle.clut = (unsigned short)((unsigned int)polygon.clut_uv0 >> 16);
+				if (list == 1)
+				{
+					const int offset = triangle.clut + identity.palette;
+					if (offset < 0 || offset >= 7 * 32 * 6)
+					{
+						if (error && capacity > 0) snprintf(error, capacity, "original car palette index is invalid");
+						return false;
+					}
+					triangle.clut = ((const unsigned short*)&civ_clut[1])[offset];
+				}
+				const unsigned int packed[3] = { (unsigned int)polygon.clut_uv0,
+					(unsigned int)polygon.tpage_uv1, (unsigned int)polygon.uv3_uv2 };
+				for (int c = 0; c < 3; ++c)
+				{
+					triangle.uv[c * 2] = (unsigned char)packed[c];
+					triangle.uv[c * 2 + 1] = (unsigned char)(packed[c] >> 8);
+				}
+			}
+			triangles.push_back(triangle);
+		}
+	}
+	std::vector<unsigned short> vram(1024u * 512u);
+	GR_ReadVRAM(vram.data(), 0, 0, 1024, 512);
+	return NativeCarMesh_Capture(positions, triangles, vram, out, error, capacity);
+}
+
+bool Cars_GetNativeTransform(int carId, float out[16])
+{
+	NativeCarSourceIdentity identity = {};
+	if (!out || !Cars_GetNativeSourceIdentity(carId, &identity)) return false;
+	const CAR_DATA& car = car_data[carId];
+	int position[3] = { car.hd.where.t[0], car.hd.where.t[1], car.hd.where.t[2] };
+	short rotation[3][3];
+	memcpy(rotation, car.hd.where.m, sizeof(rotation));
+	const int alpha = VisualSnapshot_GetAlpha();
+	if (VisualSnapshot_GetPosition(carId, alpha, position))
+		VisualSnapshot_GetRotation(carId, alpha, rotation);
+	const SVECTOR& cog = car.ap.carCos->cog;
+	const short offset[3] = { cog.vx, cog.vy, cog.vz };
+	NativeCarMesh_ComposeTransform(position, rotation, offset, ActiveCheats.cheat13 != 0, out);
+	return true;
 }
 #endif
 

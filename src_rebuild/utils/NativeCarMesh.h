@@ -1,0 +1,38 @@
+#ifndef NATIVE_CAR_MESH_H
+#define NATIVE_CAR_MESH_H
+
+#include "WorldMeshConversion.h"
+
+struct MODEL;
+struct NativeCarSourceIdentity
+{
+	int model, palette;
+	unsigned int revision;
+	const MODEL* cleanModel; // identity only; workers never dereference it
+};
+
+bool NativeCarMesh_SameSource(const NativeCarSourceIdentity& a, const NativeCarSourceIdentity& b);
+bool NativeCarMesh_IsCurrentPublication(const NativeCarSourceIdentity& current,
+	const NativeCarSourceIdentity& captured, unsigned int currentGeneration, unsigned int capturedGeneration);
+
+// Owned original-car triangles, independent of CAR_MODEL/VRAM lifetimes.
+struct NativeCarTriangle
+{
+	unsigned int vertices[3];
+	unsigned char uv[6];
+	unsigned short tpage, clut;
+	bool textured;
+};
+
+// Captures all triangles and original page/CLUT pixels; failure clears output.
+// Limits: 256 original vertices, 1024 triangles, 64 materials, 16 MiB pixels.
+bool NativeCarMesh_Capture(const std::vector<float>& positions,
+	const std::vector<NativeCarTriangle>& triangles, const std::vector<unsigned short>& vram,
+	WorldMeshConversionInput* out, char* error, int capacity);
+
+// Full original drawCarMat rotation and cog, not static-world yaw. Translation
+// comes from the same visual snapshot interval; game/camera axes remain unchanged.
+void NativeCarMesh_ComposeTransform(const int position[3], const short rotation[3][3],
+	const short cog[3], bool miniature, float out[16]);
+
+#endif

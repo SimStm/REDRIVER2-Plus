@@ -10,6 +10,7 @@
 #ifndef PSX
 #include "../utils/HdTextureOverrides.h"
 #include "assetcatalog.h"
+#include "modeltexturelink.h"
 #endif
 
 SXYPAIR tpagepos[20] =
@@ -216,35 +217,20 @@ void RegisterCatalogModelTextures(MODEL* model, int modelRecord)
 
 	for (int i = 0; i < model->num_polys; i++)
 	{
-		const int ptype = *polylist & 0x1F;
+		int textureSet;
+		int textureId;
 
-		switch (ptype)
+		if (ModelTextureLink_GetTextureKey(polylist, &textureSet, &textureId))
 		{
-			case 4:
-			case 5:
-			case 6:
-			case 7:
-			case 20:
-			case 21:
-			case 22:
-			case 23:
+			if (textureSet < tpage_amount && textureId < tpage_texamts[textureSet])
 			{
-				const int textureSet = polylist[1];
-				const int textureId = polylist[2];
+				const char* name = texturename_buffer + tpage_ids[textureSet][textureId].nameoffset;
+				int textureRecord = AssetCatalog_RegisterTexture(name, textureSet, textureId,
+					textureSet, ASSET_CATALOG_SOURCE_DECLARED);
 
-				if (textureSet < tpage_amount && textureId < tpage_texamts[textureSet])
-				{
-					const char* name = texturename_buffer + tpage_ids[textureSet][textureId].nameoffset;
-					int textureRecord = AssetCatalog_RegisterTexture(name, textureSet, textureId,
-						textureSet, ASSET_CATALOG_SOURCE_DECLARED);
-
-					if (textureRecord >= 0)
-						AssetCatalog_AddModelTexture(modelRecord, textureRecord);
-				}
-				break;
+				if (textureRecord >= 0)
+					AssetCatalog_AddModelTexture(modelRecord, textureRecord);
 			}
-			default:
-				break;
 		}
 
 		polylist += PolySizes[*polylist & 0x1F];
