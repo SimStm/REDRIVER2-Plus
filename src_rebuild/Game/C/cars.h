@@ -49,9 +49,14 @@ char* LoadCarModelFromFile(char* dest, int modelNumber, int type);
 #ifdef _WIN32
 struct WorldMeshConversionInput;
 struct NativeCarSourceIdentity;
+struct NativeWheelSourceIdentity;
+struct NativeWheelCapture;
 bool Cars_GetNativeSourceIdentity(int carId, NativeCarSourceIdentity* out);
 bool Cars_CaptureNativeBody(int carId, WorldMeshConversionInput* out, char* error, int capacity);
 bool Cars_GetNativeTransform(int carId, float out[16]);
+bool Cars_GetNativeWheelSource(int carId, int wheelSlot, NativeWheelSourceIdentity* out);
+bool Cars_CaptureNativeWheel(int carId, int wheelSlot, NativeWheelCapture* out, char* error, int capacity);
+bool Cars_GetNativeWheelPose(int carId, int wheelSlot, float transform[16], int* spinSin, int* spinCos);
 #endif
 bool Cars_ExportInspectorModel(int carId, const char* modId, char* status, int statusCapacity);
 bool Cars_ConvertInspectorModel(int carId, const char* modId, char* status, int statusCapacity);

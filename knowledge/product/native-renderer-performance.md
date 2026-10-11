@@ -112,6 +112,36 @@ final diagnostic-latch change, isolated x64 `Release_dev_native` and reference `
 passed. OpenGL startup was not run because the Visual Studio configuration MCP call hung. Probe
 profile and INI files were restored byte-for-byte, verified against backups.
 
+## Dynamic wheels and diagnostic HUD (2026-10-11)
+
+Wheel preparation uses owned CPU snapshots; workers do not dereference live `MODEL` data. Source
+generation/revision changes invalidate stale work, and consumed tasks return to Waiting when their
+source temporarily disappears. Current actor transforms update wheel positions through bounded
+dynamic uploads (4096-vertex cap), with finite/count validation before bounds commit. Steering,
+compression and spin still use current-tick values. Each car reserves four wheel resources; the
+scene transition budget reserves 80 private wheel keys plus 80 retired keys (160 total) within the
+1024-resource registry. Captured
+legacy colors preserve constant-black wheel quads and participate in source cache identity. World
+and actors share one instance submission call.
+
+`RED2_NATIVE_VISUAL_DEBUG=1` enables a text-only HUD on the existing overlay independently of F9;
+it captures no input. It reports resource, placement, selected-instance, and actor lifecycle counts.
+"Selected" is CPU-side instance selection, not proof of final GPU visibility. Pedestrians display
+as pending native rendering rather than a fabricated count.
+
+The corrected Chicago Take A Drive run (`-nointro -nofmv -mission 1 -drawregion`) reported 13
+active/ready/submitted cars and 52 ready/submitted wheels. The inspected RenderDoc PNG shows traffic
+and two visible tires with the HUD; replay had 350 draws and zero validation messages. Perf samples
+showed no dropped ticks during observed steady windows. The run reported `playerCar=-1`, so it does
+not prove the player car was rendered. Damage, pedestrians, additional cities and complete scene
+coverage remain open. Capture is ignored local evidence at
+`build_e00/native-performance/native-wheel-hud-20261011.rdc` and `.png`.
+
+Focused `NativeCarMeshTests` passed with zero failures; `NativeRendererSmoke` passed 1264 checks
+with zero failures. Native and reference x64 builds succeeded. A separate reference OpenGL startup
+logged OpenGL 3.3 on the RTX 3060 Ti. These bounded checks do not establish migration-stage or full
+game acceptance.
+
 ## Bounded local evidence (2026-10-10)
 
 Windows x64, Release_dev_native, Chicago mission 1, 1280x720, RTX 3060 Ti, cap 360,

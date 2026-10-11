@@ -11,6 +11,7 @@
 #ifdef _WIN32
 #include "NativeRenderer.h"
 #include "NativeDeveloperOverlay.h"
+#include "NativeSceneDebug.h"
 #endif
 
 #if defined(_WIN32) || defined(__linux__)
@@ -2178,11 +2179,47 @@ void BuildOverlayWidgets()
 }
 
 #ifdef _WIN32
+void DrawNativeSceneDebug()
+{
+	if (!NativeSceneDebug_Enabled())
+		return;
+
+	const NativeSceneDebugSnapshot snapshot = NativeSceneDebug_Read();
+	const char* worldPhase = snapshot.worldFailed ? "failed" :
+		snapshot.worldReady ? "ready" : "preparing";
+
+	const ImGuiIO& io = ImGui::GetIO();
+	ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x - 12.0f, 12.0f), ImGuiCond_Always,
+		ImVec2(1.0f, 0.0f));
+	ImGui::SetNextWindowBgAlpha(0.88f);
+	const ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
+		ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_AlwaysAutoResize |
+		ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoBringToFrontOnFocus |
+		ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoNav;
+
+	if (ImGui::Begin("Native scene diagnostics", NULL, flags))
+	{
+		ImGui::Text("World phase: %s | generation: %u", worldPhase, snapshot.generation);
+		ImGui::Text("World resources: %d | placements: %d | selected: %d",
+			snapshot.worldResources, snapshot.worldPlacements, snapshot.worldVisible);
+		ImGui::Separator();
+		ImGui::Text("Cars active: %d | ready: %d | submitted: %d",
+			snapshot.carActive, snapshot.carReady, snapshot.carSubmitted);
+		ImGui::Text("Cars waiting: %d | failed: %d | missing: %d",
+			snapshot.carWaiting, snapshot.carFailed, snapshot.carMissing);
+		ImGui::Text("Wheels: ready %d | submitted %d | failed %d",
+			snapshot.wheelReady, snapshot.wheelSubmitted, snapshot.wheelFailed);
+		ImGui::TextUnformatted("Pedestrians: pending native rendering");
+	}
+	ImGui::End();
+}
+
 int RenderNativeOverlay(void* context, void* target)
 {
 	ImGui_ImplSDL2_NewFrame();
 	ImGui::NewFrame();
 	BuildOverlayWidgets();
+	DrawNativeSceneDebug();
 	ImGui::Render();
 	return NativeDeveloperOverlay_Draw(context, target, ImGui::GetDrawData()) ? 1 : 0;
 }

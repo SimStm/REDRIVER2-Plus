@@ -10,8 +10,12 @@ where release policy permits it.
 
 ### Added
 
-- Native region drawing can submit resident original car body meshes with live per-car transforms;
-  wheel, damage and pedestrian rendering remain incomplete.
+- Native region drawing submits resident original car bodies and dynamically positioned wheel
+  geometry. A Chicago diagnostic capture showed traffic-car tires; player identity, damage,
+  pedestrians and complete scene coverage remain unverified or incomplete.
+- Added the default-off `RED2_NATIVE_VISUAL_DEBUG=1` text HUD on the existing overlay. It reports
+  world, car and wheel lifecycle counters and marks pedestrians as pending; it does not capture
+  input or establish final GPU visibility.
 
 ### Changed
 

@@ -9,8 +9,7 @@ tags: [okf, status, agents]
 
 > Updated: 2026-10-11.
 > Read the handoff first: native GPU duplication removed; performance improved; full parity remains open.
-> Older task narratives are condensed; their change records
-> hold the detail.
+> Older task narratives are condensed; change records hold the detail.
 
 ## Handoff (read first): plan, current step, what must finish first
 
@@ -22,62 +21,24 @@ PopcornFX optional, only on explicit request). User scope: at least through E06.
 Preserve Driver 2 simulation/math/mission/cutscene/replay/regional semantics;
 fixed ticks independent of presentation FPS and CPU speed.
 
-**Current step: E03 native performance and window ownership, followed by world parity.**
-The prior pending work was committed/pushed as `7fdce013`. User priority on 2026-10-10:
-performance first, tick/audio cadence, remaining world textures/models/shaders, then player,
-vehicles and other objects. Lighting conversion is deferred until geometry/materials are
-correct. No stage is accepted by this checkpoint.
+**Current step: native Chicago scene diagnostics and vehicle rendering; no stage is accepted.**
+Checkpoint `09a542d3` is published. Priorities: performance/ticks/audio, original assets, then
+actors; lighting follows correct geometry/materials. HD/mods await original-city coverage; later
+GLB/glTF edit/reimport remains desired with undefined contracts. FPS inheritance says nothing about
+HD/mod precedence or texture correctness.
 
-Current goal continues configuration/diagnostics + native F9, then original static
-world/city coverage and player vehicle/on-foot pedestrian, preserving regional ticks.
-HD texture overrides/mods are deferred until the original-asset first slice works.
-External GLB/glTF editing with validated reimport is a desired later route; its
-contracts remain undefined. Existing `[render] presentationFps` baseline inheritance
-is implemented; this does not establish HD/mod precedence or texture correctness.
-Native F9 GPU adapter is built and captured over mission 1 (2214 indexed draws, zero
-replay messages); legacy texture handles are explicitly unsupported, old PGXP/light
-controls disabled. Bilinear sampler replacement requires Diligent's
-ALLOW_OVERWRITE flag and a rare GPU idle wait for safe mutable descriptor changes;
-GPU smoke passes 1207/0 (blend, new resources, nearest restoration). Timing runner passes
-NTSC/PAL settings 24 each, timing 145364 each and effects 2688/2448. Native VS build passed.
-The SDK chooses MAILBOX before IMMEDIATE with VSync off. Two images reproduced stationary
-~60 FPS / Present ~7-8 ms; requesting three gives ~106-115 FPS / Present ~0.16-0.18 ms,
-same stationary view/2212 world draws, panel open, cap 360, ticks 30/31 and zero drops.
-Prior moving-camera samples were ~54-59 FPS; `native-overlay-three-images.rdc/png`
-shows bilinear output, 2214 draws/zero messages. UI reports actual images; perf separates UI time.
-Actual base-config inheritance startup logged cap=144 when config.ini specified 144 and
-the developer FPS key was omitted. Both INI files restored byte-for-byte afterwards.
-Prior OpenGL startup passed (3.3.0). Generated native debugger no longer auto-opens F9.
-Resident streaming now observes local-file sectors, area, model revisions and texture-page
-residency. Publications rebuild transforms/LOD provenance, retain unchanged GPU keys and
-retire removed keys; loading clears without the renderer fixture. Source/native placement
-bounds agree at 16384. ATTRACT.400 changed to regions [198,199,214,215] (8594 placements,
-206 resources) then [198,199,182,183] (10167/185); zero conversion failures/truncations.
-Synchronous reconversion dropped 107 ticks; reuse reduced this to 37. New preparation
-captures owned geometry, indexed pixel buffers and colours, then runs build/hash/cache
-publication in a single asynchronous task. Normal frames poll; level loading/shutdown join.
-Obsolete source-state results are discarded. GPU uploads use 4 ms batches; region readback
-is opt-in (`RED2_NATIVE_REGION_CAPTURE=1`). New pure WorldMeshConversion module preserves
-the historical nonstandard hash seed; the compatibility test caught the initial wrong
-seed and now passes. Final replay reached tick 5551, two transitions, zero drops before capture.
-Published presentation now owns placement/LOD data and retains the previous native scene
-during preparation/uploads, retiring old keys after replacement. Replay transitions held
-99/35 frames, zero empty loading frames; tick 717 zero drops before capture (+15 during it).
-Initial loading/staging overflow still clears; final GPU capture 5897 draws/zero messages.
-WorldMeshConversionTests: 14/0 (owned pixels, concurrent .tmp safety, cache identity,
-16 MiB owned/64 MiB expanded image bounds). GPU smoke: 1220/0. Evidence:
-native-performance/async-world-*. Final RenderDoc: 6347 draws/zero messages, PNG inspected;
-capture added 17 drops. Native/OpenGL builds/startups passed; debugger profile restored exactly.
-Native draw distance uses preserved cell/list aliases and DrawMap's approved cell record;
-F9 control enabled, tests 15/0 (18 suites pass). Tick 30 selects 155/233 instances at
-441/1800 with identical camera; GPU captures 308/461 draws, zero messages. Replay through
-tick 2128 dropped zero ticks; sector swaps retained 108/38 frames, zero empty frames.
-Published cell visibility as `34e104ed`. Orientation shading passed 18 suites and native smoke
-1249/0. All 19 inspector suites passed; PL10/11 links use the shared production helper. Both x64
-builds passed. Chicago TAD RenderDoc replay: 1036 draws, 6706 triangles, zero messages; player
-body, traffic, road and buildings visible. Logs: 14/14 bodies ready/submitted; world 200/200
-resources, 8876 placements, zero failed/unresolved/truncated. Focused car tests passed. OpenGL
-startup was not run after the VS configuration MCP hung; all four profile/INI hashes match backups. Wheels, damage, pedestrians, more cities and full parity remain open.
+The existing F9 GPU overlay, sampler controls, actual base-config FPS inheritance, and
+OpenGL 3.3 reference startup are validated in earlier records. Resident streaming publishes
+owned geometry/pixels/colours asynchronously, retains unchanged GPU keys, and uses bounded upload
+batches; source/native placements agree at 16384. Draw-distance selection and world-shading
+milestones are published at `34e104ed` and `09a542d3`. Prior Chicago TAD evidence showed 14/14
+body submissions, 200 world resources and 8876 placements; it did not prove wheels or parity.
+Detailed historical measurements remain in `knowledge/product/native-renderer-performance.md`.
+
+The working HUD is opt-in (`RED2_NATIVE_VISUAL_DEBUG=1`), text-only on the existing overlay and
+independent of F9/input capture. Preserve the user's corrected `build_jointcheck` DLL working
+directories; do not restore older profile backups. HD/mod work remains deferred until functional
+original-city coverage, and later GLB/glTF edit/reimport is desired with contracts still undefined.
 
 - Fixed dynamic constant updates (Map/Discard), wired configured VSync and added
   conservative AABB culling against the exact homogeneous MVP. Local mission 1 baseline
@@ -104,6 +65,16 @@ startup was not run after the VS configuration MCP hung; all four profile/INI ha
 - Release_dev|x64 compatibility build and -opengl mission 1 launch passed; log confirms
   OpenGL 3.3.0. Native smoke passed 1200 checks; sessions stopped and local diagnostics
   are not committed.
+
+2026-10-11 wheel/HUD validation: focused `NativeCarMeshTests` passed 0 failures; GPU smoke passed
+1264/0; both x64 builds succeeded with existing linker warnings. Corrected native launch used
+`-nointro -nofmv -mission 1 -drawregion`, `RED2_NATIVE_RENDERER=1`, and visual-debug/perf flags.
+RenderDoc 1.41 replay reported 350 draws/zero validation messages. The inspected PNG shows traffic,
+two tires and HUD; counters show 160 world resources, 6740 placements, 13 active/ready/submitted
+cars, 52 ready/submitted wheels, and pedestrians pending. Perf samples showed zero dropped ticks.
+`playerCar=-1`, so player identity is not proven. Separate reference `Release_dev -opengl` startup
+logged OpenGL 3.3 on RTX 3060 Ti. First probe omitted `-drawregion`; corrected invocation succeeded.
+No profile or INI changes were made; corrected user working directories remain intact.
 Prior bounded parity evidence (preserved; not full acceptance):
 
 - World pipeline: `CULL_NONE`, opaque alpha / `0000h` discard, LEQUAL; legacy world colours

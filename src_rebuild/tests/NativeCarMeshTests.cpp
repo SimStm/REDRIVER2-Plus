@@ -1,5 +1,6 @@
 #include "../utils/NativeCarMesh.h"
 #include "../utils/NativeCarScene.h"
+#include "../utils/NativeWheelMesh.h"
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
@@ -141,9 +142,84 @@ static void ActualCombinedSubmissionSeam()
 }
 #endif
 
+static void OriginalWheelProceduralGeometry()
+{
+	NativeWheelCapture capture;
+	capture.originalPositions.resize(24 * 3);
+	for (int v = 0; v < 24; ++v)
+	{
+		capture.originalPositions[v * 3] = (float)(v + 1);
+		capture.originalPositions[v * 3 + 1] = 70;
+		capture.originalPositions[v * 3 + 2] = 90;
+		capture.cornerVertices.push_back(v);
+	}
+	std::vector<float> zero, quarter;
+	char error[256];
+	CHECK(NativeWheelMesh_Deform(capture, 100, 0, 4096, &zero, error, sizeof(error)));
+	CHECK(NativeWheelMesh_Deform(capture, 100, 4096, 0, &quarter, error, sizeof(error)));
+	CHECK(zero[8 * 3 + 1] == 141 && zero[8 * 3 + 2] == 0);
+	CHECK(quarter[8 * 3 + 1] == 0 && quarter[8 * 3 + 2] == 141);
+	CHECK(zero[11 * 3 + 1] == 0 && zero[11 * 3 + 2] == -141);
+	CHECK(quarter[11 * 3 + 1] == 141 && quarter[11 * 3 + 2] == 0);
+	for (int v = 0; v < 24; ++v) CHECK(zero[v * 3] == quarter[v * 3] && zero[v * 3] == v + 1);
+	for (int v = 16; v < 24; ++v)
+		CHECK(zero[v * 3 + 1] == quarter[v * 3 + 1] && zero[v * 3 + 2] == quarter[v * 3 + 2]);
+	CHECK(zero[0] == 1 && zero[1] == 70 && zero[2] == 90);
+	CHECK(zero[16 * 3 + 1] == -100 && zero[16 * 3 + 2] == 0);
+	CHECK(zero[17 * 3 + 1] == -100 && zero[17 * 3 + 2] == 0);
+	CHECK(zero[18 * 3 + 1] == 0 && zero[18 * 3 + 2] == -100);
+	CHECK(zero[19 * 3 + 1] == 0 && zero[19 * 3 + 2] == -100);
+	CHECK(zero[20 * 3 + 1] == 0 && zero[20 * 3 + 2] == 100);
+	CHECK(zero[21 * 3 + 1] == 0 && zero[21 * 3 + 2] == 100);
+	CHECK(zero[22 * 3 + 1] == 100 && zero[22 * 3 + 2] == 0);
+	CHECK(zero[23 * 3 + 1] == 100 && zero[23 * 3 + 2] == 0);
+	CHECK(NativeWheelMesh_Deform(capture, 100, 2048, -2048, &quarter, error, sizeof(error)));
+	CHECK(quarter[8 * 3 + 1] == -70 && quarter[8 * 3 + 2] == 71);
+	const unsigned int indices[4] = { 8,3,19,21 };
+	const unsigned char uv[8] = { 11,22,33,44,55,66,77,88 };
+	NativeCarTriangle emitted[2];
+	NativeWheelMesh_TriangulateQuad(indices, uv, 17, 23, emitted);
+	CHECK(emitted[0].vertices[0] == 8 && emitted[0].vertices[1] == 3 && emitted[0].vertices[2] == 21);
+	CHECK(emitted[1].vertices[0] == 3 && emitted[1].vertices[1] == 21 && emitted[1].vertices[2] == 19);
+	CHECK(emitted[0].uv[0] == 11 && emitted[0].uv[2] == 33 && emitted[0].uv[4] == 77);
+	CHECK(emitted[1].uv[0] == 33 && emitted[1].uv[2] == 77 && emitted[1].uv[4] == 55);
+	CHECK(emitted[1].uv[1] == 44 && emitted[1].uv[3] == 88 && emitted[1].uv[5] == 66);
+	CHECK(emitted[0].tpage == 17 && emitted[1].clut == 23 && emitted[1].textured);
+	std::vector<unsigned char> colors(5 * 6 * 3, 128);
+	CHECK(NativeWheelMesh_ApplyConstantColors(5, &colors, error, sizeof(error)));
+	for (int q = 0; q < 5; ++q)
+		for (int channel = 0; channel < 18; ++channel)
+			CHECK(colors[q * 18 + channel] == (q < 2 ? 128 : 0));
+	const std::vector<unsigned char> previousColors = colors;
+	CHECK(!NativeWheelMesh_ApplyConstantColors(4, &colors, error, sizeof(error)) && colors == previousColors);
+	CHECK(!NativeWheelMesh_ApplyConstantColors(17, &colors, error, sizeof(error)) && colors == previousColors);
+	capture.cornerVertices[0] = 24;
+	CHECK(!NativeWheelMesh_Deform(capture, 100, 0, 4096, &quarter, error, sizeof(error)) && quarter.empty());
+	capture.cornerVertices[0] = 0;
+	CHECK(!NativeWheelMesh_Deform(capture, -1, 0, 4096, &quarter, error, sizeof(error)));
+	const float body[16] = { -1,0,0,0, 0,1,0,0, 0,0,-1,0, 100,-200,300,1 };
+	const short displacement[3] = { 10,20,30 };
+	float wheel[16];
+	for (int slot = 0; slot < 4; ++slot)
+	{
+		NativeWheelMesh_ComposeTransform(body, displacement, 100, 5, slot, 4096, 0, wheel);
+		CHECK(Near(wheel[12], slot & 2 ? 127 : 93));
+		CHECK(Near(wheel[13], -311) && Near(wheel[14], 330));
+		CHECK(Near(wheel[0], slot & 1 ? -1 : 0));
+		CHECK(Near(wheel[2], slot & 1 ? 0 : 1));
+		CHECK(wheel[15] == 1);
+	}
+	NativeWheelSourceIdentity first = {}, second = {};
+	first.wheelSize = second.wheelSize = 100;
+	CHECK(NativeWheelMesh_SameSource(first, second));
+	second.wheelSize = 101;
+	CHECK(!NativeWheelMesh_SameSource(first, second));
+}
+
 int main()
 {
 	CaptureOwnedOriginalPages(); CaptureRejectsBoundsAtomically(); FullCarTransform(); ActualPublicationIdentitySeam();
+	OriginalWheelProceduralGeometry();
 #ifdef _WIN32
 	ActualCombinedSubmissionSeam();
 #endif

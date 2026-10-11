@@ -13,7 +13,7 @@ tags: [okf, status]
 
 ## Branch and adopted plan
 
-`feat/new-engine` checkpoint `34e104ed` is committed/pushed; native progress is documented below.
+`feat/new-engine` checkpoint `09a542d3` is published; native progress is documented below.
 No migration-stage acceptance follows from publication. Serena selects the C++ language
 server; generated state and proprietary assets/SDKs are not included.
 
@@ -169,21 +169,21 @@ accepted.
   white untextured texel. Later-resident pages and full streaming remain outside this snapshot.
 - Native scene corrections: world draws use `CULL_NONE`, `0000h` alpha discard and LEQUAL depth;
   building shade metadata selects the live RGB palette by original yaw. `texture.c` links declared
-  PL10/11 texture keys through the shared helper. Chicago TAD showed 14/14 clean original car bodies
-  ready/submitted; wheels, damage, lighting, pedestrians and full scene parity remain open.
+  PL10/11 texture keys through the shared helper. Chicago TAD showed clean car bodies and bounded
+  traffic-wheel submission; player identity, damage, lighting, pedestrians and full parity remain open.
 - Region capacities are now 1024 resources / 8192 placements, with explicit truncation and
   failed-resource diagnostics. Camera projection consumes live GTE `scr_z`/`ofx`/`ofy` rather
   than a fixed FOV. The observed scenario prepares six distinct LOD and four tile high-detail
   variants; per-frame legacy-Z thresholds choose resource keys. This is implemented bounded
   tier selection, not complete LOD/streaming or scene acceptance.
-- Diagnostics are default-off; the magenta-background environment diagnostic currently enables
-  when its variable is present. Source-bounded content/cutout probes are diagnostic only.
-  Debug captures can freeze at `DelayTicks=600`; both baseline logs reached tick 600, with
-  dropped ticks legacy 0 / native 397. Equal tick numbers do not prove equal interpolation
-  phase or full deterministic state. Earlier wall-clock comparisons are confounded.
-- Pre-quad-fix matched-tick baseline: clear-background count 102440 (11.1%); no-cutout count
-  99811 (10.8%). Magenta confirmed untouched background. These are bounded diagnostic
-  observations, not a stage acceptance metric.
+- Opt-in `RED2_NATIVE_VISUAL_DEBUG=1` draws text on the existing overlay, independent of F9 and
+  input capture. Chicago showed 13 ready/submitted cars, 52 ready/submitted wheels and visible
+  traffic tires. Updates use a 4096-vertex cap; source mismatch retries and black quads/cache colors
+  are preserved. HUD selection is not final visibility; run reported `playerCar=-1`. Damage,
+  lighting, pedestrians, other cities and parity remain open. Focused tests passed; GPU smoke 1264,
+  both x64 builds and OpenGL startup passed. Corrected user profiles were restored; INIs unchanged.
+- Existing magenta/cutout probes are diagnostics only. Earlier quad comparisons reduced
+  clear-background pixels from 102440 to 1733; these bounded captures do not establish parity.
 - Source-proven quad correction: cyclic raw A,B,C,D remains stored A,B,D,C with unchanged
   UV/colour/shade mapping; indices `012,132` cover legacy ABD+BCD with consistent winding,
   replacing overlapping `012,023`. Triangle paths/counts are unchanged. `HashSourceMesh`

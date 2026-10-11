@@ -59,6 +59,8 @@
 #include <direct.h>
 #include "utils/NativeCarMesh.h"
 #include "utils/NativeCarScene.h"
+#include "utils/NativeSceneDebug.h"
+#include "utils/NativeWheelScene.h"
 #include "NativeRenderer.h"
 #endif
 
@@ -783,9 +785,10 @@ static int NativeRenderer_AppendCars(int count, const float view[16])
 		s_nativeCarGeneration = generation;
 	}
 	NativeRenderer_PollCarConversion();
+	NativeWheelScene_Begin(generation);
 	for (int i = 0; i < kNativeCarResources; ++i) s_nativeCarResources[i].seen = false;
 	// Reserve capacity for every active car; never silently remove world draws.
-	if (count > NATIVE_MAX_INSTANCES - MAX_CARS)
+	if (count > NATIVE_MAX_INSTANCES - MAX_CARS * 5)
 	{
 		PsyX_Log_Warning("native vehicle: combined world/actor instance capacity exceeded\n");
 		return -1;
@@ -839,10 +842,11 @@ static int NativeRenderer_AppendCars(int count, const float view[16])
 		const bool hidden = NativeCarScene_HideBody(player[CurrentPlayerView].cameraView, player[CurrentPlayerView].cameraCarId, carId);
 		NativeInstance instance = {};
 		if (!Cars_GetNativeTransform(carId, instance.transform)) { ++s_nativeCarFrameCounts.poseFailed; continue; }
+		instance.level = GameLevel; instance.variant = (int)GetCityType();
 		NativeRenderer_ReportCarPose(carId, resource, instance.transform, view, hidden);
+		if (!NativeWheelScene_Append(carId, hidden, instance, s_nativeCombinedInstances, &count)) return -1;
 		if (hidden) { ++s_nativeCarFrameCounts.hidden; continue; }
 		snprintf(instance.resourceKey, sizeof(instance.resourceKey), "%s", resource.key);
-		instance.level = GameLevel; instance.variant = (int)GetCityType();
 		instance.sourceObjectIndex = carId; instance.modelSlot = identity.model;
 		instance.modelRevision = (int)identity.revision;
 		// Actor snapshots contain no _RED2_WORLD_SHADE metadata.
@@ -1339,7 +1343,7 @@ static void NativeRenderer_RefreshRegionDrawState(void)
 	// Reserve a conservative upper bound for both publications. Dense scenes
 	// exceeding that bound enter explicit loading rather than losing uploads
 	// because the old snapshot consumes the bounded resource registry.
-	if (s_regionDrawRegisteredCount + AssetCatalogGame_GetModelResourceCount() + kNativeCarResources > NATIVE_MAX_RESOURCES)
+	if (s_regionDrawRegisteredCount + AssetCatalogGame_GetModelResourceCount() + kNativeCarResources + NativeWheelScene_ResourceReserve() > NATIVE_MAX_RESOURCES)
 	{
 		PsyX_Log_Warning("native region draw: transition exceeds resource staging budget; loading new publication\n");
 		NativeRenderer_ResetRegionDrawState();
@@ -1408,11 +1412,12 @@ static int NativeRenderer_DevRegionDrawSubmit(const float view[16])
 	if (!s_regionDrawRegistered)
 	{
 		const int resourceCount = AssetCatalogGame_GetModelResourceCount();
-		if (resourceCount > NATIVE_MAX_RESOURCES - kNativeCarResources)
+		const int actorReserve = kNativeCarResources + NativeWheelScene_ResourceReserve();
+		if (resourceCount > NATIVE_MAX_RESOURCES - actorReserve)
 		{
 			if (!s_nativeWorldResourceBudgetFailed)
 				PsyX_Log_Warning("native scene: world resource count %d exceeds %d after reserving %d vehicle resources\n",
-					resourceCount, NATIVE_MAX_RESOURCES - kNativeCarResources, kNativeCarResources);
+					resourceCount, NATIVE_MAX_RESOURCES - actorReserve, actorReserve);
 			s_nativeWorldResourceBudgetFailed = true;
 			return NativeRenderer_KeepRegionDrawPublication();
 		}
@@ -1641,9 +1646,36 @@ static int NativeRenderer_DevDrawSubmit(const float view[16])
 	return submitCount;
 }
 
+static void NativeRenderer_PublishSceneDebug(bool worldReady, bool worldFailed)
+{
+	NativeSceneDebugSnapshot snapshot = {};
+	snapshot.generation = AssetCatalogGame_LevelGeneration();
+	const bool sameWorldGeneration = s_regionDrawGeneration == snapshot.generation;
+	snapshot.worldReady = worldReady && sameWorldGeneration;
+	snapshot.worldFailed = worldFailed && sameWorldGeneration;
+	if (sameWorldGeneration)
+	{
+		snapshot.worldResources = s_regionDrawRegisteredCount;
+		snapshot.worldPlacements = s_regionDrawSubmittedCount;
+		snapshot.worldVisible = s_regionDrawVisibleCount;
+	}
+	snapshot.carActive = s_nativeCarFrameCounts.active;
+	snapshot.carReady = s_nativeCarFrameCounts.ready;
+	snapshot.carSubmitted = s_nativeCarFrameCounts.submitted;
+	snapshot.carWaiting = s_nativeCarFrameCounts.waiting;
+	snapshot.carFailed = s_nativeCarFrameCounts.failed;
+	snapshot.carMissing = s_nativeCarFrameCounts.missing;
+	const NativeWheelSceneCounts wheels = NativeWheelScene_ReadCounts();
+	snapshot.wheelReady = wheels.ready;
+	snapshot.wheelSubmitted = wheels.submitted;
+	snapshot.wheelFailed = wheels.failed;
+	NativeSceneDebug_Publish(snapshot);
+}
+
 static int NativeRenderer_SubmitGameScene(const float view[16])
 {
 	s_nativeCarFrameCounts = NativeCarFrameCounts();
+	NativeWheelScene_ClearFrameCounts();
 	s_nativePreparedWorldCount = 0;
 	const int worldCount = NativeRenderer_DevDrawSubmit(view);
 	const bool worldPublicationValid = s_regionDrawSelectionValid &&
@@ -1651,16 +1683,18 @@ static int NativeRenderer_SubmitGameScene(const float view[16])
 	s_nativeCarFrameCounts.worldValid = worldPublicationValid;
 	const bool appendActors = AssetCatalogGame_RegionDrawRequested() &&
 		NativeCarScene_PrepareWorld(s_regionDrawVisibleInstances, worldCount, worldPublicationValid,
-			MAX_CARS, s_nativeCombinedInstances, NATIVE_MAX_INSTANCES, &s_nativePreparedWorldCount);
+			MAX_CARS * 5, s_nativeCombinedInstances, NATIVE_MAX_INSTANCES, &s_nativePreparedWorldCount);
 	int count = s_nativePreparedWorldCount;
 	if (AssetCatalogGame_RegionDrawRequested() && worldPublicationValid && !appendActors) count = -1;
 	if (appendActors) count = NativeRenderer_AppendCars(count, view);
 	char error[256] = {};
 	if (count < 0 || !NativeRenderer_SetInstances(s_nativeCombinedInstances, count, error, sizeof(error)))
 	{
-		PsyX_Log_Warning("native scene submission failed: %s\n", count < 0 ? "actor capacity exceeded" : error);
+		PsyX_Log_Warning("native scene submission failed: %s\n", count < 0 ? "actor presentation failed; see preceding diagnostic" : error);
 		NativeRenderer_ClearInstances();
 		s_nativeCarFrameCounts.submitted = 0;
+		NativeWheelScene_RejectFrame();
+		NativeRenderer_PublishSceneDebug(false, true);
 		return 0;
 	}
 	if (s_regionDrawRetirePending && s_regionDrawSelectionValid)
@@ -1671,7 +1705,13 @@ static int NativeRenderer_SubmitGameScene(const float view[16])
 			s_regionDrawRegisteredCount, s_regionDrawSubmittedCount, s_regionDrawRetainedFrames, s_regionDrawLoadingFrames);
 		s_regionDrawRetainedFrames = s_regionDrawLoadingFrames = 0;
 	}
-	if (appendActors) NativeRenderer_RetireCarResources();
+	if (appendActors)
+	{
+		NativeRenderer_RetireCarResources();
+		NativeWheelScene_Commit();
+	}
+	NativeRenderer_PublishSceneDebug(worldPublicationValid,
+		s_nativeWorldResourceBudgetFailed || s_regionDrawVisibilityFailed || s_regionDrawRefreshFailed);
 	return count;
 }
 
@@ -2597,6 +2637,7 @@ int main(int argc, char** argv)
 	if (s_nativeRendererActive)
 	{
 		if (s_nativeCarTask.valid()) s_nativeCarTask.get(); // shutdown boundary only
+		NativeWheelScene_Shutdown();
 		NativeRenderer_ResetCarResources();
 		NativeRenderer_Shutdown();
 		s_nativeRendererActive = 0;

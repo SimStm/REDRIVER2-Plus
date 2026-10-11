@@ -260,6 +260,15 @@ void NativeRenderer_ClearResources(void);
 /* Non-zero while `key` has a resident resource. */
 int NativeRenderer_ResourceResident(const char* key);
 
+/* Main-thread-only opt-in procedural actor resource. UV/color/index/texture templates stay owned
+   and immutable. XYZ spans all primitive vertices in GLB primitive order.
+   Count/finite validation is atomic; mapping failure makes the item unavailable.
+   Bounded to 4096 vertices; caller must clear the frame on update failure. */
+int NativeRenderer_RegisterDynamicResource(const char* key, const char* glbPath,
+	char* error, int errorCapacity);
+int NativeRenderer_UpdateResourcePositions(const char* key, const float* xyz, int vertexCount,
+	char* error, int errorCapacity);
+
 /* Copies a bounded instance list for the next draws. Everything is copied; the
    caller may release its array afterwards. A key with no resident resource is
    skipped with a counter and a first-key diagnostic (see

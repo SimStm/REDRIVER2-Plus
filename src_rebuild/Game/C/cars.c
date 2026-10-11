@@ -31,6 +31,7 @@
 #include "../../utils/CarMeshSerializer.h"
 #ifdef _WIN32
 #include "../../utils/NativeCarMesh.h"
+#include "../../utils/NativeWheelMesh.h"
 #include "PsyX/PsyX_render.h"
 static unsigned int s_nativeCarModelRevision[MAX_CAR_RESIDENT_MODELS] = {};
 #endif
@@ -1807,6 +1808,104 @@ bool Cars_GetNativeTransform(int carId, float out[16])
 	const SVECTOR& cog = car.ap.carCos->cog;
 	const short offset[3] = { cog.vx, cog.vy, cog.vz };
 	NativeCarMesh_ComposeTransform(position, rotation, offset, ActiveCheats.cheat13 != 0, out);
+	return true;
+}
+
+bool Cars_GetNativeWheelSource(int carId, int slot, NativeWheelSourceIdentity* out)
+{
+	if (!out || slot < 0 || slot >= 4 || !Cars_GetNativeSourceIdentity(carId, &out->car)) return false;
+	const CAR_DATA& car = car_data[carId];
+	int increment = car.hd.wheel_speed >> 8;
+	if (slot & 1) { if (car.wheelspin) increment = 700; if (car.hd.wheel[3].locked) increment = 0; }
+	else if (car.hd.wheel[0].locked) increment = 0;
+	out->vertices = increment + 400U < 801 ? gCleanWheelModelPtr : gFastWheelModelPtr;
+	out->polygons = car.ap.flags & (1 << slot) ? gDamWheelModelPtr : out->vertices;
+	out->wheelSize = car_cosmetics[car.ap.model].wheelSize;
+	return out->vertices && out->polygons && out->wheelSize > 0 && out->wheelSize <= 4096;
+}
+
+bool Cars_CaptureNativeWheel(int carId, int slot, NativeWheelCapture* out, char* error, int capacity)
+{
+	NativeWheelSourceIdentity identity = {};
+	if (!out || !Cars_GetNativeWheelSource(carId, slot, &identity))
+	{
+		if (out) *out = NativeWheelCapture();
+		if (error && capacity > 0) snprintf(error, capacity, "original wheel source is not resident");
+		return false;
+	}
+	*out = NativeWheelCapture();
+	const MODEL* verticesModel = identity.vertices;
+	const MODEL* polygonsModel = identity.polygons;
+	const int quads = polygonsModel->num_polys + 1; // DrawWheelObject includes the retained fifth quad.
+	if (verticesModel->num_vertices < 24 || verticesModel->num_vertices > 256 || quads <= 0 || quads > 16)
+	{
+		if (error && capacity > 0) snprintf(error, capacity, "original wheel inventory is invalid");
+		return false;
+	}
+	const SVECTOR* vertices = GET_MODEL_DATA(SVECTOR, const_cast<MODEL*>(verticesModel), vertices);
+	const POLYFT4* polygons = GET_MODEL_DATA(POLYFT4, const_cast<MODEL*>(polygonsModel), poly_block);
+	for (int v = 0; v < verticesModel->num_vertices; ++v)
+	{
+		out->originalPositions.push_back((float)vertices[v].vx);
+		out->originalPositions.push_back((float)vertices[v].vy);
+		out->originalPositions.push_back((float)vertices[v].vz);
+	}
+	if (polygons[0].texture_set >= 128 || polygons[0].texture_id >= 32)
+	{
+		if (error && capacity > 0) snprintf(error, capacity, "original wheel texture identity is invalid");
+		return false;
+	}
+	const unsigned short page = texture_pages[polygons[0].texture_set] | 0x20;
+	const unsigned short clut = texture_cluts[polygons[0].texture_set][polygons[0].texture_id];
+	std::vector<NativeCarTriangle> triangles;
+	for (int q = 0; q < quads; ++q)
+	{
+		const POLYFT4& polygon = polygons[q];
+		const unsigned int indices[4] = { polygon.v0, polygon.v1, polygon.v2, polygon.v3 };
+		const unsigned char uv[8] = { polygon.uv0.u, polygon.uv0.v, polygon.uv1.u, polygon.uv1.v,
+			polygon.uv2.u, polygon.uv2.v, polygon.uv3.u, polygon.uv3.v };
+		NativeCarTriangle emitted[2];
+		NativeWheelMesh_TriangulateQuad(indices, uv, page, clut, emitted);
+		for (int t = 0; t < 2; ++t)
+		{
+			const NativeCarTriangle& triangle = emitted[t];
+			for (int c = 0; c < 3; ++c)
+			{
+				out->cornerVertices.push_back(triangle.vertices[c]);
+			}
+			triangles.push_back(triangle);
+		}
+	}
+	std::vector<unsigned short> vram(1024u * 512u);
+	GR_ReadVRAM(vram.data(), 0, 0, 1024, 512);
+	if (!NativeCarMesh_Capture(out->originalPositions, triangles, vram, &out->conversion, error, capacity) ||
+		!NativeWheelMesh_ApplyConstantColors(quads, &out->conversion.legacyColors, error, capacity) ||
+		!NativeWheelMesh_Deform(*out, identity.wheelSize, 0, 4096, &out->conversion.source.positions, error, capacity))
+	{
+		*out = NativeWheelCapture();
+		return false;
+	}
+	return true;
+}
+
+bool Cars_GetNativeWheelPose(int carId, int slot, float transform[16], int* spinSin, int* spinCos)
+{
+	NativeWheelSourceIdentity source = {};
+	if (!transform || !spinSin || !spinCos || !Cars_GetNativeWheelSource(carId, slot, &source)) return false;
+	const CAR_DATA& car = car_data[carId];
+	int position[3] = { car.hd.where.t[0], car.hd.where.t[1], car.hd.where.t[2] };
+	short rotation[3][3]; memcpy(rotation, car.hd.where.m, sizeof(rotation));
+	const int alpha = VisualSnapshot_GetAlpha();
+	if (VisualSnapshot_GetPosition(carId, alpha, position)) VisualSnapshot_GetRotation(carId, alpha, rotation);
+	const short zero[3] = {};
+	float body[16]; NativeCarMesh_ComposeTransform(position, rotation, zero, false, body);
+	const SVECTOR& displacement = car_cosmetics[car.ap.model].wheelDisp[slot];
+	const short local[3] = { displacement.vx, displacement.vy, displacement.vz };
+	// Wheel steering/compression/spin remain current-tick values until their snapshot seam migrates.
+	NativeWheelMesh_ComposeTransform(body, local, source.wheelSize, car.hd.wheel[slot].susCompression,
+		slot, RSIN(car.wheel_angle), RCOS(car.wheel_angle), transform);
+	const int spin = slot & 1 ? BackWheelRotation[carId] : FrontWheelRotation[carId];
+	*spinSin = RSIN(spin); *spinCos = RCOS(spin);
 	return true;
 }
 #endif

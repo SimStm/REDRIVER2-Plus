@@ -983,6 +983,53 @@ static bool RedBoundingBox(const unsigned char* image, int width, int height,
 	return found;
 }
 
+static void TestDynamicResourcePositions()
+{
+	char error[256] = {};
+	NativeRenderer_ClearInstances(); NativeRenderer_ClearResources();
+	const float red[4] = { 1,0,0,1 };
+	Check(WriteVerticalMarkerFixture("dynamic-wheel.glb", 1500, red, error, sizeof(error)), "dynamic fixture written");
+	Check(NativeRenderer_RegisterDynamicResource("dynamic-wheel", "dynamic-wheel.glb", error, sizeof(error)) == 1,
+		"dynamic positions resource registered");
+	Check(NativeRenderer_RegisterResource("dynamic-wheel", "dynamic-wheel.glb", error, sizeof(error)) == 0 && error[0],
+		"resident dynamic usage cannot silently become static");
+	const float view[16] = { 1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1 };
+	NativeRenderer_SetCamera(view, kSmokeScreenDistance); NativeRenderer_SetClipPlanes(100, 125000);
+	NativeInstance instance;
+	const float position[3] = { 0,0,10000 };
+	MakeInstance(instance, "dynamic-wheel", position, 0, 0, 0, 0, 0, 0);
+	Check(NativeRenderer_SetInstances(&instance, 1, error, sizeof(error)) == 1, "dynamic instance submitted");
+	const float original[12] = { -1500,-1500,0, 1500,-1500,0, 1500,1500,0, -1500,1500,0 };
+	unsigned char baseline[64 * 64 * 4] = {}, image[64 * 64 * 4] = {};
+	Check(NativeRenderer_UpdateResourcePositions("dynamic-wheel", original, 4, error, sizeof(error)) == 1,
+		"dynamic positions uploaded by discard map");
+	Check(NativeRenderer_RenderSceneToRGBA(baseline, 64, 64, error, sizeof(error)) == 1 && CountRed(baseline, 64, 64) > 0,
+		"dynamic initial position and immutable color reach GPU pixels");
+	Check(NativeRenderer_UpdateResourcePositions("dynamic-wheel", original, 3, error, sizeof(error)) == 0 && error[0],
+		"dynamic count mismatch rejected before upload");
+	float changed[12]; memcpy(changed, original, sizeof(changed));
+	changed[0] += 7000; // Would visibly change the first corner if validation were partial.
+	changed[11] = NAN;
+	Check(NativeRenderer_UpdateResourcePositions("dynamic-wheel", changed, 4, error, sizeof(error)) == 0 && error[0],
+		"dynamic nonfinite last vertex rejected before any upload");
+	Check(NativeRenderer_RenderSceneToRGBA(image, 64, 64, error, sizeof(error)) == 1 && !memcmp(image, baseline, sizeof(image)),
+		"invalid updates preserve previous GPU positions and bounds atomically");
+	memcpy(changed, original, sizeof(changed));
+	for (int v = 0; v < 4; ++v) changed[v * 3] += 500000;
+	Check(NativeRenderer_UpdateResourcePositions("dynamic-wheel", changed, 4, error, sizeof(error)) == 1,
+		"dynamic geometry moved outside frustum");
+	Check(NativeRenderer_RenderSceneToRGBA(image, 64, 64, error, sizeof(error)) == 1 && CountRed(image, 64, 64) == 0,
+		"updated outside bounds do not retain visible old geometry");
+	Check(NativeRenderer_RenderScene(error, sizeof(error)) == 1, "dynamic outside bounds exercised in frame draw");
+	NativeFrameStats stats; NativeRenderer_GetFrameStats(&stats);
+	Check(stats.culledInstances == 1, "dynamic bounds updated for frustum culling");
+	Check(NativeRenderer_UpdateResourcePositions("dynamic-wheel", original, 4, error, sizeof(error)) == 1,
+		"dynamic geometry restored from immutable template");
+	Check(NativeRenderer_RenderSceneToRGBA(image, 64, 64, error, sizeof(error)) == 1 && !memcmp(image, baseline, sizeof(image)),
+		"moving back recomputes bounds and preserves immutable topology/color");
+	NativeRenderer_ClearInstances(); NativeRenderer_ClearResources();
+}
+
 // Acceptance (a): three instances (including a yawed one) at known transforms
 // appear in their expected screen regions, and the yaw is observable through
 // the footprint aspect.
@@ -2264,6 +2311,7 @@ int main()
 	TestConvertedContentScene();
 	TestNoCullBothFaces();
 	TestInstanceScreenRegions();
+	TestDynamicResourcePositions();
 	TestMultiPrimitiveResource();
 	TestTexturedMultiPrimitiveResource();
 	TestWorldOpacity();

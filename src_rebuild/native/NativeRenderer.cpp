@@ -20,6 +20,7 @@
 #include <chrono>
 #include <float.h>
 #include <math.h>
+#include <cmath>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -153,6 +154,7 @@ bool g_worldShadePaletteValid = false;
 // buffers and its bindings for both scene pipelines.
 struct ScenePrimitive
 {
+	std::vector<SceneVertex> dynamicTemplate;
 	RefCntAutoPtr<IBuffer> vertices;
 	RefCntAutoPtr<IBuffer> indices;	// null -> non-indexed draw
 	RefCntAutoPtr<ITexture> texture;
@@ -753,7 +755,7 @@ int CreatePlaceholderItem()
 // scaled by 1/256 once here (kContentTexelUvScale). Everything is created into a
 // local item so a failure releases it without touching the live content.
 int CreateContentItem(const GltfMultiMeshData& mesh, SceneDrawItem& out,
-	char* error, int errorCapacity)
+	char* error, int errorCapacity, bool dynamicPositions = false)
 {
 	if (mesh.primitives.empty())
 	{
@@ -872,18 +874,28 @@ int CreateContentItem(const GltfMultiMeshData& mesh, SceneDrawItem& out,
 		BufferDesc vertexDesc;
 		vertexDesc.Name = "ContentVertices";
 		vertexDesc.BindFlags = BIND_VERTEX_BUFFER;
-		vertexDesc.Usage = USAGE_IMMUTABLE;
+		vertexDesc.Usage = dynamicPositions ? USAGE_DYNAMIC : USAGE_IMMUTABLE;
+		if (dynamicPositions) vertexDesc.CPUAccessFlags = CPU_ACCESS_WRITE;
 		vertexDesc.Size = (Uint32)(vertices.size() * sizeof(SceneVertex));
 		BufferData vertexData;
 		vertexData.pData = vertices.data();
 		vertexData.DataSize = vertexDesc.Size;
-		g_device->CreateBuffer(vertexDesc, &vertexData, &primitive.vertices);
+		g_device->CreateBuffer(vertexDesc, dynamicPositions ? nullptr : &vertexData, &primitive.vertices);
 		if (!primitive.vertices)
 		{
 			SetError(error, errorCapacity, "the converted vertex buffer could not be created");
 			return 0;
 		}
 		primitive.vertexCount = (Uint32)vertices.size();
+		if (dynamicPositions)
+		{
+			primitive.dynamicTemplate = vertices;
+			void* mapped = nullptr;
+			g_context->MapBuffer(primitive.vertices, MAP_WRITE, MAP_FLAG_DISCARD, mapped);
+			if (!mapped) { SetError(error, errorCapacity, "dynamic vertex initialization mapping failed"); return 0; }
+			memcpy(mapped, vertices.data(), vertexDesc.Size);
+			g_context->UnmapBuffer(primitive.vertices, MAP_WRITE);
+		}
 
 		if (!source.indices.empty())
 		{
@@ -1508,8 +1520,8 @@ void NativeRenderer_GetContentStats(int* vertexCount, int* triangleCount)
 		*triangleCount = g_scene.content.ready ? g_scene.content.triangleCount : 0;
 }
 
-int NativeRenderer_RegisterResource(const char* key, const char* glbPath,
-	char* error, int errorCapacity)
+static int RegisterSceneResource(const char* key, const char* glbPath,
+	char* error, int errorCapacity, bool dynamicPositions)
 {
 	if (error && errorCapacity > 0)
 		error[0] = '\0';
@@ -1535,8 +1547,12 @@ int NativeRenderer_RegisterResource(const char* key, const char* glbPath,
 	}
 
 	// Idempotent: a resident key is left untouched.
-	if (FindResource(key))
+	if (ResourceEntry* resident = FindResource(key))
+	{
+		const bool residentDynamic = !resident->item.primitives.empty() && !resident->item.primitives[0].dynamicTemplate.empty();
+		if (residentDynamic != dynamicPositions) { SetError(error, errorCapacity, "resource usage differs from resident key"); return 0; }
 		return 1;
+	}
 
 	if (g_resourceCount >= NATIVE_MAX_RESOURCES)
 	{
@@ -1548,6 +1564,12 @@ int NativeRenderer_RegisterResource(const char* key, const char* glbPath,
 	GltfMultiMeshData mesh;
 	if (Gltf_LoadFileMulti(glbPath, &mesh, error, errorCapacity) != 0)
 		return 0;
+	if (dynamicPositions)
+	{
+		size_t vertices = 0;
+		for (size_t p = 0; p < mesh.primitives.size(); ++p) vertices += mesh.primitives[p].positions.size() / 3;
+		if (!vertices || vertices > 4096) { SetError(error, errorCapacity, "dynamic resource vertex capacity exceeded"); return 0; }
+	}
 
 	if (!EnsureScenePipelines())
 	{
@@ -1556,13 +1578,62 @@ int NativeRenderer_RegisterResource(const char* key, const char* glbPath,
 	}
 
 	SceneDrawItem item;
-	if (!CreateContentItem(mesh, item, error, errorCapacity))
+	if (!CreateContentItem(mesh, item, error, errorCapacity, dynamicPositions))
 		return 0; // the partial item releases itself; resident resources stay untouched
 
 	ResourceEntry& entry = g_resources[g_resourceCount];
 	snprintf(entry.key, sizeof(entry.key), "%s", key);
 	entry.item = item;
 	++g_resourceCount;
+	return 1;
+}
+
+int NativeRenderer_RegisterResource(const char* key, const char* glbPath, char* error, int errorCapacity)
+{
+	return RegisterSceneResource(key, glbPath, error, errorCapacity, false);
+}
+
+int NativeRenderer_RegisterDynamicResource(const char* key, const char* glbPath, char* error, int errorCapacity)
+{
+	return RegisterSceneResource(key, glbPath, error, errorCapacity, true);
+}
+
+int NativeRenderer_UpdateResourcePositions(const char* key, const float* xyz, int vertexCount, char* error, int errorCapacity)
+{
+	if (error && errorCapacity > 0) error[0] = 0;
+	ResourceEntry* resource = key ? FindResource(key) : nullptr;
+	if (!resource || !g_context || !xyz || vertexCount <= 0 || vertexCount > 4096 || vertexCount != resource->item.vertexCount)
+		{ SetError(error, errorCapacity, "invalid dynamic resource position inventory"); return 0; }
+	SceneDrawItem& item = resource->item;
+	for (size_t p = 0; p < item.primitives.size(); ++p)
+		if (item.primitives[p].dynamicTemplate.size() != item.primitives[p].vertexCount)
+			{ SetError(error, errorCapacity, "resource has no dynamic vertex template"); return 0; }
+	float minimum[3] = { FLT_MAX, FLT_MAX, FLT_MAX }, maximum[3] = { -FLT_MAX, -FLT_MAX, -FLT_MAX };
+	for (int v = 0; v < vertexCount; ++v)
+		for (int axis = 0; axis < 3; ++axis)
+		{
+			const float position = xyz[v * 3 + axis];
+			if (!std::isfinite(position)) { SetError(error, errorCapacity, "dynamic vertex position is not finite"); return 0; }
+			if (position < minimum[axis]) minimum[axis] = position;
+			if (position > maximum[axis]) maximum[axis] = position;
+		}
+	int offset = 0;
+	for (size_t p = 0; p < item.primitives.size(); ++p)
+	{
+		ScenePrimitive& primitive = item.primitives[p];
+		void* mapped = nullptr;
+		g_context->MapBuffer(primitive.vertices, MAP_WRITE, MAP_FLAG_DISCARD, mapped);
+		if (!mapped) { item.ready = 0; SetError(error, errorCapacity, "dynamic position mapping failed"); return 0; }
+		SceneVertex* vertices = static_cast<SceneVertex*>(mapped);
+		for (size_t v = 0; v < primitive.dynamicTemplate.size(); ++v, ++offset)
+		{
+			vertices[v] = primitive.dynamicTemplate[v];
+			vertices[v].x = xyz[offset * 3]; vertices[v].y = xyz[offset * 3 + 1]; vertices[v].z = xyz[offset * 3 + 2];
+		}
+		g_context->UnmapBuffer(primitive.vertices, MAP_WRITE);
+	}
+	memcpy(item.minimum, minimum, sizeof(minimum)); memcpy(item.maximum, maximum, sizeof(maximum));
+	item.ready = 1;
 	return 1;
 }
 

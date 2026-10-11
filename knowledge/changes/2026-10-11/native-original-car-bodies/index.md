@@ -32,3 +32,19 @@ source identity coverage; it does not resolve every unknown material classificat
 
 This is bounded Chicago TAD evidence, not full city or engine-migration acceptance. Wheels, damage,
 pedestrians, story missions, on-foot views, additional cities and complete scene parity remain open.
+
+## Follow-up: dynamic wheels and diagnostic HUD
+
+The text-only `RED2_NATIVE_VISUAL_DEBUG=1` HUD runs on the existing overlay independently of F9
+and does not capture input. Wheel positions update from current actor transforms; source snapshots
+are owned CPU data, workers do not dereference live models, and generation/revision changes reject
+stale work. Dynamic uploads validate finite vertices/counts before bounds are committed. Legacy
+constant-black wheel quads are preserved and participate in source cache identity.
+
+Focused `NativeCarMeshTests` passed with zero failures; `NativeRendererSmoke` passed 1264/0. Both
+`Release_dev_native|x64` and `Release_dev|x64` builds passed. The corrected native Chicago capture
+replayed 350 draws with zero RenderDoc validation messages. Its HUD reported 160 world resources,
+6740 placements, 13 active/ready/submitted cars, and 52 ready/submitted wheels; the inspected PNG
+shows traffic with two visible tires. Steady samples recorded zero dropped ticks. The run reported
+`playerCar=-1`, so player identity remains unproven. A separate reference OpenGL startup succeeded
+and logged OpenGL 3.3. Pedestrians, damage and broader city coverage remain outstanding.

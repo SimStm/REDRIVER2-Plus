@@ -3,7 +3,7 @@ type: Discussion
 title: Engine migration decision
 status: adopted
 created: 2026-10-08
-updated: 2026-10-10
+updated: 2026-10-11
 tags: [okf, architecture, engine]
 ---
 
@@ -315,3 +315,13 @@ on OpenGL before Diligent and later discarding legacy Vulkan. Recorded the
 recommendation and retirement boundaries above; the user's subsequent agreement
 adopts the interim testing focus.
 Only documentation changed; native backend selection and stage status remain.
+
+2026-10-11 native actor follow-up: the default-off `RED2_NATIVE_VISUAL_DEBUG=1` overlay reports
+world/car/wheel lifecycle counters without capturing input; pedestrians remain labeled pending.
+Owned CPU wheel snapshots avoid worker dereferences of live `MODEL` data; generation/revision
+changes invalidate stale work, and current transforms update positions through a bounded dynamic
+upload. Captured black wheel quads are retained in source cache identity. Focused wheel tests,
+1264 GPU smoke checks, native/reference x64 builds and a reference OpenGL startup passed. RenderDoc
+showed two traffic tires and 52 submitted wheels, while the run reported `playerCar=-1`; this is
+bounded actor evidence, not player, pedestrian, city coverage or E03 acceptance. See the
+[native car change record](../../changes/2026-10-11/native-original-car-bodies/index.md).
