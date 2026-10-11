@@ -1598,7 +1598,7 @@ int NativeRenderer_RegisterDynamicResource(const char* key, const char* glbPath,
 	return RegisterSceneResource(key, glbPath, error, errorCapacity, true);
 }
 
-int NativeRenderer_UpdateResourcePositions(const char* key, const float* xyz, int vertexCount, char* error, int errorCapacity)
+int NativeRenderer_UpdateResourceVertices(const char* key, const float* xyz, const float* texelUvs, int vertexCount, char* error, int errorCapacity)
 {
 	if (error && errorCapacity > 0) error[0] = 0;
 	ResourceEntry* resource = key ? FindResource(key) : nullptr;
@@ -1610,6 +1610,9 @@ int NativeRenderer_UpdateResourcePositions(const char* key, const float* xyz, in
 			{ SetError(error, errorCapacity, "resource has no dynamic vertex template"); return 0; }
 	float minimum[3] = { FLT_MAX, FLT_MAX, FLT_MAX }, maximum[3] = { -FLT_MAX, -FLT_MAX, -FLT_MAX };
 	for (int v = 0; v < vertexCount; ++v)
+	{
+		if (texelUvs && (!std::isfinite(texelUvs[v * 2]) || !std::isfinite(texelUvs[v * 2 + 1])))
+			{ SetError(error, errorCapacity, "dynamic vertex UV is not finite"); return 0; }
 		for (int axis = 0; axis < 3; ++axis)
 		{
 			const float position = xyz[v * 3 + axis];
@@ -1617,6 +1620,7 @@ int NativeRenderer_UpdateResourcePositions(const char* key, const float* xyz, in
 			if (position < minimum[axis]) minimum[axis] = position;
 			if (position > maximum[axis]) maximum[axis] = position;
 		}
+	}
 	int offset = 0;
 	for (size_t p = 0; p < item.primitives.size(); ++p)
 	{
@@ -1629,12 +1633,18 @@ int NativeRenderer_UpdateResourcePositions(const char* key, const float* xyz, in
 		{
 			vertices[v] = primitive.dynamicTemplate[v];
 			vertices[v].x = xyz[offset * 3]; vertices[v].y = xyz[offset * 3 + 1]; vertices[v].z = xyz[offset * 3 + 2];
+			if (texelUvs) { vertices[v].u = texelUvs[offset * 2] * kContentTexelUvScale; vertices[v].v = texelUvs[offset * 2 + 1] * kContentTexelUvScale; }
 		}
 		g_context->UnmapBuffer(primitive.vertices, MAP_WRITE);
 	}
 	memcpy(item.minimum, minimum, sizeof(minimum)); memcpy(item.maximum, maximum, sizeof(maximum));
 	item.ready = 1;
 	return 1;
+}
+
+int NativeRenderer_UpdateResourcePositions(const char* key, const float* xyz, int vertexCount, char* error, int errorCapacity)
+{
+	return NativeRenderer_UpdateResourceVertices(key, xyz, nullptr, vertexCount, error, errorCapacity);
 }
 
 void NativeRenderer_UnregisterResource(const char* key)

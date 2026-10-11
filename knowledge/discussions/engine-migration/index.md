@@ -317,11 +317,13 @@ adopts the interim testing focus.
 Only documentation changed; native backend selection and stage status remain.
 
 2026-10-11 native actor follow-up: the default-off `RED2_NATIVE_VISUAL_DEBUG=1` overlay reports
-world/car/wheel lifecycle counters without capturing input; pedestrians remain labeled pending.
-Owned CPU wheel snapshots avoid worker dereferences of live `MODEL` data; generation/revision
-changes invalidate stale work, and current transforms update positions through a bounded dynamic
-upload. Captured black wheel quads are retained in source cache identity. Focused wheel tests,
-1264 GPU smoke checks, native/reference x64 builds and a reference OpenGL startup passed. RenderDoc
-showed two traffic tires and 52 submitted wheels, while the run reported `playerCar=-1`; this is
-bounded actor evidence, not player, pedestrian, city coverage or E03 acceptance. See the
-[native car change record](../../changes/2026-10-11/native-original-car-bodies/index.md).
+world/car/wheel/pedestrian lifecycle counters without capturing input. Owned CPU snapshots,
+generation/revision invalidation, finite/count-checked dynamic wheel uploads and preserved black
+wheel quads bound the actor data path. The fresh inspector runner passed 20 suites, GPU smoke
+passed 1,274 checks, and native/reference x64 builds succeeded. Correct Chicago mission 50 showed
+`playerCar=0`, 14 cars and 56 wheels submitted, and four original `CIVILIAN` meshes ready over the
+session. The captured frame submitted one civilian and the PNG shows it at the sidewalk. Loading
+recorded five dropped catch-up ticks total; steady windows recorded 30 ticks with zero interval
+drops. This is bounded evidence, not complete pedestrian/city coverage, player input, lighting,
+damage or E03 acceptance. A separate story launch loaded `CUT1.R` and showed a cutscene type-0
+actor (`pad=-2`), not controlled Tanner on foot. See the [native actor change record](../../changes/2026-10-11/native-original-car-bodies/index.md).

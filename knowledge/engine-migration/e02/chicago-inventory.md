@@ -65,3 +65,38 @@ OK` does not approve full source coverage, conversion or native-world behavior.
   flakiness. The explicit argument and help-text fix was verified with build
   exit 0 and a first-run report; the final report above came from the isolated
   x64 integration executable.
+
+## Follow-up source and resident-world audit (2026-10-11)
+
+The four-barrel inventory above is the Chicago day resident union, not the entire city. It reports
+6,740 unique placements, 516 registered model slots, 150 referenced models, no missing model refs,
+and 114 referenced models with no catalog material link. Those 114 classifications are unknown;
+they do not prove absent texture assets. The PL10/PL11 texture-key path now uses
+`ModelTextureLink_GetTextureKey` in `texture.c`, shared with production catalog classification.
+
+The current `model_ptypes_level_0.txt` lists 5,538 records over 516 loaded model slots. Its only
+out-of-decoder-allowlist records are ptype 9 at model slots 1030 and 1176 (one record each). The
+report classifies both as buildings (`shape_flags` 0x0001 and 0x8001), with nonzero 12-byte stride,
+no invalid spans and no zero-stride records. Legacy `PlotBuildingModel` draws only {11,21,23}
+after `ConvertPolygonTypes`; these ptype 9 faces are skipped there too. The building decoder's
+`SkipUnsupported` behavior matches that legacy skip, so these two records are not evidence of lost
+legacy-visible geometry. Tile/sprite callers remain strict and are not authorized to skip them.
+
+The probe's `catalogMaterialRecords` counter now calls the same
+`ModelTextureLink_GetTextureKey` helper used by catalog linking, so its classification includes
+ptype 10/11 as well as 4-7 and 20-23. This counts polygon records carrying a key, not successful
+texture resolution. The checked-in `model_ptypes_level_0.txt` predates this correction; its old
+812 counter is stale and no updated aggregate has been generated yet.
+
+Runtime counts refer to different stages and snapshots. In `draw-distance-1800-tick30-run.log`,
+the four-barrel source yielded 6,740 placements, 160 converted resources, then 233 camera-selected
+instance records; 186 were drawn in the logged frame. The wheel/HUD session later showed 6,740
+placements and 156 CPU-selected instances. `async-world-corrected-run.log` records later live
+region sets of 8,594 placements / 206 resources and 10,167 / 185 resources, each with zero
+conversion failures, unresolved submissions or truncation. Those dynamic sets include selected
+detail/LOD variants and a different resident region union; they are not additive to the 6,740
+day-inventory total or proof that all Chicago sectors/cities are covered. `NATIVE_MAX_INSTANCES`
+is 16,384. These logs show no concrete missing model reference or conversion failure in the sampled
+sets; there is no per-city or alternate-variant source inventory yet. Next useful bounded coverage
+work is to run and reconcile the same source inventory for each city/variant before attributing a
+visual gap to decoder or material policy. This audit corrected the probe classification and made no runtime changes.

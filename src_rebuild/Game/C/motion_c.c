@@ -24,6 +24,9 @@
 #include "assetcatalog.h"
 #include "PsyX/PsyX_public.h"
 #endif
+#ifdef _WIN32
+#include "../../utils/NativePedCapture.h"
+#endif
 
 enum LIMBS
 {
@@ -532,6 +535,28 @@ int bDoingShadow = 0;
 int gCurrentZ;
 
 // [D] [T] [A]
+#ifdef _WIN32
+static void Ped_CaptureNativeHead(LPPEDESTRIAN ped, const SVECTOR* anchor, bool alreadyRotated)
+{
+	if (!NativePedCapture_Enabled() || !gPed1HeadModelPtr) return;
+	const MATRIX2& rotation = matrixtable[((ped->dir.vy - ped->head_rot) / 64) & 63];
+	int offset[3] = { anchor->vx, anchor->vy, anchor->vz };
+	if (!alreadyRotated)
+	{
+		const MATRIX2& body = matrixtable[(ped->dir.vy / 64) & 63];
+		const int point[3] = { anchor->vx, anchor->vy, anchor->vz };
+		for (int row = 0; row < 3; ++row)
+		{
+			int sum = 0; for (int c = 0; c < 3; ++c) sum += body.m[row][c] * point[c];
+			offset[row] = (short)(sum >> 12);
+		}
+	}
+	const int palette = ped->pallet & 15;
+	const int clut = palette ? civ_clut[0][texturePedHead.texture_number][palette] : -1;
+	NativePedCapture_RecordModel(ped, 23, gPed1HeadModelPtr, rotation.m, offset, clut);
+}
+#endif
+
 void DrawBodySprite(LPPEDESTRIAN pDrawingPed, int boneId, VERTTYPE v1[2], VERTTYPE v2[2], int sz, int sy)
 {
 #if 0
@@ -841,6 +866,17 @@ void DrawBodySprite(LPPEDESTRIAN pDrawingPed, int boneId, VERTTYPE v1[2], VERTTY
 		prims->b0 = combointensity & 0xFF;
 	}
 
+#ifdef _WIN32
+	if (!bDoingShadow && !(bone == HEAD && gPed1HeadModelPtr))
+	{
+		const NativePedSprite sprite = {
+			{ (float)prims->x0,(float)prims->y0,(float)prims->x1,(float)prims->y1,(float)prims->x2,(float)prims->y2,(float)prims->x3,(float)prims->y3 },
+			{ prims->u0,prims->v0,prims->u1,prims->v1,prims->u2,prims->v2,prims->u3,prims->v3 },
+			prims->tpage, prims->clut, { sz, sy },
+			bone == HEAD ? ((-camera_angle.vy - pDrawingPed->dir.vy & 4095) >> 7) : 0 };
+		NativePedCapture_RecordSprite(pDrawingPed, (int)bone, sprite);
+	}
+#endif
 	if (bDoingShadow != 0)
 	{
 		addPrim(current->ot + OTSIZE - 1, prims);
@@ -1171,6 +1207,11 @@ void newShowTanner(LPPEDESTRIAN pDrawingPed)
 				{
 					MODEL* model = *pBone->pModel;
 
+#ifdef _WIN32
+					const int nativeOffset[3] = { vJPos[lval].vx, vJPos[lval].vy - 15, vJPos[lval].vz };
+					NativePedCapture_RecordModel(pDrawingPed, (int)pBone->id, model, NULL, nativeOffset);
+#endif
+
 					for (int c = 0; c < model->num_vertices; c++)
 					{
 						SVECTOR* mVerts = GET_MODEL_DATA(SVECTOR, model, vertices) + c;
@@ -1289,6 +1330,10 @@ void newShowTanner(LPPEDESTRIAN pDrawingPed)
 
 			// draw HEAD
 			BONE* pBone = &Skel[HEAD];
+
+#ifdef _WIN32
+			Ped_CaptureNativeHead(pDrawingPed, &vJPos[pBone->pParent->id & 127], true);
+#endif
 
 			if (switch_detail_distance >> 2 < gCurrentZ)
 			{
@@ -1607,6 +1652,11 @@ void DrawCiv(LPPEDESTRIAN pPed)
 			DrawBodySprite(pPed, boneId, (VERTTYPE*)&sxyList[i*2], (VERTTYPE*)&sxyList[i*2 + 1], szList[i*2], szList[i*2+1]);
 	}
 
+	// Native keeps the loaded original head model at all distances. Its pose
+	// is captured independently of the legacy head sprite/model LOD switch.
+#ifdef _WIN32
+	Ped_CaptureNativeHead(pPed, &srLerpData[5], false);
+#endif
 	// show head
 	if (bHeadModel)
 	{

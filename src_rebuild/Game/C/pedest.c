@@ -27,6 +27,10 @@
 #include "draw.h"
 
 #include "ASM/rndrasm.h"
+#ifdef _WIN32
+#include "main.h"
+#include "../../utils/NativePedCapture.h"
+#endif
 
 struct CAR_COLLISION_BOX
 {
@@ -347,6 +351,10 @@ LPPEDESTRIAN CreatePedestrian(void)
 		num_pedestrians++;
 		pUsedPeds = pNewPed;
 
+#ifdef _WIN32
+		NativePedCapture_Created(pNewPed);
+#endif
+
 		return pNewPed;
 	}
 
@@ -479,12 +487,19 @@ void DrawAllPedestrians(void)
 {
 	LPPEDESTRIAN pPed;
 
+#ifdef _WIN32
+	NativePedCapture_SelectView(CurrentPlayerView);
+#endif
+
 	pPed = pUsedPeds;
 	while (pPed != NULL)
 	{
 		if (PositionVisible((VECTOR*)&pPed->position) &&
 			FrustrumCheck((VECTOR*)&pPed->position, 60) != -1)
 		{
+#ifdef _WIN32
+			if (pPed->pedType >= OTHER_SPRITE || !bKillTanner) NativePedCapture_Select(pPed);
+#endif
 			if (pPed->pedType == TANNER_MODEL)
 			{
 				if (!bKillTanner)

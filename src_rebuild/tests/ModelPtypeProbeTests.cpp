@@ -45,7 +45,7 @@ static ModelPtypeCounts NewCounts()
 
 // Quad (11) + flat triangle (20): both project into the runtime drawn set
 // {11,21,23} (20 -> 21 via ConvertPolygonTypes' |1), so both count as
-// building-drawn; only 20 is in the catalog material set.
+// building-drawn; both carry a catalog texture key.
 static void TestQuadAndTriangle()
 {
 	unsigned char bytes[64] = {};
@@ -64,7 +64,7 @@ static void TestQuadAndTriangle()
 	CHECK(counts.models == 1 && counts.records == 2);
 	CHECK(counts.declaredPtypeCounts[11] == 1 && counts.declaredPtypeCounts[20] == 1);
 	CHECK(counts.buildingPathRecords == 2);
-	CHECK(counts.catalogMaterialRecords == 1);
+	CHECK(counts.catalogMaterialRecords == 2);
 	CHECK(counts.outsideAllowlistRecords == 0);
 	CHECK(counts.strideZeroRecords == 0 && counts.firstStrideZeroPtype == -1);
 	CHECK(counts.invalidRecords == 0);
@@ -96,7 +96,7 @@ static void TestBuildingDrawnProjection()
 		counts.declaredPtypeCounts[22] == 1 && counts.declaredPtypeCounts[8] == 1 &&
 		counts.declaredPtypeCounts[4] == 1);
 	CHECK(counts.buildingPathRecords == 3); // 10, 20, 22
-	CHECK(counts.catalogMaterialRecords == 3); // 4, 20, 22
+	CHECK(counts.catalogMaterialRecords == 4); // 4, 10, 20, 22
 	CHECK(counts.outsideAllowlistRecords == 2); // 8, 4
 	CHECK(counts.outsideAllowlistPtypeCounts[8] == 1 && counts.outsideAllowlistPtypeCounts[4] == 1);
 }
@@ -124,6 +124,28 @@ static void TestTextureBankOutsideAllowlist()
 	CHECK(counts.outsideAllowlistPtypeCounts[4] == 1 && counts.outsideAllowlistPtypeCounts[7] == 1);
 	CHECK(counts.catalogMaterialRecords == 4);
 	CHECK(counts.buildingPathRecords == 0);
+}
+
+// This counter follows the same production helper used by catalog linking:
+// PL10/11 carry texture keys, while ptype9 does not.
+static void TestCatalogMaterialRecordsUseProductionTextureKeyHelper()
+{
+	unsigned char bytes[44] = {};
+	bytes[0] = 10;   // stride 16, texture key at bytes 1 and 2
+	bytes[16] = 11;  // stride 16, texture key at bytes 1 and 2
+	bytes[32] = 9;   // stride 12, no catalog texture key
+
+	ModelPtypeView view = { 0, 3 };
+	ModelPtypeCounts counts = NewCounts();
+	ModelPtypeProbeIssue issue;
+
+	const ModelPtypeProbeIssueKind kind =
+		ModelPtypeProbe_AddModel(bytes, bytes + sizeof(bytes), &view, kPolySizes, 32, &counts, &issue);
+
+	CHECK(kind == MODEL_PTYPE_PROBE_ISSUE_NONE);
+	CHECK(counts.records == 3);
+	CHECK(counts.catalogMaterialRecords == 2);
+	CHECK(counts.outsideAllowlistRecords == 1 && counts.outsideAllowlistPtypeCounts[9] == 1);
 }
 
 // A zero stride is its own finding: the declared type is recorded, the walk
@@ -240,7 +262,7 @@ static void TestAccumulation()
 
 	CHECK(counts.models == 2 && counts.records == 6);
 	CHECK(counts.buildingPathRecords == 6);
-	CHECK(counts.catalogMaterialRecords == 4); // 21/23 only
+	CHECK(counts.catalogMaterialRecords == 6); // 11/21/23, twice each
 }
 
 static void TestAllowlistHelper()
@@ -295,6 +317,7 @@ int main()
 	TestQuadAndTriangle();
 	TestBuildingDrawnProjection();
 	TestTextureBankOutsideAllowlist();
+	TestCatalogMaterialRecordsUseProductionTextureKeyHelper();
 	TestStrideZeroStopsTheWalk();
 	TestRecordOutsideSpan();
 	TestPolyBlockOutsideSpan();

@@ -21,6 +21,11 @@ struct NativeSceneDebugSnapshot
 	int wheelReady;
 	int wheelSubmitted;
 	int wheelFailed;
+	int pedActive;
+	int pedReady;
+	int pedSubmitted;
+	int pedWaiting;
+	int pedFailed;
 };
 
 void NativeSceneDebug_Publish(const NativeSceneDebugSnapshot& snapshot);

@@ -268,6 +268,11 @@ int NativeRenderer_RegisterDynamicResource(const char* key, const char* glbPath,
 	char* error, int errorCapacity);
 int NativeRenderer_UpdateResourcePositions(const char* key, const float* xyz, int vertexCount,
 	char* error, int errorCapacity);
+/* Optional raw texel UVs (2 floats per vertex), scaled exactly once by 1/256.
+   NULL UVs preserve the immutable template and the positions-only contract.
+   All XYZ/UV inputs validate before any upload; same mapping failure policy. */
+int NativeRenderer_UpdateResourceVertices(const char* key, const float* xyz, const float* texelUvs, int vertexCount,
+	char* error, int errorCapacity);
 
 /* Copies a bounded instance list for the next draws. Everything is copied; the
    caller may release its array afterwards. A key with no resident resource is

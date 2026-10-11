@@ -14,26 +14,29 @@ source identity coverage; it does not resolve every unknown material classificat
 
 ## Validation
 
-- `NativeCarMeshTests` focused executable passed. `scripts/run_inspector_tests.ps1` passed all 19
-  suites, including the production-linked PL10/PL11 texture-key regression.
-- Native renderer smoke had passed 1249 checks with zero failures during the orientation-shading
-  milestone. After the final diagnostic-latch change, isolated x64 `Release_dev_native` and
-  reference `Release_dev` solution builds both passed.
-- Chicago Take A Drive launched with `-nointro -nofmv -mission 1 -drawregion`. Logs showed
-  14/14 active car bodies ready and submitted, no hidden/waiting/failed/missing bodies, and a
-  published world with 200/200 resources, 8,876 placements and zero failed/unresolved/truncated.
-- RenderDoc 1.41 capture `native-car-pose-20261011.rdc` replayed 1,036 draws and 6,706 triangles
-  with zero debug messages. The inspected PNG shows the player body, traffic, road and buildings.
-  Steady samples between ticks 2,481 and 2,903 reported 30/31 ticks and zero drops; capture/debug
-  pauses are excluded.
-- The final native/reference builds passed; the reference OpenGL startup was not run because the
-  Visual Studio configuration MCP call hung. Four probe profile/INI files were restored and their
-  hashes matched the backups.
+- All 20 inspector suites passed, including the production-linked PL10/PL11 texture-key
+  regression, `NativeCarMeshTests` and `NativePedMeshTests`. `NativeRendererSmoke` passed 1,274
+  checks with zero failures. Isolated x64 `Release_dev_native` and reference `Release_dev` builds
+  succeeded with the existing LNK4098 warning.
+- Chicago mission 50 launched with `-mission 50 -drawregion -nointro -nofmv`. Logs showed the
+  player car (`playerCar=0`) and 14/14 cars and 56/56 wheels ready/submitted. The world reported
+  193 resources and 8,890 placements. At capture the HUD showed 12 active pedestrians, 2 ready,
+  1 submitted, 1 waiting and 0 failed; four `CIVILIAN` meshes reached ready over the session.
+- RenderDoc 1.41 capture `native-ped-chicago-tad50-20261011.rdc` replayed 719 draws with zero
+  debug messages. The inspected PNG shows Chicago streets, the player car and a civilian at the
+  left sidewalk. Steady samples reported 30 ticks and zero interval drops, while loading recorded
+  five catch-up ticks dropped in total. The reference OpenGL startup reached asset loading.
+- `-mission 1 -gametype 0` loaded `CUT1.R`; its visible type-0 actor had `pad=-2`, so that story
+  capture does not prove player control or Tanner on foot. Mission 50 proves only a bounded
+  pedestrian sample, not complete pedestrian/city coverage, input behavior, damage, lighting or
+  parity. The inspected PNG and logs remain ignored under `build_e00/native-performance/`.
+- Game processes were stopped. `config.ini`, `developer_graphics.ini`, and the corrected
+  `.vcxproj.user` profile match pre-run SHA-256 values.
 
-This is bounded Chicago TAD evidence, not full city or engine-migration acceptance. Wheels, damage,
-pedestrians, story missions, on-foot views, additional cities and complete scene parity remain open.
+This is bounded Chicago TAD evidence, not full city or engine-migration acceptance. Complete
+pedestrian coverage, damage, story missions, on-foot views, additional cities and scene parity remain open.
 
-## Follow-up: dynamic wheels and diagnostic HUD
+## Follow-up: dynamic wheels, pedestrian submission, and diagnostic HUD
 
 The text-only `RED2_NATIVE_VISUAL_DEBUG=1` HUD runs on the existing overlay independently of F9
 and does not capture input. Wheel positions update from current actor transforms; source snapshots
@@ -41,10 +44,11 @@ are owned CPU data, workers do not dereference live models, and generation/revis
 stale work. Dynamic uploads validate finite vertices/counts before bounds are committed. Legacy
 constant-black wheel quads are preserved and participate in source cache identity.
 
-Focused `NativeCarMeshTests` passed with zero failures; `NativeRendererSmoke` passed 1264/0. Both
-`Release_dev_native|x64` and `Release_dev|x64` builds passed. The corrected native Chicago capture
-replayed 350 draws with zero RenderDoc validation messages. Its HUD reported 160 world resources,
-6740 placements, 13 active/ready/submitted cars, and 52 ready/submitted wheels; the inspected PNG
-shows traffic with two visible tires. Steady samples recorded zero dropped ticks. The run reported
-`playerCar=-1`, so player identity remains unproven. A separate reference OpenGL startup succeeded
-and logged OpenGL 3.3. Pedestrians, damage and broader city coverage remain outstanding.
+Pedestrian presentation preserves CPU pose evaluation and `head_pos`; owned component and sprite
+data is converted off-thread, then dynamic XYZ/UV is updated before shared instance publication.
+It is bounded to 28 actor slots, 24 components each, and 4,096 expanded corners. Legacy animation
+ownership and interpolation remain outside the native system.
+
+Focused CPU/GPU tests and both x64 builds passed as detailed above. The corrected mission 50 capture
+shows player-car identity and a submitted civilian, with limited counts and image evidence. Full
+pedestrian coverage, player input, damage, lighting and broader city coverage remain outstanding.

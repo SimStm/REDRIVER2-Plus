@@ -21,18 +21,18 @@ PopcornFX optional, only on explicit request). User scope: at least through E06.
 Preserve Driver 2 simulation/math/mission/cutscene/replay/regional semantics;
 fixed ticks independent of presentation FPS and CPU speed.
 
-**Current step: native Chicago scene diagnostics and vehicle rendering; no stage is accepted.**
-Checkpoint `09a542d3` is published. Priorities: performance/ticks/audio, original assets, then
-actors; lighting follows correct geometry/materials. HD/mods await original-city coverage; later
-GLB/glTF edit/reimport remains desired with undefined contracts. FPS inheritance says nothing about
-HD/mod precedence or texture correctness.
+**Current step: native Chicago world, vehicle, and bounded pedestrian rendering; no stage is accepted.**
+Checkpoint `d373476c` is published. Original textures and full city coverage remain required;
+HD/mods await functional original-city coverage, and later GLB/glTF edit/reimport remains desired
+with undefined contracts. Player/on-foot control, all pedestrian classes, damage, and lighting
+remain open. The end goal still includes complete world, vehicles, Tanner, and all pedestrians.
 
 The existing F9 GPU overlay, sampler controls, actual base-config FPS inheritance, and
 OpenGL 3.3 reference startup are validated in earlier records. Resident streaming publishes
 owned geometry/pixels/colours asynchronously, retains unchanged GPU keys, and uses bounded upload
-batches; source/native placements agree at 16384. Draw-distance selection and world-shading
-milestones are published at `34e104ed` and `09a542d3`. Prior Chicago TAD evidence showed 14/14
-body submissions, 200 world resources and 8876 placements; it did not prove wheels or parity.
+batches; source/native placement capacity is 16384. Draw-distance selection and world-shading
+milestones are published at `34e104ed` and `09a542d3`. Latest Chicago mission 50 showed 193 world
+resources and 8890 placements; this is a sampled resident set, not complete city coverage.
 Detailed historical measurements remain in `knowledge/product/native-renderer-performance.md`.
 
 The working HUD is opt-in (`RED2_NATIVE_VISUAL_DEBUG=1`), text-only on the existing overlay and
@@ -66,19 +66,22 @@ original-city coverage, and later GLB/glTF edit/reimport is desired with contrac
   OpenGL 3.3.0. Native smoke passed 1200 checks; sessions stopped and local diagnostics
   are not committed.
 
-2026-10-11 wheel/HUD validation: focused `NativeCarMeshTests` passed 0 failures; GPU smoke passed
-1264/0; both x64 builds succeeded with existing linker warnings. Corrected native launch used
-`-nointro -nofmv -mission 1 -drawregion`, `RED2_NATIVE_RENDERER=1`, and visual-debug/perf flags.
-RenderDoc 1.41 replay reported 350 draws/zero validation messages. The inspected PNG shows traffic,
-two tires and HUD; counters show 160 world resources, 6740 placements, 13 active/ready/submitted
-cars, 52 ready/submitted wheels, and pedestrians pending. Perf samples showed zero dropped ticks.
-`playerCar=-1`, so player identity is not proven. Separate reference `Release_dev -opengl` startup
-logged OpenGL 3.3 on RTX 3060 Ti. First probe omitted `-drawregion`; corrected invocation succeeded.
-No profile or INI changes were made; corrected user working directories remain intact.
+2026-10-11 wheel/pedestrian/HUD validation: the fresh inspector runner passed all 20 suites and
+`NativeRendererSmoke` passed 1274 checks; native and reference x64 builds succeeded. Mission 50
+Chicago TAD (`-mission 50 -drawregion -nointro -nofmv`) rendered the player car (`playerCar=0`),
+14/14 cars and 56/56 wheels. The overlay showed 193 world resources, 8890 placements, 523 CPU-
+selected instances, and at capture 12 active pedestrians / 2 ready / 1 submitted / 1 waiting / 0
+failed. Four original `CIVILIAN` meshes reached ready over the session; RenderDoc replay had 719
+draws and zero debug messages, and the inspected PNG shows a civilian at the sidewalk. Steady
+windows recorded 30 ticks and zero drops; startup loading recorded five catch-up drops in total.
+The separate `-mission 1` story capture loaded `CUT1.R`; its visible type-0 actor had pad -2 and
+does not prove player control or Tanner on foot. Reference OpenGL `Release_dev` startup completed.
+All game PIDs were stopped. `config.ini`, `developer_graphics.ini`, and the corrected user profile
+match their pre-run SHA-256 values. Captures/logs are ignored under `build_e00/native-performance/`.
 Prior bounded parity evidence (preserved; not full acceptance):
 
 - World pipeline: `CULL_NONE`, opaque alpha / `0000h` discard, LEQUAL; legacy world colours
-  travel through RGBA8 COLOR_0 and shader scale 2. Region caps are 1024 resources / 8192
+  travel through RGBA8 COLOR_0 and shader scale 2. Region caps are 1024 resources / 16384
   placements; source instance transforms were verified. Projection uses live GTE
   `scr_z`/`ofx`/`ofy`. Six LOD and four tile-HD variants were observed; per-frame legacy-Z
   key selection is implemented. This supersedes old 64/4096, fixed-FOV, no-LOD and universal

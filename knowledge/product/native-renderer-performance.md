@@ -112,7 +112,7 @@ final diagnostic-latch change, isolated x64 `Release_dev_native` and reference `
 passed. OpenGL startup was not run because the Visual Studio configuration MCP call hung. Probe
 profile and INI files were restored byte-for-byte, verified against backups.
 
-## Dynamic wheels and diagnostic HUD (2026-10-11)
+## Dynamic wheels, pedestrian meshes, and diagnostic HUD (2026-10-11)
 
 Wheel preparation uses owned CPU snapshots; workers do not dereference live `MODEL` data. Source
 generation/revision changes invalidate stale work, and consumed tasks return to Waiting when their
@@ -120,27 +120,41 @@ source temporarily disappears. Current actor transforms update wheel positions t
 dynamic uploads (4096-vertex cap), with finite/count validation before bounds commit. Steering,
 compression and spin still use current-tick values. Each car reserves four wheel resources; the
 scene transition budget reserves 80 private wheel keys plus 80 retired keys (160 total) within the
-1024-resource registry. Captured
-legacy colors preserve constant-black wheel quads and participate in source cache identity. World
-and actors share one instance submission call.
+1024-resource registry. Captured legacy colors preserve constant-black wheel quads and participate
+in source cache identity. World, cars, wheels and pedestrians share one instance submission call.
+
+Pedestrian capture preserves the legacy CPU pose evaluation and `head_pos`. It copies owned model
+components and sprite poses; conversion templates use zero XYZ and canonical UVs. Workers convert
+owned templates, then the main thread updates dynamic XYZ/UV before publication. Capacity is
+28 actor slots (plus 28 retired keys), 24 components per actor and 4,096 expanded corners.
+The native path has no PsyCross GPU
+fallback. Legacy animation ownership/interpolation remains unchanged and is not yet a native system.
 
 `RED2_NATIVE_VISUAL_DEBUG=1` enables a text-only HUD on the existing overlay independently of F9;
-it captures no input. It reports resource, placement, selected-instance, and actor lifecycle counts.
-"Selected" is CPU-side instance selection, not proof of final GPU visibility. Pedestrians display
-as pending native rendering rather than a fabricated count.
+it captures no input. It reports world, car, wheel and pedestrian lifecycle counts. "Selected" is
+CPU-side instance selection, not proof of final GPU visibility.
 
-The corrected Chicago Take A Drive run (`-nointro -nofmv -mission 1 -drawregion`) reported 13
-active/ready/submitted cars and 52 ready/submitted wheels. The inspected RenderDoc PNG shows traffic
-and two visible tires with the HUD; replay had 350 draws and zero validation messages. Perf samples
-showed no dropped ticks during observed steady windows. The run reported `playerCar=-1`, so it does
-not prove the player car was rendered. Damage, pedestrians, additional cities and complete scene
-coverage remain open. Capture is ignored local evidence at
-`build_e00/native-performance/native-wheel-hud-20261011.rdc` and `.png`.
+The corrected Chicago Take A Drive run (`-mission 50 -drawregion -nointro -nofmv`) published 193
+world resources and 8,890 placements. The HUD showed 14/14 active/ready/submitted cars, 56/56
+ready/submitted wheels, and at the captured frame 12 active pedestrians, 2 ready, 1 submitted,
+1 waiting and 0 failed. Four original `CIVILIAN` mesh instances reached ready over the session;
+one was submitted at capture. RenderDoc replay reported 719 draws and zero debug messages. The
+inspected PNG shows Chicago streets, the player car (`playerCar=0`) and a civilian at the left
+sidewalk. This sample does not prove all pedestrians, full anatomy/UV quality or player input.
+The story launch (`-mission 1 -gametype 0`) loaded `CUT1.R` and showed a type-0 actor with `pad=-2`;
+it is cutscene evidence, not proof of controlled Tanner on foot. At mission 50, steady intervals
+reported 30 ticks and zero drops; loading recorded five catch-up ticks dropped in total. Final
+observed rates were about 172-178 FPS. The capture is ignored local evidence at
+`build_e00/native-performance/native-ped-chicago-tad50-20261011.rdc` and `.png`.
 
-Focused `NativeCarMeshTests` passed with zero failures; `NativeRendererSmoke` passed 1264 checks
-with zero failures. Native and reference x64 builds succeeded. A separate reference OpenGL startup
-logged OpenGL 3.3 on the RTX 3060 Ti. These bounded checks do not establish migration-stage or full
-game acceptance.
+The fresh inspector runner passed all 20 suites, including `NativeCarMeshTests` and
+`NativePedMeshTests`; `NativeRendererSmoke` passed 1,274 checks with zero failures. Isolated
+`Release_dev_native|x64` and `Release_dev|x64` builds succeeded with the existing LNK4098 warning.
+The separate reference OpenGL startup reached asset loading and was stopped cleanly. Game sessions
+were stopped; `config.ini`, `developer_graphics.ini`, and the corrected `.vcxproj.user` profile
+match their pre-run hashes. These bounded checks do not establish migration-stage or full-game
+acceptance. Damage, lighting/material correctness, full pedestrian coverage, other cities and
+complete scene parity remain open.
 
 ## Bounded local evidence (2026-10-10)
 

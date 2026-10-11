@@ -1,4 +1,5 @@
 #include "modelptypeprobe.h"
+#include "modeltexturelink.h"
 
 /*
  * Pure implementation: no game, PsyCross or GPU includes. See the header for
@@ -137,21 +138,10 @@ ModelPtypeProbeIssueKind ModelPtypeProbe_AddModel(const unsigned char* begin, co
 			break;
 		}
 
-		switch (ptype)
-		{
-		case 4:
-		case 5:
-		case 6:
-		case 7:
-		case 20:
-		case 21:
-		case 22:
-		case 23:
+		int textureSet;
+		int textureId;
+		if (ModelTextureLink_GetTextureKey(cursor, &textureSet, &textureId))
 			io->catalogMaterialRecords++;
-			break;
-		default:
-			break;
-		}
 
 		if (!PtypeIsAllowlisted(ptype))
 		{

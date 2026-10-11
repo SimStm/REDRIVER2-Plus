@@ -10,12 +10,13 @@ where release policy permits it.
 
 ### Added
 
-- Native region drawing submits resident original car bodies and dynamically positioned wheel
-  geometry. A Chicago diagnostic capture showed traffic-car tires; player identity, damage,
-  pedestrians and complete scene coverage remain unverified or incomplete.
+- Native region drawing submits resident original car bodies, dynamically positioned wheels, and
+  sampled native pedestrian meshes. A Chicago mission 50 capture showed the submitted player car,
+  56 wheel instances and a civilian pedestrian; player input, all pedestrians, damage, lighting
+  and complete scene coverage remain unverified or incomplete.
 - Added the default-off `RED2_NATIVE_VISUAL_DEBUG=1` text HUD on the existing overlay. It reports
-  world, car and wheel lifecycle counters and marks pedestrians as pending; it does not capture
-  input or establish final GPU visibility.
+  world, car, wheel and pedestrian lifecycle counters; it does not capture input or establish
+  final GPU visibility.
 
 ### Changed
 
@@ -44,8 +45,8 @@ where release policy permits it.
 
 ### Fixed
 
-- Source asset catalog texture identity now includes declared PL10/PL11 polygon links through the
-  same production key extractor.
+- Source asset catalog texture identity and diagnostic material-record counts now include declared
+  PL10/PL11 polygon links through the same production key extractor.
 
 - MSVC inspector and native renderer smoke builds now write object files to isolated
   per-suite/build directories, preventing collisions between same-named objects.

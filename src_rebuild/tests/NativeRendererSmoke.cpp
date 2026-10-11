@@ -983,6 +983,38 @@ static bool RedBoundingBox(const unsigned char* image, int width, int height,
 	return found;
 }
 
+static void TestDynamicResourceUvs()
+{
+	char error[256] = {};
+	NativeRenderer_ClearInstances(); NativeRenderer_ClearResources();
+	GltfPrimitiveData atlas;
+	atlas.positions = { -1500,-1500,0, 1500,-1500,0, 1500,1500,0, -1500,1500,0 };
+	atlas.uvs = {64,128,64,128,64,128,64,128}; atlas.indices = {0,1,2,0,2,3};
+	atlas.vertexCount = 4; atlas.triangleCount = 2;
+	atlas.imageRgba = {255,0,0,255,0,255,0,255}; atlas.imageWidth = 2; atlas.imageHeight = 1;
+	// The single-mesh writer retains geometry only; embedded images use the
+	// same multi-primitive contract as converted pedestrian resources.
+	GltfMultiMeshData multi; multi.primitives.push_back(atlas);
+	Check(Gltf_WriteFileMulti("dynamic-ped-atlas.glb", multi, error, sizeof(error)) == 0, "dynamic UV atlas fixture written");
+	Check(NativeRenderer_RegisterDynamicResource("dynamic-ped-atlas", "dynamic-ped-atlas.glb", error, sizeof(error)) == 1, "dynamic UV atlas registered");
+	const float view[16] = {1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1};
+	NativeRenderer_SetCamera(view, kSmokeScreenDistance); NativeRenderer_SetClipPlanes(100,125000);
+	NativeInstance instance; const float position[3] = {0,0,10000};
+	MakeInstance(instance,"dynamic-ped-atlas",position,0,0,0,0,0,0);
+	Check(NativeRenderer_SetInstances(&instance,1,error,sizeof(error)) == 1,"dynamic UV instance submitted");
+	unsigned char red[64*64*4] = {}, green[64*64*4] = {}, invalid[64*64*4] = {};
+	Check(NativeRenderer_RenderSceneToRGBA(red,64,64,error,sizeof(error)) == 1 && CountRed(red,64,64) > 0 && CountGreen(red,64,64) == 0,"immutable atlas UVs sample red");
+	float uv[8] = {192,128,192,128,192,128,192,128};
+	Check(NativeRenderer_UpdateResourceVertices("dynamic-ped-atlas",atlas.positions.data(),uv,4,error,sizeof(error)) == 1,"raw texel UVs updated with positions");
+	Check(NativeRenderer_RenderSceneToRGBA(green,64,64,error,sizeof(error)) == 1 && CountGreen(green,64,64) > 0 && CountRed(green,64,64) == 0,"updated UVs sample green with exactly one texel scale");
+	uv[0] = 64; uv[7] = NAN;
+	Check(NativeRenderer_UpdateResourceVertices("dynamic-ped-atlas",atlas.positions.data(),uv,4,error,sizeof(error)) == 0 && error[0],"nonfinite final UV rejects whole update");
+	Check(NativeRenderer_RenderSceneToRGBA(invalid,64,64,error,sizeof(error)) == 1 && !memcmp(invalid,green,sizeof(green)),"invalid late UV preserves previous GPU image");
+	Check(NativeRenderer_UpdateResourcePositions("dynamic-ped-atlas",atlas.positions.data(),4,error,sizeof(error)) == 1,"positions-only API restores immutable UV template");
+	Check(NativeRenderer_RenderSceneToRGBA(invalid,64,64,error,sizeof(error)) == 1 && !memcmp(invalid,red,sizeof(red)),"positions-only wheel semantics retain original UVs");
+	NativeRenderer_ClearInstances(); NativeRenderer_ClearResources();
+}
+
 static void TestDynamicResourcePositions()
 {
 	char error[256] = {};
@@ -2312,6 +2344,7 @@ int main()
 	TestNoCullBothFaces();
 	TestInstanceScreenRegions();
 	TestDynamicResourcePositions();
+	TestDynamicResourceUvs();
 	TestMultiPrimitiveResource();
 	TestTexturedMultiPrimitiveResource();
 	TestWorldOpacity();

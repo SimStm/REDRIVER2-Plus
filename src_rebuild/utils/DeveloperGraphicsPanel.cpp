@@ -2209,7 +2209,10 @@ void DrawNativeSceneDebug()
 			snapshot.carWaiting, snapshot.carFailed, snapshot.carMissing);
 		ImGui::Text("Wheels: ready %d | submitted %d | failed %d",
 			snapshot.wheelReady, snapshot.wheelSubmitted, snapshot.wheelFailed);
-		ImGui::TextUnformatted("Pedestrians: pending native rendering");
+		ImGui::Text("Pedestrians active: %d | ready: %d | submitted: %d",
+			snapshot.pedActive, snapshot.pedReady, snapshot.pedSubmitted);
+		ImGui::Text("Pedestrians waiting: %d | failed: %d",
+			snapshot.pedWaiting, snapshot.pedFailed);
 	}
 	ImGui::End();
 }

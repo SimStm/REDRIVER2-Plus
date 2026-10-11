@@ -73,7 +73,7 @@ typedef struct ModelPtypeCounts
 	   {11,21,23}). The tile and sprite loops iterate every record as FT4, so
 	   their input count is `records`. */
 	int buildingPathRecords;                             /* declared ptype in {10,11,20,21,22,23} */
-	int catalogMaterialRecords;                          /* ptype in {4,5,6,7,20,21,22,23} */
+	int catalogMaterialRecords;                          /* records accepted by ModelTextureLink_GetTextureKey */
 } ModelPtypeCounts;
 
 /* Caller-supplied polygon-block description (plain types, MODEL echo). */

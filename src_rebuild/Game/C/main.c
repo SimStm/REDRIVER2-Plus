@@ -69,6 +69,9 @@
 #include "../utils/DeterministicBaseline.h"
 #include "../utils/ProjectClock.h"
 #include "../utils/VisualSnapshot.h"
+#ifdef _WIN32
+#include "../../utils/NativePedCapture.h"
+#endif
 #endif
 
 int levelstartpos[8][4] = {
@@ -1831,6 +1834,9 @@ int ObjectDrawnValue = 0;
 // [D] [T]
 void DrawGame(void)
 {
+#ifdef _WIN32
+	NativePedCapture_BeginFrame();
+#endif
 	if (NumPlayers == 1 || NoPlayerControl)
 	{
 		ObjectDrawnValue = FrameCnt;

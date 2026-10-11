@@ -13,7 +13,7 @@ tags: [okf, status]
 
 ## Branch and adopted plan
 
-`feat/new-engine` checkpoint `09a542d3` is published; native progress is documented below.
+`feat/new-engine` checkpoint `d373476c` is published; native progress is documented below.
 No migration-stage acceptance follows from publication. Serena selects the C++ language
 server; generated state and proprietary assets/SDKs are not included.
 
@@ -169,19 +169,20 @@ accepted.
   white untextured texel. Later-resident pages and full streaming remain outside this snapshot.
 - Native scene corrections: world draws use `CULL_NONE`, `0000h` alpha discard and LEQUAL depth;
   building shade metadata selects the live RGB palette by original yaw. `texture.c` links declared
-  PL10/11 texture keys through the shared helper. Chicago TAD showed clean car bodies and bounded
-  traffic-wheel submission; player identity, damage, lighting, pedestrians and full parity remain open.
-- Region capacities are now 1024 resources / 8192 placements, with explicit truncation and
-  failed-resource diagnostics. Camera projection consumes live GTE `scr_z`/`ofx`/`ofy` rather
-  than a fixed FOV. The observed scenario prepares six distinct LOD and four tile high-detail
-  variants; per-frame legacy-Z thresholds choose resource keys. This is implemented bounded
-  tier selection, not complete LOD/streaming or scene acceptance.
+  PL10/11 texture keys through the shared helper. Mission 50 Chicago TAD now submits the player car,
+  dynamic wheels, and a bounded sample of original pedestrian meshes; damage, lighting and full
+  pedestrian/city coverage remain open.
+- Region capacities are 1024 resources / 16384 placements with truncation/failure diagnostics;
+  projection uses live GTE `scr_z`/`ofx`/`ofy` and bounded LOD/tile-HD key selection.
 - Opt-in `RED2_NATIVE_VISUAL_DEBUG=1` draws text on the existing overlay, independent of F9 and
-  input capture. Chicago showed 13 ready/submitted cars, 52 ready/submitted wheels and visible
-  traffic tires. Updates use a 4096-vertex cap; source mismatch retries and black quads/cache colors
-  are preserved. HUD selection is not final visibility; run reported `playerCar=-1`. Damage,
-  lighting, pedestrians, other cities and parity remain open. Focused tests passed; GPU smoke 1264,
-  both x64 builds and OpenGL startup passed. Corrected user profiles were restored; INIs unchanged.
+  input capture. Mission 50 showed 14/14 cars, 56/56 wheels, and HUD counters for pedestrians;
+  one `CIVILIAN` was submitted at capture and four reached ready over the session. Wheel uploads
+  use a 4096-vertex cap; source mismatch retries and black quads/cache colors are preserved.
+  Selected counts are CPU-side. Pedestrian control, complete pedestrian/city coverage, damage,
+  lighting and parity remain open. Full inspector/GPU tests and both x64 builds passed; reference
+  OpenGL startup ran. [Details](product/native-renderer-performance.md); local profiles/INIs are unchanged.
+  Ped capture preserves legacy CPU pose and `head_pos`; owned components convert off-thread,
+  dynamic XYZ/UV update before combined publish (28 slots, 24 parts, 4096 corners). Animation stays legacy.
 - Existing magenta/cutout probes are diagnostics only. Earlier quad comparisons reduced
   clear-background pixels from 102440 to 1733; these bounded captures do not establish parity.
 - Source-proven quad correction: cyclic raw A,B,C,D remains stored A,B,D,C with unchanged
