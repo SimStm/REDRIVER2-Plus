@@ -22,7 +22,7 @@ Preserve Driver 2 simulation/math/mission/cutscene/replay/regional semantics;
 fixed ticks independent of presentation FPS and CPU speed.
 
 **Current step: native original-city world, vehicle, and bounded pedestrian rendering; no stage is accepted.**
-Checkpoint `2db149f9` is published. Original textures and full city coverage remain required;
+Checkpoint `7e116b8d` is published. Original textures and full city coverage remain required;
 HD/mods await functional original-city coverage, and later GLB/glTF edit/reimport remains desired
 with undefined contracts. Dynamic car damage is implemented but not visually verified. Player/on-foot
 control, all pedestrian classes, and lighting remain open. The end goal includes complete world,
@@ -41,31 +41,10 @@ independent of F9/input capture. Preserve the user's corrected `build_jointcheck
 directories; do not restore older profile backups. HD/mod work remains deferred until functional
 original-city coverage, and later GLB/glTF edit/reimport is desired with contracts still undefined.
 
-- Fixed dynamic constant updates (Map/Discard), wired configured VSync and added
-  conservative AABB culling against the exact homogeneous MVP. Local mission 1 baseline
-  3.7-4.6 FPS improved to 41-60 FPS, with 30/31 tick deltas and 0 dropped ticks in
-  post-fix one-second windows. GPU/driver/scene and camera position limit comparison.
-- User requested no PsyCross Vulkan alongside Diligent. Headless mode 2 creates only
-  SDL window + CPU VRAM; skips GL/Vulkan initialization and compatibility GPU draws.
-  VRAM copies/reads/clears, OT command parsing and services remain. Native failure exits.
-  Native ImGui was pending at that checkpoint and is now wired above. F9 replaces the panel's
-  F11, and its previous light-receptivity binding moved to F8.
-- VS `build_e00/REDRIVER2.sln`, Release_dev_native|x64 builds and launches mission 1.
-  Log confirms no PsyCross GPU, 160/160 resources, 6740 placements and zero conversion
-  failures. Existing missing CD-image warnings remain. Ignored performance logs live
-  under `build_e00/native-performance/`; `RED2_NATIVE_PERF=1` is opt-in.
-- RenderDoc1.41 logs register one Vulkan surface. MCP attach/trigger needed a persistent
-  local Python TargetControl connection pumping ReceiveMessage to finish capture/copy.
-  Native capture: one colour/depth pass, 5300 indexed draws, 28828 triangles, empty log.
-  MCP rt export assumes Descriptor.resourceId; local 1.41 uses Descriptor.resource.
-  Local replay exported PNG; target was R8G8B8A8_SRGB, exposing extra gamma encoding of
-  UNORM/prelit values. Window target now explicitly requests RGBA8_UNORM; offscreen already
-  used it. Second GPU capture verified R8G8B8A8_UNORM at 1280x720, 5705 draws; PNG
-  exported. These different-tick images are not a parity comparison. The earlier Window 1 label did not prove two SDL windows; overlay unverified. Computer-control access to
-  REDRIVER2_native was rejected by automatic approval review; use supported GPU/log paths.
-- Release_dev|x64 compatibility build and -opengl mission 1 launch passed; log confirms
-  OpenGL 3.3.0. Native smoke passed 1200 checks; sessions stopped and local diagnostics
-  are not committed.
+The early headless/window/render-target bring-up and performance history remain recorded in
+[`product/native-renderer-performance.md`](product/native-renderer-performance.md). The current
+milestone extends the bounded original-world path with captured sky geometry; it does not accept
+whole-city coverage, complete visual parity, damage pixels or controlled on-foot play.
 
 2026-10-11 car-damage validation: `pwsh -NoProfile -File scripts/run_inspector_tests.ps1`
 passed all 21 suites; `pwsh -NoProfile -File scripts/run_native_renderer_smoke.ps1` passed
@@ -100,9 +79,29 @@ both game processes were stopped. Profile hash
 
 The user reports entering the car and moving successfully (2026-10-11); backend and visibility of
 controlled on-foot Tanner were not specified. Tool evidence remains bounded to submitted car bodies
-and sampled pedestrians; player-exit/on-foot control, an actual damage image, streamed-region
-traversal/replay, lighting and complete city coverage remain follow-up gates.
+and sampled pedestrians; player-exit/on-foot control, an actual damage image, broader streamed-region
+coverage, lighting and complete city coverage remain follow-up gates.
 The earlier sprite-shading evidence remains in the [native renderer product record](product/native-renderer-performance.md#native-world-sprite-lighting-2026-10-11).
+
+2026-10-11 native sky follow-up: the bounded 20-byte horizon polygon format is supported without
+relaxing source-span checks. The 22-suite run preceded the type-5 fix; focused sky tests then passed 45 checks;
+latest NativeRendererSmoke passed 1330/0. Serial native and OpenGL x64 builds passed after a
+single-node MSBuild retry. Injected RenderDoc captures show 80 sky quads/160 triangles in Havana
+and Chicago. Corrected Havana replay: 942 draws/0 debug messages; Chicago ATTRACT.400 frame 1783:
+280 draws/0 messages after the 8,594-to-10,167-placement publication. Neither final image shows
+the earlier thin horizon line at the visible sky pixels. Chicago HUD: 185 resources, 10,167
+placements, 193 selected; 11 cars and 44 wheels submitted, 6 pedestrians ready/1 submitted.
+This is bounded two-city evidence, not full coverage. The earlier OpenGL Havana image is not a
+matched-tick comparison. Pre-fix PixelHistory files (`pixelhistory_sky_havana.py/.log`) identified
+the gray-row/sky-row bilinear phase cause. All captures/logs are ignored under
+`build_e00/native-performance/sky-*20261011*`; corrected profile hash A56E272D… was preserved.
+Private converted GLBs keep raw texel UVs scaled once by 1/256; external GLB/mod UV contracts remain
+future work. No INI was modified. Processes were stopped.
+Validation logs: `sky-inspector-tests-20261011.log`, `sky-nativeskymesh-focused-retry-20261011.log`,
+`sky-havana-seamfix-smoke-retry-20261011.log`, and `sky-havana-seamfix-{native,opengl}-serial-20261011.log`.
+For replay, use `-replay DRIVER2/REPLAYS/ATTRACT.400` from `bin/Release_dev`; bare `ATTRACT.400` fails.
+`developer_debug_start.ini` remains at mission 1. `main.c` applies it only without explicit
+`-mission` or a successfully loaded `-replay`; tests used those overrides without editing the INI.
 Prior bounded parity evidence (preserved; not full acceptance):
 
 - World pipeline: `CULL_NONE`, opaque alpha / `0000h` discard, LEQUAL; legacy world colours

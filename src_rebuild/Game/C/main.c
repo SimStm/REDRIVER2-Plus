@@ -71,6 +71,7 @@
 #include "../utils/VisualSnapshot.h"
 #ifdef _WIN32
 #include "../../utils/NativePedCapture.h"
+#include "../../utils/NativeSkyCapture.h"
 #endif
 #endif
 
@@ -1836,6 +1837,7 @@ void DrawGame(void)
 {
 #ifdef _WIN32
 	NativePedCapture_BeginFrame();
+	NativeSkyCapture_BeginFrame();
 #endif
 	if (NumPlayers == 1 || NoPlayerControl)
 	{
@@ -2624,6 +2626,9 @@ void RenderGame2(int view)
 	int notInDreaAndStevesEvilLair;
 
 	CurrentPlayerView = view;
+#ifdef _WIN32
+	NativeSkyCapture_SelectView(view);
+#endif
 #ifndef PSX
 	if (view == 0)
 		DrawCyclingPals();

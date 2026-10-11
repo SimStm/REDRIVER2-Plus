@@ -17,6 +17,7 @@
 
 #include "../utils/GltfLoader.h"
 #include "../utils/NativeCameraView.h"
+#include "../utils/NativeSkyShader.h"
 
 #include <chrono>
 #include <float.h>
@@ -155,6 +156,8 @@ bool g_worldShadePaletteValid = false;
 // buffers and its bindings for both scene pipelines.
 struct ScenePrimitive
 {
+	bool skyCompatible = false;
+	RefCntAutoPtr<IShaderResourceBinding> skySrb, skySrbOffscreen;
 	std::vector<SceneVertex> dynamicTemplate;
 	RefCntAutoPtr<IBuffer> vertices;
 	RefCntAutoPtr<IBuffer> indices;	// null -> non-indexed draw
@@ -208,6 +211,8 @@ struct SceneDrawItem
 
 struct SceneResources
 {
+	RefCntAutoPtr<IShader> skyVertexShader;
+	RefCntAutoPtr<IPipelineState> skyPipeline, skyOffscreenPipeline;
 	RefCntAutoPtr<IShader> vertexShader;
 	RefCntAutoPtr<IShader> pixelShader;
 	RefCntAutoPtr<IPipelineState> pipeline;			// matches the swap-chain format
@@ -236,6 +241,14 @@ struct OffscreenTargets
 };
 
 SceneResources g_scene;
+struct SkyState
+{
+	char key[NATIVE_RESOURCE_KEY_CAPACITY] = {};
+	float rotation[16] = {};
+	int rgb[3] = {};
+	unsigned char enabled[4] = {};
+};
+SkyState g_sky;
 OffscreenTargets g_offscreen;
 float g_view[16] = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
 // The live GTE screen distance h (the game's scr_z), set by the bridge each
@@ -475,7 +488,7 @@ int CreatePrimitiveShaderBindings(ScenePrimitive& primitive)
 	return 1;
 }
 
-int CreateScenePipeline(TEXTURE_FORMAT colorFormat, const char* name, IPipelineState** out)
+int CreateScenePipeline(TEXTURE_FORMAT colorFormat, const char* name, IPipelineState** out, bool sky = false)
 {
 	LayoutElement elements[4] = {};
 	elements[0].InputIndex = 0;
@@ -538,8 +551,8 @@ int CreateScenePipeline(TEXTURE_FORMAT colorFormat, const char* name, IPipelineS
 	// dev-only P7 toggle RED2_NATIVE_NO_DEPTH=1 turns both off so a capture can
 	// tell a depth-occlusion problem from missing geometry.
 	const SceneDiagnostics& diagnostics = GetSceneDiagnostics();
-	psoCI.GraphicsPipeline.DepthStencilDesc.DepthEnable = diagnostics.noDepth ? False : True;
-	psoCI.GraphicsPipeline.DepthStencilDesc.DepthWriteEnable = diagnostics.noDepth ? False : True;
+	psoCI.GraphicsPipeline.DepthStencilDesc.DepthEnable = sky || diagnostics.noDepth ? False : True;
+	psoCI.GraphicsPipeline.DepthStencilDesc.DepthWriteEnable = sky || diagnostics.noDepth ? False : True;
 	psoCI.GraphicsPipeline.DepthStencilDesc.DepthFunc = COMPARISON_FUNC_LESS_EQUAL;
 
 	// Opacity: world models are always opaque. PlotBuildingModel,
@@ -557,7 +570,7 @@ int CreateScenePipeline(TEXTURE_FORMAT colorFormat, const char* name, IPipelineS
 
 	psoCI.GraphicsPipeline.InputLayout.LayoutElements = elements;
 	psoCI.GraphicsPipeline.InputLayout.NumElements = 4;
-	psoCI.pVS = g_scene.vertexShader;
+	psoCI.pVS = sky ? g_scene.skyVertexShader : g_scene.vertexShader;
 	psoCI.pPS = g_scene.pixelShader;
 	g_device->CreateGraphicsPipelineState(psoCI, out);
 	return *out != nullptr;
@@ -657,6 +670,42 @@ int EnsureScenePipelines()
 		LogInitDiagnostic("depth test/write disabled by RED2_NATIVE_NO_DEPTH");
 
 	g_scene.pipelinesReady = 1;
+	return 1;
+}
+
+int EnsureSkyPipelines()
+{
+	if (g_scene.skyPipeline && g_scene.skyOffscreenPipeline) return 1;
+	if (!EnsureScenePipelines()) return 0;
+	ShaderCreateInfo shaderCI;
+	shaderCI.SourceLanguage = SHADER_SOURCE_LANGUAGE_HLSL;
+	shaderCI.EntryPoint = "main";
+	shaderCI.Desc.Name = "OriginalPaintedSkyVS";
+	shaderCI.Desc.ShaderType = SHADER_TYPE_VERTEX;
+	shaderCI.Source = NativeSkyShader_Source();
+	g_device->CreateShader(shaderCI, &g_scene.skyVertexShader);
+	if (!g_scene.skyVertexShader) return 0;
+	const TEXTURE_FORMAT format = g_swapChain ? g_swapChain->GetDesc().ColorBufferFormat : TEX_FORMAT_RGBA8_UNORM;
+	if (!CreateScenePipeline(format, "OriginalPaintedSky", &g_scene.skyPipeline, true)) return 0;
+	if (format == TEX_FORMAT_RGBA8_UNORM) g_scene.skyOffscreenPipeline = g_scene.skyPipeline;
+	else if (!CreateScenePipeline(TEX_FORMAT_RGBA8_UNORM, "OriginalPaintedSkyOffscreen", &g_scene.skyOffscreenPipeline, true)) return 0;
+	return 1;
+}
+
+int CreateSkyBindings(ScenePrimitive& primitive)
+{
+	if (primitive.skySrb && primitive.skySrbOffscreen) return 1;
+	const auto bind = [&](IPipelineState* pipeline, RefCntAutoPtr<IShaderResourceBinding>& srb) {
+		pipeline->CreateShaderResourceBinding(&srb, true);
+		if (!srb) return false;
+		srb->GetVariableByName(SHADER_TYPE_VERTEX, "Constants")->Set(g_scene.constants);
+		srb->GetVariableByName(SHADER_TYPE_PIXEL, "gTexture")->Set(primitive.texture->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE));
+		srb->GetVariableByName(SHADER_TYPE_PIXEL, "gSampler")->Set(primitive.sampler);
+		return true;
+	};
+	if (!bind(g_scene.skyPipeline, primitive.skySrb)) return 0;
+	if (g_scene.skyPipeline.RawPtr() == g_scene.skyOffscreenPipeline.RawPtr()) primitive.skySrbOffscreen = primitive.skySrb;
+	else if (!bind(g_scene.skyOffscreenPipeline, primitive.skySrbOffscreen)) return 0;
 	return 1;
 }
 
@@ -795,11 +844,19 @@ int CreateContentItem(const GltfMultiMeshData& mesh, SceneDrawItem& out,
 			return 0;
 		}
 
+		bool skyCompatible = source.colors.size() == vertexCount * 4 && source.worldShadeIndices.size() == vertexCount;
 		std::vector<SceneVertex> vertices(vertexCount);
 		for (size_t i = 0; i < vertexCount; ++i)
 		{
 			SceneVertex& vertex = vertices[i];
 			vertex.worldShade = source.worldShadeIndices.empty() ? -1.0f : source.worldShadeIndices[i];
+			if (skyCompatible)
+			{
+				const unsigned char color = source.colors[i * 4];
+				if ((color != 128 && color != 64) || source.colors[i * 4 + 1] != color || source.colors[i * 4 + 2] != color ||
+					source.colors[i * 4 + 3] != 255 || !std::isfinite(vertex.worldShade) || vertex.worldShade < 0 || vertex.worldShade > 3 || floorf(vertex.worldShade) != vertex.worldShade)
+					skyCompatible = false;
+			}
 			vertex.x = source.positions[i * 3 + 0];
 			vertex.y = source.positions[i * 3 + 1];
 			vertex.z = source.positions[i * 3 + 2];
@@ -845,6 +902,7 @@ int CreateContentItem(const GltfMultiMeshData& mesh, SceneDrawItem& out,
 
 		item.primitives.push_back(ScenePrimitive());
 		ScenePrimitive& primitive = item.primitives.back();
+		primitive.skyCompatible = skyCompatible;
 		primitive.texture = whiteTexture;
 		primitive.sampler = contentSampler;
 
@@ -1044,7 +1102,8 @@ int EnsureOffscreenTargets(Uint32 width, Uint32 height)
 // constant buffer is written per call, so the caller must commit and draw
 // before the next Map/Discard (the per-primitive loops rely on this).
 int DrawPrimitive(const ScenePrimitive& primitive, IPipelineState* pipeline,
-	IShaderResourceBinding* srb, const float mvp[16], int worldShadeOffset, int spriteLightLevel)
+	IShaderResourceBinding* srb, const float mvp[16], int worldShadeOffset, int spriteLightLevel,
+	const SkyState* sky = nullptr)
 {
 	++g_frameDrawCalls;
 	SceneConstants constants;
@@ -1058,6 +1117,15 @@ int DrawPrimitive(const ScenePrimitive& primitive, IPipelineState* pipeline,
 		for (int i = 0; i < 3; ++i) constants.colorScale[i] *= spriteLightLevel / 128.0f;
 	constants.colorScale[3] = g_worldShadePaletteValid ? (float)worldShadeOffset : -1.0f;
 	memcpy(constants.worldShadePalette, g_worldShadePalette, sizeof(g_worldShadePalette));
+	if (sky)
+	{
+		for (int c = 0; c < 3; ++c) constants.colorScale[c] = (float)sky->rgb[c];
+		// Original sky bilinear sampling interpolates floor(raw UV) with its
+		// fraction. Normalized hardware linear sampling is half a texel earlier.
+		// The private sky shader alone reads this phase; point UVs stay unchanged.
+		constants.colorScale[3] = g_bilinearFiltering ? 0.5f / 256.0f : 0.0f;
+		for (int m = 0; m < 4; ++m) constants.worldShadePalette[0][m] = (float)sky->enabled[m];
+	}
 	// DISCARD allocates a fresh dynamic range. Previous draws keep their own
 	// constants without transfer commands or ending the Vulkan render pass.
 	void* mapped = nullptr;
@@ -1148,6 +1216,20 @@ int RenderSceneInto(ITextureView* renderTarget, ITextureView* depthView,
 	g_context->ClearDepthStencil(depthView, CLEAR_DEPTH_FLAG, 1.0f, 0,
 		RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
 
+	if (g_sky.key[0])
+	{
+		ResourceEntry* sky = FindResource(g_sky.key);
+		if (!sky || !sky->item.ready) return 0; // explicit failure, never a stale/fallback sky
+		float mvp[16]; MultiplyColumnMajor(projection, g_sky.rotation, mvp);
+		IPipelineState* skyPipeline = offscreenTarget ? g_scene.skyOffscreenPipeline.RawPtr() : g_scene.skyPipeline.RawPtr();
+		for (size_t p = 0; p < sky->item.primitives.size(); ++p)
+		{
+			const ScenePrimitive& primitive = sky->item.primitives[p];
+			IShaderResourceBinding* srb = offscreenTarget ? primitive.skySrbOffscreen.RawPtr() : primitive.skySrb.RawPtr();
+			if (!skyPipeline || !srb || !DrawPrimitive(primitive, skyPipeline, srb, mvp, 0, -1, &g_sky)) return 0;
+		}
+		if (g_instanceCount == 0) return 1; // explicit sky-only frame, no fixture fallback
+	}
 	if (g_instanceCount > 0)
 	{
 		// Instances mode: no placeholder fallback. Unresolved keys are skipped
@@ -1455,6 +1537,10 @@ int NativeRenderer_SetBilinearFiltering(int enabled, char* error, int errorCapac
 				primitive.srb->GetVariableByName(SHADER_TYPE_PIXEL, "gSampler")->Set(sampler, SET_SHADER_RESOURCE_FLAG_ALLOW_OVERWRITE);
 			if (primitive.srbOffscreen && primitive.srbOffscreen != primitive.srb)
 				primitive.srbOffscreen->GetVariableByName(SHADER_TYPE_PIXEL, "gSampler")->Set(sampler, SET_SHADER_RESOURCE_FLAG_ALLOW_OVERWRITE);
+			if (primitive.skySrb)
+				primitive.skySrb->GetVariableByName(SHADER_TYPE_PIXEL, "gSampler")->Set(sampler, SET_SHADER_RESOURCE_FLAG_ALLOW_OVERWRITE);
+			if (primitive.skySrbOffscreen && primitive.skySrbOffscreen != primitive.skySrb)
+				primitive.skySrbOffscreen->GetVariableByName(SHADER_TYPE_PIXEL, "gSampler")->Set(sampler, SET_SHADER_RESOURCE_FLAG_ALLOW_OVERWRITE);
 		}
 	};
 	update(g_scene.placeholder);
@@ -1673,9 +1759,35 @@ void NativeRenderer_UnregisterResource(const char* key)
 
 void NativeRenderer_ClearResources(void)
 {
+	NativeRenderer_ClearSky();
 	for (int i = 0; i < g_resourceCount; ++i)
 		g_resources[i] = ResourceEntry();
 	g_resourceCount = 0;
+}
+
+void NativeRenderer_ClearSky(void) { g_sky = SkyState(); }
+int NativeRenderer_HasSky(void) { return g_active && g_sky.key[0] && FindResource(g_sky.key); }
+int NativeRenderer_SetSky(const char* key, const float rotation[16], const int rgb[3],
+	const unsigned char enabled[4], char* error, int capacity)
+{
+	NativeRenderer_ClearSky();
+	ResourceEntry* resource = FindResource(key);
+	if (!g_active || !resource || !resource->item.ready || !rotation || !rgb || !enabled)
+		{ SetError(error, capacity, "painted sky source/resource is unavailable"); return 0; }
+	for (int i = 0; i < 16; ++i) if (!std::isfinite(rotation[i]))
+		{ SetError(error, capacity, "painted sky rotation is non-finite"); return 0; }
+	for (int c = 0; c < 3; ++c) if (rgb[c] < 0 || rgb[c] > 128)
+		{ SetError(error, capacity, "painted sky RGB is outside original byte intensity"); return 0; }
+	for (int m = 0; m < 4; ++m) if (enabled[m] > 1)
+		{ SetError(error, capacity, "painted sky model eligibility is invalid"); return 0; }
+	for (size_t p = 0; p < resource->item.primitives.size(); ++p) if (!resource->item.primitives[p].skyCompatible)
+		{ SetError(error, capacity, "painted sky template colors/model tags are invalid"); return 0; }
+	if (!EnsureSkyPipelines()) { SetError(error, capacity, "painted sky pipeline creation failed"); return 0; }
+	for (size_t p = 0; p < resource->item.primitives.size(); ++p) if (!CreateSkyBindings(resource->item.primitives[p]))
+		{ SetError(error, capacity, "painted sky resource binding creation failed"); return 0; }
+	snprintf(g_sky.key, sizeof(g_sky.key), "%s", key);
+	memcpy(g_sky.rotation, rotation, sizeof(g_sky.rotation)); memcpy(g_sky.rgb, rgb, sizeof(g_sky.rgb)); memcpy(g_sky.enabled, enabled, sizeof(g_sky.enabled));
+	return 1;
 }
 
 int NativeRenderer_ResourceResident(const char* key)

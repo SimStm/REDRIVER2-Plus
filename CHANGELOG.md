@@ -18,6 +18,8 @@ where release policy permits it.
 - Added the default-off `RED2_NATIVE_VISUAL_DEBUG=1` text HUD on the existing overlay. It reports
   world, car, wheel and pedestrian lifecycle counters; it does not capture input or establish
   final GPU visibility.
+- Native region drawing now captures and submits bounded original horizon-sky geometry in addition
+  to the static world and sampled actors; complete city and visual parity coverage remain open.
 
 ### Changed
 
@@ -50,6 +52,8 @@ where release policy permits it.
 
 - Source asset catalog texture identity and diagnostic material-record counts now include declared
   PL10/PL11 polygon links through the same production key extractor.
+- Native sky bilinear filtering now uses the original horizon's texel phase at the gray/sky row edge;
+  point sampling and world/car UV handling are unchanged.
 
 - MSVC inspector and native renderer smoke builds now write object files to isolated
   per-suite/build directories, preventing collisions between same-named objects.

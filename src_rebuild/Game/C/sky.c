@@ -4,6 +4,9 @@
 #include "mission.h"
 #include "models.h"
 #include "draw.h"
+#ifdef _WIN32
+#include "../../utils/NativeSkyCapture.h"
+#endif
 #include "camera.h"
 #include "main.h"
 #include "debris.h"
@@ -275,7 +278,14 @@ void LoadSky(void)
 	}
 
 	sprintf(name, "DATA\\SKY%d.RAW", skyNum);
+#ifdef _WIN32
+	const int skyBytesRead = LoadfileSeg(name, (char*)_primTab1, offset, 0x10000);
+	static_assert(sizeof(UV) == 8, "sky UV layout differs from the original tile table");
+	NativeSkyCapture_Load((const unsigned char*)_primTab1, skyBytesRead, GameLevel, offset,
+		(const unsigned char*)skytexuv, skytpage, skyclut, HorizonLookup[GameLevel], HorizonTextures);
+#else
 	LoadfileSeg(name, (char*)_primTab1, offset, 0x10000);
+#endif
 
 	setRECT(&rect, 320, 0, 128, 256);
 
@@ -961,6 +971,10 @@ void DrawSkyDome(void)
 	calc_sky_brightness(&skycolor);
 
 	skyOfs.vy = sky_y_offset[GameLevel];
+#ifdef _WIN32
+	const int nativeSkyRgb[3] = { skycolor.r, skycolor.g, skycolor.b };
+	NativeSkyCapture_Record(inv_camera_matrix.m, skyOfs.vy, nativeSkyRgb);
+#endif
 	gte_SetRotMatrix(&inv_camera_matrix);
 	gte_SetTransVector(&skyOfs);
 

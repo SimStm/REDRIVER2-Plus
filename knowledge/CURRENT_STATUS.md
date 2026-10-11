@@ -13,7 +13,7 @@ tags: [okf, status]
 
 ## Branch and adopted plan
 
-`feat/new-engine` checkpoint `2db149f9` is published; native progress is documented below.
+`feat/new-engine` checkpoint `7e116b8d` is published; native progress is documented below.
 No migration-stage acceptance follows from publication. Serena selects the C++ language
 server; generated state and proprietary assets/SDKs are not included.
 
@@ -144,10 +144,9 @@ accepted.
   toggle is F9; the existing receptivity shortcut moved from F9 to F8.
   [Details/evidence](product/native-renderer-performance.md).
 - Diligent Vulkan (`API256019`, static Release, C++17) is gated by `RED2_NATIVE_RENDERER`;
-  `Release_dev_native` uses PsyCross window-only mode (no compatibility GPU) and the post-frame camera hook.
+  `Release_dev_native` uses PsyCross window-only mode and the post-frame camera hook.
   `native/NativeRenderer.*` owns device/swapchain/resources and bounded instance submission;
-  missing resources are diagnosed/skipped, never replaced by the legacy world. Debug-library
-  configurations remain unwired; the native F9 overlay is described above.
+  missing resources are diagnosed/skipped, never replaced by legacy world. Debug-library configs remain unwired.
 - Windows operational path also uses `src_rebuild/bin/Release_dev/REDRIVER2_dev.exe`:
   from root PowerShell, set `$env:RED2_NATIVE_RENDERER = '1'` and invoke
   `& .\scripts\run_debug_start.ps1 -Mission 1 -ExtraArgs @('-drawregion')` (fire-and-forget).
@@ -163,15 +162,16 @@ accepted.
   and embedded images with bounded validation. PNG handling verifies CRC/Adler and diagnoses
   unsupported material texture references. Single-writer compatibility remains separately tested.
   `ConvertModelSlot` publishes transactionally through local `PublishMultiMesh`.
-- `TextureDecode.*` handles 4/8-bit CLUT and direct BGR555 pages; `texturebake.*` snapshots
-  resident VRAM at prepare, deduplicates page/CLUT images (64 images / 16 MiB), and keys baked
-  pixels. Native sampling is RGBA8_UNORM NEAREST/CLAMP, raw UVs scaled once by 1/256, with a
-  white untextured texel. Later-resident pages and full streaming remain outside this snapshot.
-- Native scene corrections: world draws use `CULL_NONE`, `0000h` alpha discard and LEQUAL depth;
-  building shade metadata selects the live RGB palette by original yaw; `texture.c` links PL10/11
-  keys through the shared helper. TAD50 Chicago and TAD52 Havana show original regions and sampled
-  actors (14 cars/56 wheels Chicago; 12/48 Havana). Damage positions/packed UVs are implemented,
-  but no damaged car was captured. City/pedestrian coverage and lighting remain open.
+- `TextureDecode.*` handles CLUT and BGR555 pages; `texturebake.*` snapshots resident VRAM and
+  deduplicates page/CLUT images (64 images / 16 MiB). Private converted GLBs retain raw texel UVs,
+  scaled once by 1/256 in the shader; external GLB/mod UV contracts and full streaming remain open.
+- Native scene corrections: world draws use `CULL_NONE`, `0000h` discard and LEQUAL depth; building
+  shading uses original yaw and the live palette; `texture.c` links PL10/11 through the shared helper.
+  Chicago/Havana samples show original scenes and actors; city/pedestrian coverage, damage pixels,
+  lighting and parity remain open. Damage geometry is implemented, but no visible change was captured.
+- Original sky captures/submits 80 quads/160 triangles in Havana/Chicago. A sky-only linear half-texel
+  phase correction removes the earlier horizon line in these views; point/world/car UVs are unchanged.
+  Native smoke passes 1330/0 and serial native/OpenGL builds pass; captures are bounded evidence.
 - Region capacities are 1024 resources / 16384 placements with truncation/failure diagnostics;
   projection uses live GTE `scr_z`/`ofx`/`ofy` and bounded LOD/tile-HD key selection.
 - Opt-in `RED2_NATIVE_VISUAL_DEBUG=1` draws text on the existing overlay, independent of F9 and

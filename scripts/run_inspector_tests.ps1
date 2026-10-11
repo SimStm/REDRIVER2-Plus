@@ -166,6 +166,8 @@ try
 		-ExtraIncludes @() -LinkLibraries @()
 	Invoke-Suite -Name 'NativeCarMeshTests' -Sources @('tests\NativeCarMeshTests.cpp', 'utils\NativeCarMesh.cpp', 'utils\NativeWheelMesh.cpp', 'utils\TextureDecode.cpp') `
 		-ExtraIncludes @() -LinkLibraries @()
+	Invoke-Suite -Name 'NativeSkyMeshTests' -Sources @('tests\NativeSkyMeshTests.cpp', 'utils\NativeSkyMesh.cpp', 'utils\TextureDecode.cpp') `
+		-ExtraIncludes @() -LinkLibraries @()
 	Invoke-Suite -Name 'NativePedMeshTests' -Sources @('tests\NativePedMeshTests.cpp', 'utils\NativePedMesh.cpp', 'utils\WorldMeshBuilder.cpp', 'utils\SourceModelDecoder.cpp', 'utils\GltfWriter.cpp', 'utils\GltfLoader.cpp', 'utils\AssetConverter.cpp', 'Game\C\conversioncache.c') `
 		-ExtraIncludes @() -LinkLibraries @('windowscodecs.lib', 'ole32.lib')
 	Invoke-Suite -Name 'AssetPipelineTests' -Sources @('tests\AssetPipelineTests.cpp', 'utils\AssetConverter.cpp', 'utils\GltfLoader.cpp', 'utils\GltfWriter.cpp', 'Game\C\conversioncache.c', 'Game\C\assetpackage.c') `

@@ -112,6 +112,25 @@ round, so the image does not establish a backend A/B or full legacy visual parit
 one pedestrian submitted at capture. Perf windows recorded 30/31 ticks and zero drops. Other
 world materials, event lighting, full city coverage and all-pedestrian visual coverage remain open.
 
+## Native original horizon sky (2026-10-11)
+
+The native scene snapshots the original sky segment and converts its bounded horizon polygons to a
+private mesh. The validated 20-byte sky polygon record uses the source format's shared vertex-prefix
+stride; source span and allocation bounds remain enforced. On sky draws only, linear sampling adds a
+half-texel phase to raw texel UVs to match the original horizon's bilinear edge convention. Point
+sampling and world/car UVs are unchanged. Private converted GLBs retain raw texel UVs, scaled once by
+1/256 in the shader; external GLB/mod texture-coordinate contracts remain undefined future work.
+
+The inspector run passed 22 suites before the type-5 horizon fix; the focused `NativeSkyMeshTests`
+then passed 45 checks. The final `NativeRendererSmoke` run passed 1330 checks/0 failures, and serial
+`Release_dev_native` and reference `Release_dev` x64 builds passed. Injected RenderDoc captures show
+the 80-quad/160-triangle horizon in Havana mission 52 (942 draws/0 debug messages) and Chicago
+ATTRACT.400 after the 8,594-to-10,167-placement publication (frame 1783, 280 draws/0 messages).
+The earlier thin line is not apparent in the corrected screenshots. These are bounded scene views,
+not a matched OpenGL comparison or full-city/parity acceptance. Pre-fix PixelHistory evidence is
+retained in ignored `build_e00/native-performance/pixelhistory_sky_havana.py` and `.log`; captures,
+PNG exports and exact run logs use the `sky-` prefix in that directory.
+
 ## Resident original car bodies and texture identity (2026-10-11)
 
 Car preparation owns a CPU snapshot; its worker does not dereference live `MODEL` data. Model

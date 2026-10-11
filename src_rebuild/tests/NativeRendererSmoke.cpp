@@ -2343,6 +2343,130 @@ static void TestTriangleDraw()
 	Check(nearExpected, "depth test kept the nearer triangle at the centre pixel");
 }
 
+static void TestPaintedSky()
+{
+	NativeRenderer_ClearInstances(); NativeRenderer_ClearResources(); NativeRenderer_ClearContent();
+	const float identity[16] = { 1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1 };
+	NativeRenderer_SetCamera(identity, kSmokeScreenDistance);
+	NativeRenderer_SetClipPlanes(1, 10);
+	NativeRenderer_SetScreenOffset(160, 120);
+	GltfMultiMeshData skyMesh;
+	skyMesh.primitives.push_back(GltfPrimitiveData());
+	GltfPrimitiveData& sky = skyMesh.primitives[0];
+	sky.positions = { -1,-1,0.05f, 1,-1,0.05f, 1,1,0.05f, -1,1,0.05f };
+	sky.indices = { 0,1,2, 0,2,3 }; sky.uvs.resize(8, 0); sky.worldShadeIndices.resize(4, 0);
+	sky.vertexCount = 4; sky.triangleCount = 2;
+	for (int v = 0; v < 4; ++v) { sky.colors.insert(sky.colors.end(), 3, 128); sky.colors.push_back(255); }
+	sky.imageWidth = sky.imageHeight = 1; sky.imageRgba = { 0,0,255,255 };
+	char error[256] = {};
+	Check(Gltf_WriteFileMulti("sky-painted.glb", skyMesh, error, sizeof(error)) == 0 && NativeRenderer_RegisterResource("sky-painted", "sky-painted.glb", error, sizeof(error)), "painted sky fixture uploaded with immutable colors/model tags");
+	GltfMultiMeshData loadedSky;
+	Check(Gltf_LoadFileMulti("sky-painted.glb", &loadedSky, error, sizeof(error)) == 0 && loadedSky.primitives.size() == 1 &&
+		loadedSky.primitives[0].imageWidth == 1 && loadedSky.primitives[0].imageHeight == 1 && loadedSky.primitives[0].imageRgba == sky.imageRgba,
+		"sky fixture serialization retains the actual blue source image");
+	GltfMultiMeshData foregroundMesh;
+	foregroundMesh.primitives.push_back(GltfPrimitiveData());
+	GltfPrimitiveData& foreground = foregroundMesh.primitives[0];
+	foreground.positions = { -2,-2,5, 2,-2,5, 2,2,5, -2,2,5 };
+	foreground.indices = { 0,1,2, 0,2,3 }; foreground.vertexCount = 4; foreground.triangleCount = 2;
+	foreground.uvs.resize(8, 0); foreground.imageWidth = foreground.imageHeight = 1;
+	foreground.imageRgba = { 0,255,0,255 };
+	Check(Gltf_WriteFileMulti("sky-foreground.glb", foregroundMesh, error, sizeof(error)) == 0 && NativeRenderer_RegisterResource("sky-foreground", "sky-foreground.glb", error, sizeof(error)), "opaque foreground fixture uploaded");
+	foreground.imageRgba[3] = 0;
+	Check(Gltf_WriteFileMulti("sky-cutout.glb", foregroundMesh, error, sizeof(error)) == 0 && NativeRenderer_RegisterResource("sky-cutout", "sky-cutout.glb", error, sizeof(error)), "cutout foreground fixture uploaded");
+	GltfMultiMeshData loadedCutout;
+	Check(Gltf_LoadFileMulti("sky-cutout.glb", &loadedCutout, error, sizeof(error)) == 0 && loadedCutout.primitives.size() == 1 &&
+		loadedCutout.primitives[0].imageRgba == foreground.imageRgba, "cutout fixture serialization retains its zero-alpha texel");
+	NativeInstance instance = {}; snprintf(instance.resourceKey, sizeof(instance.resourceKey), "sky-foreground"); memcpy(instance.transform, identity, sizeof(identity));
+	const int neutral[3] = { 128,128,128 }; const unsigned char enabled[4] = { 1,0,0,0 };
+	unsigned char buildingPalette[32 * 3] = {}; for (int i = 0; i < 32; ++i) buildingPalette[i * 3] = 255;
+	NativeRenderer_SetWorldShadePalette(buildingPalette);
+	Check(NativeRenderer_SetSky("sky-painted", identity, neutral, enabled, error, sizeof(error)) && NativeRenderer_SetInstances(&instance, 1, error, sizeof(error)), "sky and ordinary foreground submitted independently");
+	unsigned char image[64 * 64 * 4] = {};
+	Check(NativeRenderer_RenderSceneToRGBA(image, 64, 64, error, sizeof(error)), "sky and world rendered to shared offscreen target");
+	const unsigned char* center = image + (32 * 64 + 32) * 4;
+	Check(center[0] <= 2 && center[1] >= 250 && center[2] <= 2, "opaque world covers sky despite sky being inside world near plane");
+	Check(image[0] <= 2 && image[1] <= 2 && image[2] >= 250, "painted sky covers empty horizon pixels beyond world geometry");
+	snprintf(instance.resourceKey, sizeof(instance.resourceKey), "sky-cutout");
+	Check(NativeRenderer_SetInstances(&instance, 1, error, sizeof(error)) && NativeRenderer_RenderSceneToRGBA(image, 64, 64, error, sizeof(error)), "cutout foreground draws after sky");
+	Check(center[0] <= 2 && center[1] <= 2 && center[2] >= 250, "original transparent texel reveals painted sky");
+	NativeRenderer_ClearInstances();
+	Check(NativeRenderer_HasSky() && NativeRenderer_RenderSceneToRGBA(image, 64, 64, error, sizeof(error)), "valid sky-only frame renders with zero combined instances");
+	bool onlySky = true; for (int p = 0; p < 64 * 64; ++p) if (image[p * 4] > 2 || image[p * 4 + 1] > 2 || image[p * 4 + 2] < 250) onlySky = false;
+	Check(onlySky, "sky-only path adds no placeholder or legacy scene fallback");
+	Check(NativeRenderer_SetInstances(&instance, 1, error, sizeof(error)), "cutout world instance restored independently of sky");
+	// A new source publication changes only the sky, not the instance submission.
+	sky.imageRgba = { 255,255,255,255 };
+	for (int v = 0; v < 4; ++v) for (int c = 0; c < 3; ++c) sky.colors[v * 4 + c] = 64;
+	Check(Gltf_WriteFileMulti("sky-reflection.glb", skyMesh, error, sizeof(error)) == 0 && NativeRenderer_RegisterResource("sky-reflection", "sky-reflection.glb", error, sizeof(error)), "reflection source revision fixture uploaded");
+	const int odd[3] = { 127,91,55 };
+	Check(NativeRenderer_SetSky("sky-reflection", identity, odd, enabled, error, sizeof(error)) && NativeRenderer_RenderSceneToRGBA(image, 64, 64, error, sizeof(error)), "live sky RGB and replacement source rendered");
+	Check(abs((int)center[0] - 126) <= 1 && abs((int)center[1] - 90) <= 1 && abs((int)center[2] - 54) <= 1, "sky-only shader truncates odd reflected RGB before modulation");
+	const unsigned char hidden[4] = {};
+	Check(NativeRenderer_SetSky("sky-reflection", identity, odd, hidden, error, sizeof(error)) && NativeRenderer_RenderSceneToRGBA(image, 64, 64, error, sizeof(error)), "original horizon eligibility mask rendered");
+	Check(center[0] < 30 && center[1] < 30 && center[2] < 50, "hidden original horizon model leaves clear background");
+	Check(NativeRenderer_SetSky("sky-painted", identity, neutral, enabled, error, sizeof(error)), "valid sky state established before invalid late RGB");
+	const int invalidLateRgb[3] = { 128,128,129 };
+	Check(!NativeRenderer_SetSky("sky-painted", identity, invalidLateRgb, enabled, error, sizeof(error)) && !NativeRenderer_HasSky(), "invalid late sky input clears publication atomically");
+	Check(NativeRenderer_RenderSceneToRGBA(image, 64, 64, error, sizeof(error)) && center[2] < 50, "failed sky update draws no stale previous paint");
+	Check(!NativeRenderer_SetSky("sky-cutout", identity, neutral, enabled, error, sizeof(error)), "ordinary untagged resource rejected by private sky contract");
+	NativeRenderer_ClearSky(); NativeRenderer_ClearInstances(); NativeRenderer_ClearResources(); NativeRenderer_SetWorldShadePalette(nullptr);
+	NativeRenderer_SetClipPlanes(0.02f, 300);
+}
+
+static void TestSkyBandSampling()
+{
+	NativeRenderer_ClearInstances(); NativeRenderer_ClearResources(); NativeRenderer_ClearContent();
+	const float identity[16] = { 1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1 };
+	NativeRenderer_SetCamera(identity, kSmokeScreenDistance);
+	GltfMultiMeshData mesh; mesh.primitives.push_back(GltfPrimitiveData());
+	GltfPrimitiveData& sky = mesh.primitives[0];
+	sky.positions = { -1,-1,0.05f, 1,-1,0.05f, 1,1,0.05f, -1,1,0.05f };
+	sky.indices = { 0,1,2, 0,2,3 }; sky.uvs.resize(8); sky.worldShadeIndices.resize(4, 0);
+	sky.vertexCount = 4; sky.triangleCount = 2;
+	for (int v = 0; v < 4; ++v) { sky.colors.insert(sky.colors.end(), 3, 128); sky.colors.push_back(255); }
+	sky.imageWidth = sky.imageHeight = 256; sky.imageRgba.resize(256 * 256 * 4);
+	for (int y = 0; y < 256; ++y) for (int x = 0; x < 256; ++x)
+	{
+		unsigned char* pixel = &sky.imageRgba[(y * 256 + x) * 4];
+		pixel[0] = pixel[1] = pixel[2] = 132; pixel[3] = 255;
+		if (y == 84 || y == 85) { pixel[0] = (unsigned char)(173 + (y - 84) * 20); pixel[1] = (unsigned char)(206 + (y - 84) * 20); pixel[2] = (unsigned char)(230 + (y - 84) * 20); }
+		if (y == 168 || y == 169) { pixel[0] = (unsigned char)(40 + (y - 168) * 20); pixel[1] = (unsigned char)(90 + (y - 168) * 20); pixel[2] = (unsigned char)(150 + (y - 168) * 20); }
+	}
+	// Actual sky bands begin at raw V=84/168. Gray preceding rows belong to a
+	// different CLUT. Compare to the original floor(P)+fract(P) bilinear phase.
+	const float rawV[3] = { 84.011f, 84.75f, 168.011f };
+	const int first[3][3] = { {173,206,230}, {173,206,230}, {40,90,150} };
+	const int rgb[3] = {128,128,128}; const unsigned char enabled[4] = {1,1,1,1};
+	unsigned char image[64 * 64 * 4] = {}; char error[256] = {};
+	for (int sample = 0; sample < 3; ++sample)
+	{
+		// The project's GLB writer retains raw texel UVs. CreateContentItem
+		// applies 1/256 exactly once, matching the production sky converter.
+		for (int v = 0; v < 4; ++v) { sky.uvs[v * 2] = 30.75f; sky.uvs[v * 2 + 1] = rawV[sample]; }
+		char path[48], key[32]; snprintf(path, sizeof(path), "sky-band-%d.glb", sample); snprintf(key, sizeof(key), "sky-band-%d", sample);
+		Check(Gltf_WriteFileMulti(path, mesh, error, sizeof(error)) == 0 && NativeRenderer_RegisterResource(key, path, error, sizeof(error)), "multi-band sky fixture uploaded with full page and distinct neighboring rows");
+		GltfMultiMeshData loaded;
+		Check(Gltf_LoadFileMulti(path, &loaded, error, sizeof(error)) == 0 && loaded.primitives.size() == 1 && loaded.primitives[0].uvs == sky.uvs,
+			"sky band fixture retains raw texel UVs before the renderer's single normalization");
+		Check(NativeRenderer_SetSky(key, identity, rgb, enabled, error, sizeof(error)), "multi-band sky publication selected");
+		for (int linear = 0; linear <= 1; ++linear)
+		{
+			Check(NativeRenderer_SetBilinearFiltering(linear, error, sizeof(error)) && NativeRenderer_RenderSceneToRGBA(image, 64, 64, error, sizeof(error)), "sky band rendered after supported sampler toggle");
+			const unsigned char* center = &image[(32 * 64 + 32) * 4]; bool matches = true;
+			for (int c = 0; c < 3; ++c)
+			{
+				const float fraction = linear ? rawV[sample] - floorf(rawV[sample]) : 0;
+				const float expected = (first[sample][c] + 20 * fraction) * (256.0f / 255.0f);
+				if (fabsf(center[c] - expected) > 1.1f) matches = false;
+			}
+			Check(matches, linear ? "sky linear matches original raw UV fraction without cross-band CLUT bleed" : "sky point retains original raw UV floor including fractional edge samples");
+		}
+	}
+	Check(NativeRenderer_SetBilinearFiltering(0, error, sizeof(error)), "sky sampler restored to point");
+	NativeRenderer_ClearSky(); NativeRenderer_ClearResources(); NativeRenderer_SetClipPlanes(0.02f, 300);
+}
+
 int main()
 {
 	WNDCLASSA windowClass = {};
@@ -2392,6 +2516,8 @@ int main()
 	TestScreenOffset();
 	TestVertexColorModulation();
 	TestWorldShadeOrientation();
+	TestPaintedSky();
+	TestSkyBandSampling();
 
 	NativeRenderer_Resize(640, 480);
 	Check(NativeRenderer_RenderClearAndPresent(0.3f, 0.1f, 0.2f, 1.0f, error, sizeof(error)) == 1,

@@ -259,6 +259,15 @@ void NativeRenderer_UnregisterResource(const char* key);
 /* Releases every registered resource. Safe to call when none are registered. */
 void NativeRenderer_ClearResources(void);
 
+/* Private painted sky resource: canonical 128/64 RGB and model tags 0..3.
+   Rotation is the original camera rotation plus camera-space offset, without
+   camera world translation. Drawn before instances with depth test/write off.
+   A missing/invalid current frame must call ClearSky; no old pose is retained. */
+int NativeRenderer_SetSky(const char* key, const float rotation[16], const int rgb[3],
+	const unsigned char enabledModels[4], char* error, int errorCapacity);
+void NativeRenderer_ClearSky(void);
+int NativeRenderer_HasSky(void);
+
 /* Non-zero while `key` has a resident resource. */
 int NativeRenderer_ResourceResident(const char* key);
 

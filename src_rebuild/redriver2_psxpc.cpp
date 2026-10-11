@@ -65,6 +65,7 @@
 #include "utils/NativeWheelScene.h"
 #include "utils/NativePedScene.h"
 #include "utils/NativePedMesh.h"
+#include "utils/NativeSkyScene.h"
 #include "NativeRenderer.h"
 #endif
 
@@ -1454,7 +1455,7 @@ static void NativeRenderer_RefreshRegionDrawState(void)
 	// Reserve a conservative upper bound for both publications. Dense scenes
 	// exceeding that bound enter explicit loading rather than losing uploads
 	// because the old snapshot consumes the bounded resource registry.
-	if (s_regionDrawRegisteredCount + AssetCatalogGame_GetModelResourceCount() + kNativeCarResources + NativeWheelScene_ResourceReserve() + NativePedScene_ResourceReserve() > NATIVE_MAX_RESOURCES)
+	if (s_regionDrawRegisteredCount + AssetCatalogGame_GetModelResourceCount() + kNativeCarResources + NativeWheelScene_ResourceReserve() + NativePedScene_ResourceReserve() + NativeSkyScene_ResourceReserve() > NATIVE_MAX_RESOURCES)
 	{
 		PsyX_Log_Warning("native region draw: transition exceeds resource staging budget; loading new publication\n");
 		NativeRenderer_ResetRegionDrawState();
@@ -1523,7 +1524,7 @@ static int NativeRenderer_DevRegionDrawSubmit(const float view[16])
 	if (!s_regionDrawRegistered)
 	{
 		const int resourceCount = AssetCatalogGame_GetModelResourceCount();
-		const int actorReserve = kNativeCarResources + NativeWheelScene_ResourceReserve() + NativePedScene_ResourceReserve();
+		const int actorReserve = kNativeCarResources + NativeWheelScene_ResourceReserve() + NativePedScene_ResourceReserve() + NativeSkyScene_ResourceReserve();
 		if (resourceCount > NATIVE_MAX_RESOURCES - actorReserve)
 		{
 			if (!s_nativeWorldResourceBudgetFailed)
@@ -1793,6 +1794,7 @@ static void NativeRenderer_PublishSceneDebug(bool worldReady, bool worldFailed)
 
 static int NativeRenderer_SubmitGameScene(const float view[16])
 {
+	NativeSkyScene_Update(AssetCatalogGame_LevelGeneration(), CurrentPlayerView);
 	s_nativeCarFrameCounts = NativeCarFrameCounts();
 	NativeWheelScene_ClearFrameCounts();
 	NativePedScene_ClearFrameCounts();
@@ -2278,7 +2280,7 @@ static void NativeRenderer_Frame()
 		1000.0 / SDL_GetPerformanceFrequency();
 
 	char error[256];
-	const int presented = AssetCatalogGame_RegionDrawRequested() && devDrawInstances == 0
+	const int presented = AssetCatalogGame_RegionDrawRequested() && devDrawInstances == 0 && !NativeRenderer_HasSky()
 		? NativeRenderer_RenderClearAndPresent(0.0f, 0.0f, 0.0f, 1.0f, error, sizeof(error))
 		: NativeRenderer_RenderScene(error, sizeof(error));
 	if (!presented)
@@ -2771,6 +2773,7 @@ int main(int argc, char** argv)
 		if (s_nativeCarTask.valid()) s_nativeCarTask.get(); // shutdown boundary only
 		NativeWheelScene_Shutdown();
 		NativePedScene_Shutdown();
+		NativeSkyScene_Shutdown();
 		NativeRenderer_ResetCarResources();
 		NativeRenderer_Shutdown();
 		s_nativeRendererActive = 0;
