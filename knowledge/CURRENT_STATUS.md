@@ -13,7 +13,7 @@ tags: [okf, status]
 
 ## Branch and adopted plan
 
-`feat/new-engine` checkpoint `7e116b8d` is published; native progress is documented below.
+`feat/new-engine` checkpoint `c361293a` is published; native progress is documented below.
 No migration-stage acceptance follows from publication. Serena selects the C++ language
 server; generated state and proprietary assets/SDKs are not included.
 
@@ -165,13 +165,13 @@ accepted.
 - `TextureDecode.*` handles CLUT and BGR555 pages; `texturebake.*` snapshots resident VRAM and
   deduplicates page/CLUT images (64 images / 16 MiB). Private converted GLBs retain raw texel UVs,
   scaled once by 1/256 in the shader; external GLB/mod UV contracts and full streaming remain open.
-- Native scene corrections: world draws use `CULL_NONE`, `0000h` discard and LEQUAL depth; building
-  shading uses original yaw and the live palette; `texture.c` links PL10/11 through the shared helper.
-  Chicago/Havana samples show original scenes and actors; city/pedestrian coverage, damage pixels,
-  lighting and parity remain open. Damage geometry is implemented, but no visible change was captured.
-- Original sky captures/submits 80 quads/160 triangles in Havana/Chicago. A sky-only linear half-texel
-  phase correction removes the earlier horizon line in these views; point/world/car UVs are unchanged.
-  Native smoke passes 1330/0 and serial native/OpenGL builds pass; captures are bounded evidence.
+- Native world uses `CULL_NONE`, `0000h` discard, LEQUAL and original-yaw/live-palette building shade;
+  `texture.c` links PL10/11. Captures show Chicago/Havana horizons. User reports visible car dents,
+  rotating wheels (with a curious polygonal outline), working vehicles, controllable Tanner (movement stutter),
+  animated pedestrians and a functioning skybox. Audio seems generally OK; more tests remain. Open: grass/road
+  z-fighting, destructible-object removal, visible bridges, frame-time spikes and async preload; particles,
+  full-city coverage, lighting and parity remain open. Sky captures show 80 quads/160 triangles;
+  sky-only half-texel fixes linear sampling; smoke passes 1330/0 and serial native/OpenGL builds pass.
 - Region capacities are 1024 resources / 16384 placements with truncation/failure diagnostics;
   projection uses live GTE `scr_z`/`ofx`/`ofy` and bounded LOD/tile-HD key selection.
 - Opt-in `RED2_NATIVE_VISUAL_DEBUG=1` draws text on the existing overlay, independent of F9 and

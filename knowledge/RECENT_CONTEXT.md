@@ -21,30 +21,23 @@ PopcornFX optional, only on explicit request). User scope: at least through E06.
 Preserve Driver 2 simulation/math/mission/cutscene/replay/regional semantics;
 fixed ticks independent of presentation FPS and CPU speed.
 
-**Current step: native original-city world, vehicle, and bounded pedestrian rendering; no stage is accepted.**
-Checkpoint `7e116b8d` is published. Original textures and full city coverage remain required;
-HD/mods await functional original-city coverage, and later GLB/glTF edit/reimport remains desired
-with undefined contracts. Dynamic car damage is implemented but not visually verified. Player/on-foot
-control, all pedestrian classes, and lighting remain open. The end goal includes complete world,
-vehicles, Tanner, and all pedestrians.
+**Current step: playable original-city rendering; no migration stage is accepted.** Checkpoint `c361293a`
+is published. Full original city remains required; HD/mods are deferred and later GLB/glTF reimport is
+desired with undefined contracts. User confirms car dents are visible (particles remain absent), wheels
+rotate with a curious polygonal outline, and the skybox works. Tanner enters/exits cars; movement stutters.
+Pedestrians render/move/animate correctly. Lighting remains open; end goal includes full world, vehicles,
+Tanner and all pedestrians.
 
-The existing F9 GPU overlay, sampler controls, actual base-config FPS inheritance, and
-OpenGL 3.3 reference startup are validated in earlier records. Resident streaming publishes
-owned geometry/pixels/colours asynchronously, retains unchanged GPU keys, and uses bounded upload
-batches; source/native placement capacity is 16384. Draw-distance selection and world-shading
-milestones are published at `34e104ed` and `09a542d3`. Latest Chicago mission 50 showed 193 world
-resources and 8890 placements; this is a sampled resident set, not complete city coverage.
-Detailed historical measurements remain in `knowledge/product/native-renderer-performance.md`.
+F9 graphics controls, base-config FPS inheritance and OpenGL reference startup are validated.
+Streaming owns/publishes geometry, pixels and colours asynchronously, retains unchanged GPU keys,
+and batches uploads; placement capacity is 16384. Draw distance/shading are published at `34e104ed`
+and `09a542d3`. Chicago mission 50 sampled 193 resources/8890 placements, not full city coverage.
+Performance history: `knowledge/product/native-renderer-performance.md`.
 
-The working HUD is opt-in (`RED2_NATIVE_VISUAL_DEBUG=1`), text-only on the existing overlay and
-independent of F9/input capture. Preserve the user's corrected `build_jointcheck` DLL working
-directories; do not restore older profile backups. HD/mod work remains deferred until functional
-original-city coverage, and later GLB/glTF edit/reimport is desired with contracts still undefined.
-
-The early headless/window/render-target bring-up and performance history remain recorded in
-[`product/native-renderer-performance.md`](product/native-renderer-performance.md). The current
-milestone extends the bounded original-world path with captured sky geometry; it does not accept
-whole-city coverage, complete visual parity, damage pixels or controlled on-foot play.
+The text HUD is opt-in (`RED2_NATIVE_VISUAL_DEBUG=1`) and independent of F9/input capture. Preserve
+the corrected `build_jointcheck` DLL directories and current IDE profiles. Early bring-up/performance
+and bounded sky evidence are in [`product/native-renderer-performance.md`](product/native-renderer-performance.md);
+neither accepts complete city/parity, visible damage or controlled on-foot rendering.
 
 2026-10-11 car-damage validation: `pwsh -NoProfile -File scripts/run_inspector_tests.ps1`
 passed all 21 suites; `pwsh -NoProfile -File scripts/run_native_renderer_smoke.ps1` passed
@@ -91,8 +84,8 @@ and Chicago. Corrected Havana replay: 942 draws/0 debug messages; Chicago ATTRAC
 280 draws/0 messages after the 8,594-to-10,167-placement publication. Neither final image shows
 the earlier thin horizon line at the visible sky pixels. Chicago HUD: 185 resources, 10,167
 placements, 193 selected; 11 cars and 44 wheels submitted, 6 pedestrians ready/1 submitted.
-This is bounded two-city evidence, not full coverage. The earlier OpenGL Havana image is not a
-matched-tick comparison. Pre-fix PixelHistory files (`pixelhistory_sky_havana.py/.log`) identified
+This is bounded two-city evidence, not full coverage or a matched OpenGL comparison. Pre-fix
+PixelHistory (`pixelhistory_sky_havana.py/.log`) identified
 the gray-row/sky-row bilinear phase cause. All captures/logs are ignored under
 `build_e00/native-performance/sky-*20261011*`; corrected profile hash A56E272D… was preserved.
 Private converted GLBs keep raw texel UVs scaled once by 1/256; external GLB/mod UV contracts remain
@@ -102,6 +95,15 @@ Validation logs: `sky-inspector-tests-20261011.log`, `sky-nativeskymesh-focused-
 For replay, use `-replay DRIVER2/REPLAYS/ATTRACT.400` from `bin/Release_dev`; bare `ATTRACT.400` fails.
 `developer_debug_start.ini` remains at mission 1. `main.c` applies it only without explicit
 `-mission` or a successfully loaded `-replay`; tests used those overrides without editing the INI.
+
+## Paused pending confirmation: playable Chicago issues
+
+User reports working player/traffic vehicles, Tanner entry/exit with movement stutter, correctly animated
+pedestrians, and generally working audio (more tests needed). Open issues: grass/road and junction
+z-fighting, broken objects remain visible, bridges collide but do not render, and frame-time stutter.
+Investigate bounded async preload of gameplay/cutscene-critical resources before control begins while
+preserving fixed ticks/replays; assess a secondary debug menu for freeroam/maps/missions/vehicles. HD/mods
+remain deferred; prioritize source diagnosis and native runtime/GPU evidence.
 Prior bounded parity evidence (preserved; not full acceptance):
 
 - World pipeline: `CULL_NONE`, opaque alpha / `0000h` discard, LEQUAL; legacy world colours
